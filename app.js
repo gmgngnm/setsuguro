@@ -209,6 +209,15 @@ function extractJson(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
+async function extractErrorDetail(res) {
+  try {
+    const json = await res.json();
+    return json.error?.message || json.message || "";
+  } catch {
+    return "";
+  }
+}
+
 const AI_ADAPTERS = {
   openai: {
     label: "ChatGPT",
@@ -226,7 +235,10 @@ const AI_ADAPTERS = {
           temperature,
         }),
       });
-      if (!res.ok) throw new Error(`OpenAI API エラー (${res.status})`);
+      if (!res.ok) {
+        const detail = await extractErrorDetail(res);
+        throw new Error(`OpenAI API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+      }
       const json = await res.json();
       const text = json.choices?.[0]?.message?.content || "{}";
       const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
@@ -246,7 +258,10 @@ const AI_ADAPTERS = {
           generationConfig: { responseMimeType: "application/json", temperature },
         }),
       });
-      if (!res.ok) throw new Error(`Gemini API エラー (${res.status})`);
+      if (!res.ok) {
+        const detail = await extractErrorDetail(res);
+        throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+      }
       const json = await res.json();
       const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
       const tokens = json.usageMetadata?.totalTokenCount || Math.round(text.length / 2);
@@ -272,7 +287,10 @@ const AI_ADAPTERS = {
           temperature,
         }),
       });
-      if (!res.ok) throw new Error(`Claude API エラー (${res.status})`);
+      if (!res.ok) {
+        const detail = await extractErrorDetail(res);
+        throw new Error(`Claude API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+      }
       const json = await res.json();
       const text = json.content?.[0]?.text || "{}";
       const tokens = (json.usage?.input_tokens || 0) + (json.usage?.output_tokens || 0) || Math.round(text.length / 2);
@@ -295,7 +313,10 @@ const AI_ADAPTERS = {
           temperature,
         }),
       });
-      if (!res.ok) throw new Error(`Groq API エラー (${res.status})`);
+      if (!res.ok) {
+        const detail = await extractErrorDetail(res);
+        throw new Error(`Groq API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+      }
       const json = await res.json();
       const text = json.choices?.[0]?.message?.content || "{}";
       const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
