@@ -699,7 +699,7 @@ async function startDecompose(rawWord) {
     }, lastMeaningDelay);
   }
 
-  const totalDelay = lastMeaningDelay + 700;
+  const totalDelay = lastMeaningDelay + 1700;
 
   setTimeout(() => {
     renderResultScreen();
@@ -867,8 +867,14 @@ const DECOMPOSE_ANIM_STYLES = {
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
 async function renderResultScreen() {
   const wordMeaningEl = document.getElementById("word-meaning");
-  wordMeaningEl.textContent = currentWordMeaning || "";
-  wordMeaningEl.style.display = currentWordMeaning ? "block" : "none";
+  if (currentWordMeaning) {
+    const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
+    wordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+    wordMeaningEl.style.display = "block";
+  } else {
+    wordMeaningEl.innerHTML = "";
+    wordMeaningEl.style.display = "none";
+  }
 
   const memoryTipEl = document.getElementById("memory-tip");
   memoryTipEl.textContent = currentMemoryTip || "";
