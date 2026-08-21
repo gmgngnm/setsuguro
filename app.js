@@ -1663,6 +1663,7 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
   });
 
+  renderModePills(await kvGet("theme_mode", "auto"));
   renderThemeSwatches(await kvGet("theme_color", "teal"));
 }
 
@@ -1729,10 +1730,40 @@ const THEME_COLORS = {
   red:    { label: "レッド",     light: { accent: "#D6483C", accentInk: "#6E1710" }, dark: { accent: "#FF8F84", accentInk: "#FFE0DC" } },
 };
 
+async function isDarkActive() {
+  const mode = await kvGet("theme_mode", "auto");
+  if (mode === "dark") return true;
+  if (mode === "light") return false;
+  return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+}
+
+async function applyThemeMode() {
+  const mode = await kvGet("theme_mode", "auto");
+  const root = document.documentElement;
+  if (mode === "light") root.setAttribute("data-theme", "light");
+  else if (mode === "dark") root.setAttribute("data-theme", "dark");
+  else root.removeAttribute("data-theme");
+  await applyThemeColor();
+}
+
+function renderModePills(activeMode) {
+  document.querySelectorAll(".mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.mode === activeMode);
+  });
+}
+
+document.querySelectorAll(".mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("theme_mode", pill.dataset.mode);
+    renderModePills(pill.dataset.mode);
+    await applyThemeMode();
+  });
+});
+
 async function applyThemeColor() {
   const key = await kvGet("theme_color", "teal");
   const preset = THEME_COLORS[key] || THEME_COLORS.teal;
-  const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const isDark = await isDarkActive();
   const variant = isDark ? preset.dark : preset.light;
   const root = document.documentElement;
   root.style.setProperty("--accent", variant.accent);
@@ -1786,4 +1817,4 @@ if ("serviceWorker" in navigator) {
 }
 
 renderRecentChips();
-applyThemeColor();
+applyThemeMode();
