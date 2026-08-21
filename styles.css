@@ -69,11 +69,12 @@ button{font-family:inherit;cursor:pointer;}
 .screen.active{display:flex;}
 
 /* Home */
-#screen-home{justify-content:flex-start;padding-top:14vh;align-items:stretch;}
+#screen-home{justify-content:flex-start;align-items:stretch;}
 .s-input-row{
   display:flex;align-items:center;gap:10px;
   border:1.8px solid var(--accent);border-radius:16px;padding:16px 18px;background:var(--surface);
   box-shadow:var(--shadow);
+  margin-top:14vh;
 }
 #word-input{
   flex:1;border:none;outline:none;background:transparent;color:var(--ink);
