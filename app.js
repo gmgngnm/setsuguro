@@ -181,8 +181,9 @@ const DECOMPOSE_SYS = [
   "残った中間部分は語根として一つの要素にまとめ、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
   "各要素を連結すると元の単語と完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
+  "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）も必ず記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
+  '{"word_meaning":"調査する・捜査する","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -354,10 +355,10 @@ async function decomposeWord(word, provider, apiKey) {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     const morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
-    return morphemes;
+    return { meaning: json.word_meaning || "", morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return fallbackDecompose(word);
+    return { meaning: "", morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -451,6 +452,7 @@ async function pushRecentWord(word) {
  * 9. 分解アニメーション → 結果画面フロー
  * ------------------------------------------------------------------ */
 let currentWord = "";
+let currentWordMeaning = "";
 let currentMorphemes = [];
 let currentCandidates = [];
 let candidateStates = []; // { saved, feedback }
@@ -479,6 +481,7 @@ async function startDecompose(rawWord) {
   const spinnerRow = document.getElementById("decompose-spinner");
   splitEl.innerHTML = "";
   spinnerRow.style.display = "none";
+  document.getElementById("decompose-appbar").style.display = "none";
 
   const placeholder = document.createElement("div");
   placeholder.className = "morph word-pulse";
@@ -487,10 +490,13 @@ async function startDecompose(rawWord) {
 
   let morphemes;
   try {
-    morphemes = await decomposeWord(word, provider, apiKey);
+    const decomposed = await decomposeWord(word, provider, apiKey);
+    morphemes = decomposed.morphemes;
+    currentWordMeaning = decomposed.meaning;
   } catch (err) {
     placeholder.remove();
     spinnerRow.style.display = "flex";
+    document.getElementById("decompose-appbar").style.display = "flex";
     document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
     console.error(err);
     return;
@@ -582,6 +588,10 @@ async function playCrack(placeholder, word, morphemes) {
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
 async function renderResultScreen() {
+  const wordMeaningEl = document.getElementById("word-meaning");
+  wordMeaningEl.textContent = currentWordMeaning || "";
+  wordMeaningEl.style.display = currentWordMeaning ? "block" : "none";
+
   document.getElementById("result-word-label").textContent = `${currentWord} の接辞`;
   const list = document.getElementById("affix-list");
   list.innerHTML = "";
