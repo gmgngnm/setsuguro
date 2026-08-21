@@ -14,52 +14,52 @@
  * 0. ローカル接辞辞書（頻出接辞のハイブリッド照合用・抜粋版）
  * ------------------------------------------------------------------ */
 const LOCAL_AFFIX_DICT = {
-  "un":     { reading: "アン",     meaning: "〜でない・否定",      origin: "古英語 un-" },
-  "re":     { reading: "リ",       meaning: "再び・戻す",          origin: "ラテン語 re-" },
-  "dis":    { reading: "ディス",   meaning: "否定・分離",          origin: "ラテン語 dis-" },
-  "pre":    { reading: "プリ",     meaning: "前もって",            origin: "ラテン語 prae-" },
-  "post":   { reading: "ポスト",   meaning: "後で",                origin: "ラテン語 post" },
-  "sub":    { reading: "サブ",     meaning: "下に・副次的な",      origin: "ラテン語 sub-" },
-  "inter":  { reading: "インター", meaning: "〜の間",              origin: "ラテン語 inter-" },
-  "trans":  { reading: "トランス", meaning: "越えて・移す",        origin: "ラテン語 trans-" },
-  "ex":     { reading: "エクス",   meaning: "外へ",                origin: "ラテン語 ex-" },
-  "in":     { reading: "イン",     meaning: "中へ／〜でない",      origin: "ラテン語 in-" },
-  "co":     { reading: "コ",       meaning: "共に",                origin: "ラテン語 com-" },
-  "con":    { reading: "コン",     meaning: "共に",                origin: "ラテン語 com- の異形" },
-  "com":    { reading: "コム",     meaning: "共に",                origin: "ラテン語 com-" },
-  "il":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形" },
-  "im":     { reading: "イム",     meaning: "〜でない",            origin: "ラテン語 in- の異形" },
-  "ir":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形" },
-  "dict":   { reading: "ジクト",   meaning: "言う",                origin: "ラテン語 dicere" },
-  "duc":    { reading: "デュク",   meaning: "導く",                origin: "ラテン語 ducere" },
-  "tract":  { reading: "トラクト", meaning: "引く",                origin: "ラテン語 trahere" },
-  "port":   { reading: "ポート",   meaning: "運ぶ",                origin: "ラテン語 portare" },
-  "spect":  { reading: "スペクト", meaning: "見る",                origin: "ラテン語 specere" },
-  "scrib":  { reading: "スクライブ", meaning: "書く",              origin: "ラテン語 scribere" },
-  "vol":    { reading: "ヴォル",   meaning: "望む・意志",          origin: "ラテン語 velle" },
-  "ben":    { reading: "ベン",     meaning: "良い",                origin: "ラテン語 bene" },
-  "mal":    { reading: "マル",     meaning: "悪い",                origin: "ラテン語 malus" },
-  "vid":    { reading: "ヴィド",   meaning: "見る",                origin: "ラテン語 videre" },
-  "ject":   { reading: "ジェクト", meaning: "投げる",              origin: "ラテン語 jacere" },
-  "mit":    { reading: "ミット",   meaning: "送る",                origin: "ラテン語 mittere" },
-  "serv":   { reading: "サーヴ",   meaning: "仕える・保つ",        origin: "ラテン語 servare" },
-  "cred":   { reading: "クレド",   meaning: "信じる",              origin: "ラテン語 credere" },
-  "gress":  { reading: "グレス",   meaning: "歩む",                origin: "ラテン語 gradi" },
-  "ion":    { reading: "イオン",   meaning: "名詞化（〜すること）", origin: "ラテン語 -io" },
-  "tion":   { reading: "ション",   meaning: "名詞化（〜すること）", origin: "ラテン語 -tio" },
-  "ary":    { reading: "アリー",   meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius" },
-  "able":   { reading: "アブル",   meaning: "〜できる",            origin: "ラテン語 -abilis" },
-  "ible":   { reading: "イブル",   meaning: "〜できる",            origin: "ラテン語 -ibilis" },
-  "ful":    { reading: "フル",     meaning: "〜に満ちた",          origin: "古英語 -full" },
-  "less":   { reading: "レス",     meaning: "〜がない",            origin: "古英語 -leas" },
-  "ment":   { reading: "メント",   meaning: "名詞化（結果・状態）", origin: "ラテン語 -mentum" },
-  "ness":   { reading: "ネス",     meaning: "名詞化（性質・状態）", origin: "古英語 -nes" },
-  "ive":    { reading: "イヴ",     meaning: "〜の傾向がある",      origin: "ラテン語 -ivus" },
-  "ous":    { reading: "アス",     meaning: "〜に満ちた",          origin: "ラテン語 -osus" },
-  "ate":    { reading: "エイト",   meaning: "〜にする（動詞化）",  origin: "ラテン語 -atus" },
-  "ist":    { reading: "イスト",   meaning: "〜する人",            origin: "ギリシャ語 -istes" },
-  "er":     { reading: "アー",     meaning: "〜する人・もの",      origin: "古英語 -ere" },
-  "ology":  { reading: "オロジー", meaning: "〜学",                origin: "ギリシャ語 -logia" },
+  "un":     { reading: "アン",     meaning: "〜でない・否定",      origin: "古英語 un-",         phonetic: "ʌn" },
+  "re":     { reading: "リ",       meaning: "再び・戻す",          origin: "ラテン語 re-",       phonetic: "riː" },
+  "dis":    { reading: "ディス",   meaning: "否定・分離",          origin: "ラテン語 dis-",      phonetic: "dɪs" },
+  "pre":    { reading: "プリ",     meaning: "前もって",            origin: "ラテン語 prae-",     phonetic: "priː" },
+  "post":   { reading: "ポスト",   meaning: "後で",                origin: "ラテン語 post",      phonetic: "poʊst" },
+  "sub":    { reading: "サブ",     meaning: "下に・副次的な",      origin: "ラテン語 sub-",      phonetic: "sʌb" },
+  "inter":  { reading: "インター", meaning: "〜の間",              origin: "ラテン語 inter-",    phonetic: "ˈɪntər" },
+  "trans":  { reading: "トランス", meaning: "越えて・移す",        origin: "ラテン語 trans-",    phonetic: "trænz" },
+  "ex":     { reading: "エクス",   meaning: "外へ",                origin: "ラテン語 ex-",       phonetic: "ɛks" },
+  "in":     { reading: "イン",     meaning: "中へ／〜でない",      origin: "ラテン語 in-",       phonetic: "ɪn" },
+  "co":     { reading: "コ",       meaning: "共に",                origin: "ラテン語 com-",      phonetic: "koʊ" },
+  "con":    { reading: "コン",     meaning: "共に",                origin: "ラテン語 com- の異形", phonetic: "kən" },
+  "com":    { reading: "コム",     meaning: "共に",                origin: "ラテン語 com-",      phonetic: "kəm" },
+  "il":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形", phonetic: "ɪl" },
+  "im":     { reading: "イム",     meaning: "〜でない",            origin: "ラテン語 in- の異形", phonetic: "ɪm" },
+  "ir":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形", phonetic: "ɪr" },
+  "dict":   { reading: "ジクト",   meaning: "言う",                origin: "ラテン語 dicere",    phonetic: "dɪkt" },
+  "duc":    { reading: "デュク",   meaning: "導く",                origin: "ラテン語 ducere",    phonetic: "djuːk" },
+  "tract":  { reading: "トラクト", meaning: "引く",                origin: "ラテン語 trahere",   phonetic: "trækt" },
+  "port":   { reading: "ポート",   meaning: "運ぶ",                origin: "ラテン語 portare",   phonetic: "pɔːrt" },
+  "spect":  { reading: "スペクト", meaning: "見る",                origin: "ラテン語 specere",   phonetic: "spɛkt" },
+  "scrib":  { reading: "スクライブ", meaning: "書く",              origin: "ラテン語 scribere",  phonetic: "skraɪb" },
+  "vol":    { reading: "ヴォル",   meaning: "望む・意志",          origin: "ラテン語 velle",     phonetic: "vɒl" },
+  "ben":    { reading: "ベン",     meaning: "良い",                origin: "ラテン語 bene",      phonetic: "bɛn" },
+  "mal":    { reading: "マル",     meaning: "悪い",                origin: "ラテン語 malus",     phonetic: "mæl" },
+  "vid":    { reading: "ヴィド",   meaning: "見る",                origin: "ラテン語 videre",    phonetic: "vɪd" },
+  "ject":   { reading: "ジェクト", meaning: "投げる",              origin: "ラテン語 jacere",    phonetic: "dʒɛkt" },
+  "mit":    { reading: "ミット",   meaning: "送る",                origin: "ラテン語 mittere",   phonetic: "mɪt" },
+  "serv":   { reading: "サーヴ",   meaning: "仕える・保つ",        origin: "ラテン語 servare",   phonetic: "sɜːrv" },
+  "cred":   { reading: "クレド",   meaning: "信じる",              origin: "ラテン語 credere",   phonetic: "krɛd" },
+  "gress":  { reading: "グレス",   meaning: "歩む",                origin: "ラテン語 gradi",     phonetic: "grɛs" },
+  "ion":    { reading: "イオン",   meaning: "名詞化（〜すること）", origin: "ラテン語 -io",       phonetic: "ən" },
+  "tion":   { reading: "ション",   meaning: "名詞化（〜すること）", origin: "ラテン語 -tio",      phonetic: "ʃən" },
+  "ary":    { reading: "アリー",   meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius",    phonetic: "ɛri" },
+  "able":   { reading: "アブル",   meaning: "〜できる",            origin: "ラテン語 -abilis",   phonetic: "əbl" },
+  "ible":   { reading: "イブル",   meaning: "〜できる",            origin: "ラテン語 -ibilis",   phonetic: "ɪbl" },
+  "ful":    { reading: "フル",     meaning: "〜に満ちた",          origin: "古英語 -full",       phonetic: "fəl" },
+  "less":   { reading: "レス",     meaning: "〜がない",            origin: "古英語 -leas",       phonetic: "ləs" },
+  "ment":   { reading: "メント",   meaning: "名詞化（結果・状態）", origin: "ラテン語 -mentum",   phonetic: "mənt" },
+  "ness":   { reading: "ネス",     meaning: "名詞化（性質・状態）", origin: "古英語 -nes",        phonetic: "nəs" },
+  "ive":    { reading: "イヴ",     meaning: "〜の傾向がある",      origin: "ラテン語 -ivus",     phonetic: "ɪv" },
+  "ous":    { reading: "アス",     meaning: "〜に満ちた",          origin: "ラテン語 -osus",     phonetic: "əs" },
+  "ate":    { reading: "エイト",   meaning: "〜にする（動詞化）",  origin: "ラテン語 -atus",     phonetic: "eɪt" },
+  "ist":    { reading: "イスト",   meaning: "〜する人",            origin: "ギリシャ語 -istes",  phonetic: "ɪst" },
+  "er":     { reading: "アー",     meaning: "〜する人・もの",      origin: "古英語 -ere",        phonetic: "ər" },
+  "ology":  { reading: "オロジー", meaning: "〜学",                origin: "ギリシャ語 -logia",  phonetic: "ˈɒlədʒi" },
 };
 
 /* ------------------------------------------------------------------ *
@@ -182,11 +182,11 @@ const DECOMPOSE_SYS = [
   "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
   "残った中間部分は語根として一つの要素にまとめ、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
   "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
-  "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
+  "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）も必ず記入してください。",
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
+  '{"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -371,13 +371,14 @@ function reconcileWithLocalDict(morphemes) {
     const key = (m.part || "").toLowerCase();
     const local = LOCAL_AFFIX_DICT[key];
     if (local) {
-      return { part: m.part, reading: local.reading, meaning: local.meaning, origin: local.origin };
+      return { part: m.part, reading: local.reading, meaning: local.meaning, origin: local.origin, phonetic: local.phonetic || "" };
     }
     return {
       part: m.part,
       reading: m.reading || m.part,
       meaning: m.meaning || MEANING_UNAVAILABLE,
       origin: m.origin || "—",
+      phonetic: m.phonetic || "",
     };
   });
 }
@@ -406,7 +407,7 @@ function mergeMissingMeanings(morphemes, betterMorphemes) {
     if (m.meaning !== MEANING_UNAVAILABLE) return m;
     const better = byPart.get(m.part.toLowerCase());
     if (better && better.meaning !== MEANING_UNAVAILABLE) {
-      return { part: m.part, reading: better.reading, meaning: better.meaning, origin: better.origin };
+      return { part: m.part, reading: better.reading, meaning: better.meaning, origin: better.origin, phonetic: better.phonetic || m.phonetic || "" };
     }
     return m;
   });
@@ -464,7 +465,8 @@ async function bumpUsage(tokens) {
 function speak(text, onEnd) {
   if (!("speechSynthesis" in window)) { if (onEnd) onEnd(); return; }
   window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
+  const spoken = text.replace(/[（(][^）)]*[）)]/g, "").replace(/\s{2,}/g, " ").trim() || text;
+  const u = new SpeechSynthesisUtterance(spoken);
   u.lang = "ja-JP";
   u.rate = 1.0;
   if (onEnd) u.onend = onEnd;
@@ -807,7 +809,7 @@ async function renderResultScreen() {
       <div class="reveal">✓ 接辞帳に保存</div>
       <div class="affix-card ${existing ? "saved" : ""}">
         ${existing ? '<span class="saved-tag">✓ 保存済み</span>' : ""}
-        <div class="m">${escapeHtml(m.part)}</div>
+        <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
         <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>
       </div>`;
     const card = wrap.querySelector(".affix-card");
