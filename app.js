@@ -732,6 +732,10 @@ async function renderResultScreen() {
   memoryTipEl.textContent = currentMemoryTip || "";
   memoryTipEl.style.display = currentMemoryTip ? "block" : "none";
 
+  document.getElementById("add-goro-form").style.display = "none";
+  document.getElementById("add-goro-btn").style.display = "block";
+  document.getElementById("add-goro-input").value = "";
+
   document.getElementById("result-word-label").textContent = `${currentWord} の接辞`;
   const list = document.getElementById("affix-list");
   list.innerHTML = "";
@@ -837,21 +841,22 @@ async function loadGoroCandidates(provider, apiKey) {
   document.getElementById("regen-btn").disabled = false;
 }
 
-function renderGoroList() {
+function renderGoroList(pop) {
   const list = document.getElementById("goro-list");
   list.innerHTML = "";
   currentCandidates.forEach((c, idx) => {
     const state = candidateStates[idx];
+    const upPop = pop && pop.idx === idx && pop.kind === "up" ? " feedback-pop" : "";
+    const downPop = pop && pop.idx === idx && pop.kind === "down" ? " feedback-pop" : "";
     const card = document.createElement("div");
     card.className = "goro-card";
     card.innerHTML = `
-      ${idx === 0 ? '<span class="badge">NEW</span>' : ""}
       <div class="goro-tap" data-idx="${idx}">
         <span class="spk">🔊</span><span class="txt">「${escapeHtml(c.text)}」</span>
       </div>
       <div class="goro-actions">
-        <button class="act-btn up ${state.feedback === "up" ? "on" : ""}" data-idx="${idx}" aria-label="良い">👍</button>
-        <button class="act-btn down ${state.feedback === "down" ? "on" : ""}" data-idx="${idx}" aria-label="いまいち">👎</button>
+        <button class="act-btn up ${state.feedback === "up" ? "on" : ""}${upPop}" data-idx="${idx}" aria-label="良い">👍</button>
+        <button class="act-btn down ${state.feedback === "down" ? "on" : ""}${downPop}" data-idx="${idx}" aria-label="いまいち">👎</button>
         <button class="save-btn ${state.saved ? "on" : ""}" data-idx="${idx}">💾 ${state.saved ? "保存済み" : "保存"}</button>
       </div>`;
     list.appendChild(card);
@@ -877,9 +882,15 @@ function renderGoroList() {
 
 function toggleFeedback(idx, kind) {
   const s = candidateStates[idx];
+  const turnedOn = s.feedback !== kind;
   s.feedback = s.feedback === kind ? null : kind;
-  renderGoroList();
+  renderGoroList({ idx, kind });
   persistIfSaved(idx);
+  if (turnedOn) {
+    toast(kind === "up" ? "👍 高評価を記録しました" : "👎 低評価を記録しました");
+  } else {
+    toast("評価を取り消しました");
+  }
 }
 
 async function toggleSave(idx) {
@@ -922,6 +933,37 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
   document.getElementById("regen-btn").disabled = true;
   document.getElementById("goro-list").innerHTML = `<div class="empty-note">作り直しています…</div>`;
   await loadGoroCandidates(provider, apiKey);
+});
+
+const addGoroBtn = document.getElementById("add-goro-btn");
+const addGoroForm = document.getElementById("add-goro-form");
+const addGoroInput = document.getElementById("add-goro-input");
+
+addGoroBtn.addEventListener("click", () => {
+  addGoroForm.style.display = "flex";
+  addGoroBtn.style.display = "none";
+  addGoroInput.focus();
+});
+
+async function submitCustomGoro() {
+  const text = addGoroInput.value.trim();
+  if (!text) return;
+
+  const idx = currentCandidates.length;
+  currentCandidates.push({ text, highlight: [] });
+  candidateStates.push({ saved: true, feedback: null });
+  await persistIfSaved(idx);
+  renderGoroList();
+
+  addGoroInput.value = "";
+  addGoroForm.style.display = "none";
+  addGoroBtn.style.display = "block";
+  toast("自分の語呂合わせを記録帳に保存しました");
+}
+
+document.getElementById("add-goro-submit").addEventListener("click", submitCustomGoro);
+addGoroInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitCustomGoro();
 });
 
 /* ------------------------------------------------------------------ *
