@@ -415,13 +415,15 @@ async function decomposeWord(word, provider, apiKey) {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
+    let wordMeaning = json.word_meaning || "";
 
-    if (morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
+    if (!wordMeaning || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
       try {
-        const retryPrompt = `単語: ${word}\n前回の応答では一部の接辞でreading/meaning/originが空でした。今回はすべての要素で必ず埋めてください。`;
+        const retryPrompt = `単語: ${word}\n前回の応答ではword_meaningや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
         const retryJson = await callAI(provider, apiKey, DECOMPOSE_SYS, retryPrompt, 0.2);
         const retryMorphemes = reconcileWithLocalDict(retryJson.morphemes);
         if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
+        if (!wordMeaning) wordMeaning = retryJson.word_meaning || "";
       } catch (retryErr) {
         console.warn("Stage1 retry for missing meanings failed:", retryErr);
       }
@@ -430,7 +432,7 @@ async function decomposeWord(word, provider, apiKey) {
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
-    return { correctedWord, wasCorrected, meaning: json.word_meaning || "", morphemes };
+    return { correctedWord, wasCorrected, meaning: wordMeaning, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
     return { correctedWord: word, wasCorrected: false, meaning: "", morphemes: fallbackDecompose(word) };
