@@ -1116,6 +1116,134 @@ const DECOMPOSE_ANIM_STYLES = {
       await sleep(780);
     },
   },
+
+  scatter: {
+    label: "散乱",
+    tileClass: "scatter-in",
+    tileVars(i) {
+      const angle = (i * 137.5) % 360;
+      const rad = (angle * Math.PI) / 180;
+      const dist = 90 + (i % 3) * 30;
+      return {
+        "--from-x": `${Math.cos(rad) * dist}px`,
+        "--from-y": `${Math.sin(rad) * dist}px`,
+        "--from-rot": `${(i % 2 === 0 ? -1 : 1) * (180 + i * 40)}deg`,
+      };
+    },
+    /* 単語ブロックが細かい欠片となって四方へ散らばり、接辞として再構成される */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.position = "relative";
+      const rect = placeholder.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const shardCount = 14;
+      for (let i = 0; i < shardCount; i++) {
+        const shard = document.createElement("div");
+        shard.className = "scatter-shard";
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 40 + Math.random() * 70;
+        shard.style.left = `${cx}px`;
+        shard.style.top = `${cy}px`;
+        shard.style.setProperty("--sx", `${Math.cos(angle) * dist}px`);
+        shard.style.setProperty("--sy", `${Math.sin(angle) * dist}px`);
+        shard.style.setProperty("--srot", `${(Math.random() - 0.5) * 500}deg`);
+        shard.style.animationDelay = `${Math.random() * 0.05}s`;
+        placeholder.appendChild(shard);
+      }
+      placeholder.classList.add("scatter-out");
+      await sleep(560);
+    },
+  },
+
+  centrifuge: {
+    label: "遠心分離",
+    tileClass: "centrifuge-in",
+    tileVars(i, mid) {
+      const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
+      return {
+        "--from-x": `${Math.sign(dir) * (70 + Math.abs(dir) * 26)}px`,
+        "--from-y": "0px",
+        "--from-rot": `${Math.sign(dir) * 720}deg`,
+      };
+    },
+    /* 単語ブロックの回転がどんどん加速し、勢いよく弾け飛んで接辞が現れる */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.classList.add("centrifuge-spin");
+      await sleep(700);
+    },
+  },
+
+  scissors: {
+    label: "はさみ",
+    tileClass: "scissors-in",
+    tileVars(i, mid) {
+      const dir = i - mid;
+      return { "--from-x": `${-dir * 26}px`, "--from-y": "0px", "--from-rot": `${dir * 3}deg` };
+    },
+    /* 各接辞の境界にハサミが現れ、チョキンと切り分ける */
+    async intro(placeholder, word, morphemes) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.position = "relative";
+      const rect = placeholder.getBoundingClientRect();
+
+      let acc = 0;
+      const boundaries = [];
+      morphemes.slice(0, -1).forEach((m) => {
+        acc += (m.part || "").length;
+        boundaries.push(acc / word.length);
+      });
+
+      boundaries.forEach((frac, i) => {
+        const x = rect.width * frac;
+        const line = document.createElement("div");
+        line.className = "scissors-line";
+        line.style.left = `${x}px`;
+        placeholder.appendChild(line);
+
+        const scissors = document.createElement("div");
+        scissors.className = "scissors-icon";
+        scissors.textContent = "✂️";
+        scissors.style.left = `${x}px`;
+        scissors.style.animationDelay = `${i * 0.16}s`;
+        placeholder.appendChild(scissors);
+      });
+
+      placeholder.classList.add("scissors-cut");
+      await sleep(boundaries.length * 160 + 380);
+    },
+  },
+
+  box: {
+    label: "ボックス投入",
+    tileClass: "box-out-in",
+    tileVars(i, mid) {
+      const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
+      return {
+        "--from-x": `${Math.sign(dir) * (18 + Math.abs(dir) * 10)}px`,
+        "--from-y": "50px",
+        "--from-rot": `${dir * 14}deg`,
+      };
+    },
+    /* 単語ブロックが箱に落ちて消え、箱から接辞がポンポン飛び出してくる */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.position = "relative";
+      const box = document.createElement("div");
+      box.className = "drop-box";
+      box.textContent = "📦";
+      placeholder.appendChild(box);
+      placeholder.classList.add("box-drop");
+      await sleep(560);
+      box.classList.add("shake");
+      await sleep(300);
+    },
+  },
 };
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
