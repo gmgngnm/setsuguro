@@ -896,7 +896,6 @@ function correctedWordHtml(originalWord, correctedWord) {
 async function playSpellingFix(placeholder, originalWord, correctedWord) {
   if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     placeholder.innerHTML = correctedWordHtml(originalWord, correctedWord);
-    toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
     return;
   }
   placeholder.classList.remove("word-pulse");
@@ -907,7 +906,6 @@ async function playSpellingFix(placeholder, originalWord, correctedWord) {
   placeholder.classList.add("card-flip-in");
   await sleep(250);
   placeholder.classList.remove("card-flip-in");
-  toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
 }
 
 /* 実在しない単語と判定した場合、単語ブロックをゴミ箱に投げ込んでからホームへ戻る */
