@@ -587,6 +587,7 @@ const homeError = document.getElementById("home-error");
 wordInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") startDecompose(wordInput.value);
 });
+document.getElementById("word-submit-btn").addEventListener("click", () => startDecompose(wordInput.value));
 
 const micBtn = document.getElementById("mic-btn");
 const micOverlay = document.getElementById("mic-overlay");
