@@ -104,7 +104,7 @@ button{font-family:inherit;cursor:pointer;}
 .mic-section{
   display:flex;flex-direction:column;align-items:center;gap:10px;
   margin-top:auto;
-  margin-bottom:8vh;
+  margin-bottom:3vh;
 }
 .mic-section-hint{font-size:12.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 .mic-section-btn{
@@ -114,13 +114,13 @@ button{font-family:inherit;cursor:pointer;}
   touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
 .mic-section-btn.listening{background:var(--danger);animation:pulse .6s ease-in-out infinite;}
-.chip-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;}
+.chip-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:0;}
 .chip{
   background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
   font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--ink-soft);
 }
 .chip:active{transform:scale(.96);}
-.home-error{color:var(--danger);font-size:13px;text-align:center;min-height:18px;}
+.home-error{color:var(--danger);font-size:13px;text-align:center;min-height:6px;}
 
 /* Decompose animation */
 #screen-decompose{justify-content:center;align-items:center;text-align:center;}

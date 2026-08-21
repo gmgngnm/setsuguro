@@ -672,7 +672,7 @@ if (!SpeechRecognitionCtor) {
     recognition.onend = () => {
       listening = false;
       micOverlayBtn.classList.remove("listening");
-      micOverlayHint.textContent = "長押しして話す";
+      micOverlayHint.textContent = "長押しで入力";
     };
     recognition.start();
   };
