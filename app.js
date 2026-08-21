@@ -221,7 +221,7 @@ const AI_ADAPTERS = {
   gemini: {
     label: "Gemini",
     async chat(apiKey, systemPrompt, userPrompt) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -250,7 +250,7 @@ const AI_ADAPTERS = {
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-sonnet-5",
           max_tokens: 1024,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
