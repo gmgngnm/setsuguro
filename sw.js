@@ -1,4 +1,4 @@
-const CACHE = "setsugoro-shell-v4";
+const CACHE = "setsugoro-shell-v6";
 const SHELL = [
   "./index.html",
   "./styles.css",
