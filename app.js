@@ -618,7 +618,7 @@ async function startDecompose(rawWord) {
     const el = document.createElement("div");
     el.className = `morph ${animStyle.tileClass}`;
     Object.entries(animStyle.tileVars(i, mid)).forEach(([prop, val]) => el.style.setProperty(prop, val));
-    el.style.animationDelay = `${i * 0.05}s`;
+    el.style.animationDelay = `${i * 0.08}s`;
 
     const partEl = document.createElement("div");
     partEl.className = "morph-part";
@@ -635,8 +635,8 @@ async function startDecompose(rawWord) {
 
   await pushRecentWord(currentWord);
 
-  const SHATTER_MS = 450;
-  const STAGGER_MS = 320;
+  const SHATTER_MS = 650;
+  const STAGGER_MS = 460;
   const meaningEls = splitEl.querySelectorAll(".morph-meaning");
   meaningEls.forEach((el, i) => {
     setTimeout(() => el.classList.add("show"), SHATTER_MS + i * STAGGER_MS);
@@ -651,7 +651,7 @@ async function startDecompose(rawWord) {
     }, lastMeaningDelay);
   }
 
-  const totalDelay = lastMeaningDelay + 400;
+  const totalDelay = lastMeaningDelay + 700;
 
   setTimeout(() => {
     renderResultScreen();
@@ -721,14 +721,14 @@ const DECOMPOSE_ANIM_STYLES = {
         const path = document.createElementNS(svgNS, "path");
         path.setAttribute("d", `M ${points.join(" L ")}`);
         path.setAttribute("class", "crack-line");
-        path.style.animationDelay = `${i * 0.06}s`;
+        path.style.animationDelay = `${i * 0.09}s`;
         svg.appendChild(path);
       });
 
       placeholder.style.position = "relative";
       placeholder.appendChild(svg);
       placeholder.classList.add("crack-shake");
-      await sleep(420);
+      await sleep(620);
     },
   },
 
@@ -757,7 +757,7 @@ const DECOMPOSE_ANIM_STYLES = {
       placeholder.style.position = "relative";
       placeholder.appendChild(ring);
       placeholder.classList.add("burst-shake");
-      await sleep(380);
+      await sleep(560);
     },
   },
 
@@ -774,7 +774,7 @@ const DECOMPOSE_ANIM_STYLES = {
       if (reducedMotion()) return;
       placeholder.classList.remove("word-pulse");
       placeholder.classList.add("spin-wind-up");
-      await sleep(420);
+      await sleep(620);
     },
   },
 };

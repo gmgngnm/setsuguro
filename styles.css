@@ -112,29 +112,29 @@ button{font-family:inherit;cursor:pointer;}
   animation:pop .5s ease both, wordPulse 1.2s ease-in-out .5s infinite;
   max-width:min(90vw, 320px);
 }
-.morph.crack-shake{ animation:shake .4s ease; }
+.morph.crack-shake{ animation:shake .6s ease; }
 .morph.shatter-in{
-  animation:shatterIn .5s cubic-bezier(.22,1,.36,1) both;
+  animation:shatterIn .7s cubic-bezier(.22,1,.36,1) both;
 }
-.morph.burst-shake{ animation:burstShake .38s ease; }
+.morph.burst-shake{ animation:burstShake .55s ease; }
 .morph.burst-in{
-  animation:burstIn .55s cubic-bezier(.34,1.56,.64,1) both;
+  animation:burstIn .8s cubic-bezier(.34,1.56,.64,1) both;
 }
-.morph.spin-wind-up{ animation:spinWindUp .42s ease; }
+.morph.spin-wind-up{ animation:spinWindUp .6s ease; }
 .morph.spin-in{
-  animation:spinIn .6s cubic-bezier(.34,1.56,.64,1) both;
+  animation:spinIn .85s cubic-bezier(.34,1.56,.64,1) both;
 }
 .morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
 .morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
 .crack-overlay{position:absolute; top:0; left:0; pointer-events:none; overflow:visible;}
 .crack-line{
   fill:none; stroke:var(--danger); stroke-width:1.5; stroke-linecap:round;
-  stroke-dasharray:80; stroke-dashoffset:80; animation:crackDraw .3s ease forwards;
+  stroke-dasharray:80; stroke-dashoffset:80; animation:crackDraw .4s ease forwards;
 }
 .burst-flash{
   position:absolute; transform:translate(-50%,-50%); border-radius:50%;
   border:2.5px solid var(--accent-2); pointer-events:none;
-  animation:burstFlash .5s ease-out forwards;
+  animation:burstFlash .65s ease-out forwards;
 }
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
