@@ -341,6 +341,8 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
 /* ------------------------------------------------------------------ *
  * 4. ローカル辞書とのハイブリッド照合・フォールバック分解
  * ------------------------------------------------------------------ */
+const MEANING_UNAVAILABLE = "（意味を取得できませんでした）";
+
 function reconcileWithLocalDict(morphemes) {
   return (morphemes || []).map((m) => {
     const key = (m.part || "").toLowerCase();
@@ -351,7 +353,7 @@ function reconcileWithLocalDict(morphemes) {
     return {
       part: m.part,
       reading: m.reading || m.part,
-      meaning: m.meaning || "（AI応答による推定）",
+      meaning: m.meaning || MEANING_UNAVAILABLE,
       origin: m.origin || "—",
     };
   });
@@ -375,11 +377,35 @@ function fallbackDecompose(word) {
   return reconcileWithLocalDict(parts.map((p) => ({ part: p })));
 }
 
+function mergeMissingMeanings(morphemes, betterMorphemes) {
+  const byPart = new Map(betterMorphemes.map((m) => [m.part.toLowerCase(), m]));
+  return morphemes.map((m) => {
+    if (m.meaning !== MEANING_UNAVAILABLE) return m;
+    const better = byPart.get(m.part.toLowerCase());
+    if (better && better.meaning !== MEANING_UNAVAILABLE) {
+      return { part: m.part, reading: better.reading, meaning: better.meaning, origin: better.origin };
+    }
+    return m;
+  });
+}
+
 async function decomposeWord(word, provider, apiKey) {
   try {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
-    const morphemes = reconcileWithLocalDict(json.morphemes);
+    let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
+
+    if (morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
+      try {
+        const retryPrompt = `単語: ${word}\n前回の応答では一部の接辞でreading/meaning/originが空でした。今回はすべての要素で必ず埋めてください。`;
+        const retryJson = await callAI(provider, apiKey, DECOMPOSE_SYS, retryPrompt, 0.2);
+        const retryMorphemes = reconcileWithLocalDict(retryJson.morphemes);
+        if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
+      } catch (retryErr) {
+        console.warn("Stage1 retry for missing meanings failed:", retryErr);
+      }
+    }
+
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
