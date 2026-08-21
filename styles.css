@@ -59,7 +59,7 @@ button{font-family:inherit;cursor:pointer;}
 }
 .logo-word{display:flex;letter-spacing:-.3px;}
 .logo-en{color:var(--ink);}
-.logo-golo{color:var(--brand-blue);}
+.logo-goloyd{color:var(--brand-blue);}
 .logo-wave{color:var(--brand-blue);}
 #screen-home .appbar{justify-content:flex-end;}
 .home-logo{display:flex;justify-content:center;margin-top:11vh;}
