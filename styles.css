@@ -457,6 +457,16 @@ button{font-family:inherit;cursor:pointer;}
   font-family:'JetBrains Mono',monospace;border:1.5px solid var(--line);color:var(--ink-faint);background:var(--surface);
 }
 .provider-pill.on, .anim-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
+.theme-swatch-row{display:flex;gap:10px;flex-wrap:wrap;}
+.theme-swatch{
+  width:34px;height:34px;border-radius:50%;border:2px solid transparent;
+  position:relative;flex-shrink:0;box-shadow:var(--shadow);
+}
+.theme-swatch.on{border-color:var(--ink);}
+.theme-swatch.on::after{
+  content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:14px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.45);
+}
 .usage-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;}
 .usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-soft);}
 .usage-row b{color:var(--accent-ink);}
@@ -480,3 +490,23 @@ button{font-family:inherit;cursor:pointer;}
   font-family:'JetBrains Mono',monospace;
 }
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ---------- Desktop layout ----------
+   スマホ幅(max-width:480px)に最適化された#appを、PCブラウザ等の
+   広いビューポートでは「ページ上に浮かぶカード」として中央配置し、
+   接辞・語呂合わせ・単語帳のカード一覧は横幅を活かして複数列で表示する。 */
+@media (min-width: 860px){
+  body{background:var(--surface-2);}
+  #app{
+    max-width:900px;margin:32px auto;min-height:calc(100vh - 64px);
+    box-shadow:var(--shadow);
+  }
+  .screen{padding:0 32px 32px;}
+  .affix-list, .goro-list{
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:14px;
+  }
+  .book-list{
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;
+  }
+  .mic-overlay{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
+}

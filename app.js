@@ -1662,6 +1662,8 @@ async function initSettingsScreen() {
   document.querySelectorAll(".anim-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
   });
+
+  renderThemeSwatches(await kvGet("theme_color", "teal"));
 }
 
 document.querySelectorAll(".anim-pill").forEach((pill) => {
@@ -1715,7 +1717,56 @@ async function refreshUsageDisplay() {
 }
 
 /* ------------------------------------------------------------------ *
- * 12. ユーティリティ / 初期化
+ * 13. テーマカラー
+ * ------------------------------------------------------------------ */
+const THEME_COLORS = {
+  teal:   { label: "ティール",   light: { accent: "#1F6F63", accentInk: "#0E3A33" }, dark: { accent: "#4FBFA8", accentInk: "#BEEFE1" } },
+  blue:   { label: "ブルー",     light: { accent: "#2F6FED", accentInk: "#123A91" }, dark: { accent: "#7CA2FF", accentInk: "#D7E4FF" } },
+  purple: { label: "パープル",   light: { accent: "#8B5CF6", accentInk: "#3E1980" }, dark: { accent: "#B49CFF", accentInk: "#EDE4FF" } },
+  pink:   { label: "ピンク",     light: { accent: "#E0457B", accentInk: "#7A1D42" }, dark: { accent: "#FF9DC0", accentInk: "#FFE3ED" } },
+  orange: { label: "オレンジ",   light: { accent: "#E2622F", accentInk: "#7A2E0F" }, dark: { accent: "#F0855A", accentInk: "#FFE3D4" } },
+  green:  { label: "グリーン",   light: { accent: "#2E8B45", accentInk: "#114420" }, dark: { accent: "#7ED99A", accentInk: "#DFFBE7" } },
+  red:    { label: "レッド",     light: { accent: "#D6483C", accentInk: "#6E1710" }, dark: { accent: "#FF8F84", accentInk: "#FFE0DC" } },
+};
+
+async function applyThemeColor() {
+  const key = await kvGet("theme_color", "teal");
+  const preset = THEME_COLORS[key] || THEME_COLORS.teal;
+  const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const variant = isDark ? preset.dark : preset.light;
+  const root = document.documentElement;
+  root.style.setProperty("--accent", variant.accent);
+  root.style.setProperty("--accent-ink", variant.accentInk);
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) themeMeta.setAttribute("content", variant.accent);
+}
+
+function renderThemeSwatches(activeKey) {
+  const row = document.getElementById("theme-swatch-row");
+  if (!row) return;
+  row.innerHTML = "";
+  Object.entries(THEME_COLORS).forEach(([key, preset]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `theme-swatch${key === activeKey ? " on" : ""}`;
+    btn.style.background = preset.light.accent;
+    btn.title = preset.label;
+    btn.setAttribute("aria-label", preset.label);
+    btn.addEventListener("click", async () => {
+      await kvSet("theme_color", key);
+      await applyThemeColor();
+      renderThemeSwatches(key);
+    });
+    row.appendChild(btn);
+  });
+}
+
+if (window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyThemeColor);
+}
+
+/* ------------------------------------------------------------------ *
+ * 14. ユーティリティ / 初期化
  * ------------------------------------------------------------------ */
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => (
@@ -1735,3 +1786,4 @@ if ("serviceWorker" in navigator) {
 }
 
 renderRecentChips();
+applyThemeColor();
