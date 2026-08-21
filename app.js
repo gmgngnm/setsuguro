@@ -602,7 +602,8 @@ async function startDecompose(rawWord) {
   }
   currentMorphemes = morphemes;
 
-  await playCrack(placeholder, currentWord, morphemes);
+  const animStyle = DECOMPOSE_ANIM_STYLES[await kvGet("decompose_anim", "crack")] || DECOMPOSE_ANIM_STYLES.crack;
+  await animStyle.intro(placeholder, currentWord, morphemes);
   placeholder.remove();
 
   if (currentWordMeaning) {
@@ -615,10 +616,8 @@ async function startDecompose(rawWord) {
   const mid = (morphemes.length - 1) / 2;
   morphemes.forEach((m, i) => {
     const el = document.createElement("div");
-    el.className = "morph shatter-in";
-    const dir = i - mid;
-    el.style.setProperty("--from-x", `${-dir * 22}px`);
-    el.style.setProperty("--from-rot", `${dir * 5}deg`);
+    el.className = `morph ${animStyle.tileClass}`;
+    Object.entries(animStyle.tileVars(i, mid)).forEach(([prop, val]) => el.style.setProperty(prop, val));
     el.style.animationDelay = `${i * 0.05}s`;
 
     const partEl = document.createElement("div");
@@ -682,45 +681,106 @@ async function playSpellingFix(placeholder, originalWord, correctedWord) {
   toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
 }
 
-/* 単語ブロックに亀裂が入り、揺れてから砕けるアニメーション */
-async function playCrack(placeholder, word, morphemes) {
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-  placeholder.classList.remove("word-pulse");
-  const rect = placeholder.getBoundingClientRect();
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgNS, "svg");
-  svg.setAttribute("class", "crack-overlay");
-  svg.setAttribute("width", rect.width);
-  svg.setAttribute("height", rect.height);
-
-  let acc = 0;
-  const boundaries = [];
-  morphemes.slice(0, -1).forEach((m) => {
-    acc += (m.part || "").length;
-    boundaries.push(acc / word.length);
-  });
-
-  boundaries.forEach((frac, i) => {
-    const x = rect.width * frac;
-    const steps = 5;
-    const points = Array.from({ length: steps }, (_, j) => {
-      const y = (rect.height / (steps - 1)) * j;
-      const jitter = (j % 2 === 0 ? -1 : 1) * (3 + Math.random() * 4);
-      return `${(x + jitter).toFixed(1)},${y.toFixed(1)}`;
-    });
-    const path = document.createElementNS(svgNS, "path");
-    path.setAttribute("d", `M ${points.join(" L ")}`);
-    path.setAttribute("class", "crack-line");
-    path.style.animationDelay = `${i * 0.06}s`;
-    svg.appendChild(path);
-  });
-
-  placeholder.style.position = "relative";
-  placeholder.appendChild(svg);
-  placeholder.classList.add("crack-shake");
-  await sleep(420);
+function reducedMotion() {
+  return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
+
+/* ---- 分解アニメーション（設定画面から選択可能） ---- */
+const DECOMPOSE_ANIM_STYLES = {
+  crack: {
+    label: "ひび割れ",
+    tileClass: "shatter-in",
+    tileVars(i, mid) {
+      const dir = i - mid;
+      return { "--from-x": `${-dir * 22}px`, "--from-y": "0px", "--from-rot": `${dir * 5}deg` };
+    },
+    /* 単語ブロックに亀裂が入り、揺れてから砕ける */
+    async intro(placeholder, word, morphemes) {
+      if (reducedMotion()) return;
+
+      placeholder.classList.remove("word-pulse");
+      const rect = placeholder.getBoundingClientRect();
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("class", "crack-overlay");
+      svg.setAttribute("width", rect.width);
+      svg.setAttribute("height", rect.height);
+
+      let acc = 0;
+      const boundaries = [];
+      morphemes.slice(0, -1).forEach((m) => {
+        acc += (m.part || "").length;
+        boundaries.push(acc / word.length);
+      });
+
+      boundaries.forEach((frac, i) => {
+        const x = rect.width * frac;
+        const steps = 5;
+        const points = Array.from({ length: steps }, (_, j) => {
+          const y = (rect.height / (steps - 1)) * j;
+          const jitter = (j % 2 === 0 ? -1 : 1) * (3 + Math.random() * 4);
+          return `${(x + jitter).toFixed(1)},${y.toFixed(1)}`;
+        });
+        const path = document.createElementNS(svgNS, "path");
+        path.setAttribute("d", `M ${points.join(" L ")}`);
+        path.setAttribute("class", "crack-line");
+        path.style.animationDelay = `${i * 0.06}s`;
+        svg.appendChild(path);
+      });
+
+      placeholder.style.position = "relative";
+      placeholder.appendChild(svg);
+      placeholder.classList.add("crack-shake");
+      await sleep(420);
+    },
+  },
+
+  burst: {
+    label: "爆発",
+    tileClass: "burst-in",
+    tileVars(i, mid) {
+      const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
+      const dist = 50 + Math.abs(dir) * 26;
+      return {
+        "--from-x": `${Math.sign(dir) * dist}px`,
+        "--from-y": `${-24 - Math.random() * 22}px`,
+        "--from-rot": `${dir * 30}deg`,
+      };
+    },
+    /* 単語ブロックが光って弾ける */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+
+      placeholder.classList.remove("word-pulse");
+      const rect = placeholder.getBoundingClientRect();
+      const ring = document.createElement("div");
+      ring.className = "burst-flash";
+      ring.style.left = `${rect.width / 2}px`;
+      ring.style.top = `${rect.height / 2}px`;
+      placeholder.style.position = "relative";
+      placeholder.appendChild(ring);
+      placeholder.classList.add("burst-shake");
+      await sleep(380);
+    },
+  },
+
+  spin: {
+    label: "回転",
+    tileClass: "spin-in",
+    tileVars(i) {
+      const fromY = i % 2 === 0 ? -38 : 38;
+      const rot = i % 2 === 0 ? -200 : 200;
+      return { "--from-x": "0px", "--from-y": `${fromY}px`, "--from-rot": `${rot}deg` };
+    },
+    /* 単語ブロックが勢いよく回って消える */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.classList.add("spin-wind-up");
+      await sleep(420);
+    },
+  },
+};
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
 async function renderResultScreen() {
@@ -1062,7 +1122,19 @@ async function initSettingsScreen() {
   document.getElementById("key-label").textContent = `${PROVIDER_LABELS[activeProvider]} API キー`;
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
   await refreshUsageDisplay();
+
+  const activeAnim = await kvGet("decompose_anim", "crack");
+  document.querySelectorAll(".anim-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.anim === activeAnim);
+  });
 }
+
+document.querySelectorAll(".anim-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    document.querySelectorAll(".anim-pill").forEach((p) => p.classList.toggle("on", p === pill));
+    await kvSet("decompose_anim", pill.dataset.anim);
+  });
+});
 
 document.querySelectorAll(".provider-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
