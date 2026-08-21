@@ -492,14 +492,14 @@ button{font-family:inherit;cursor:pointer;}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
 /* ---------- Desktop layout ----------
-   スマホ幅(max-width:480px)に最適化された#appを、PCブラウザ等の
-   広いビューポートでは「ページ上に浮かぶカード」として中央配置し、
-   接辞・語呂合わせ・単語帳のカード一覧は横幅を活かして複数列で表示する。 */
+   スマホ幅(max-width:480px)に最適化された#appを、PCブラウザ等の広い
+   ビューポートでは横幅を広げて中央配置する。背景色はbodyと#appで同一の
+   ままにし(別カラーのページ枠は作らない)、背景が画面全体に途切れなく
+   広がるようにする。接辞・語呂合わせ・単語帳のカード一覧は横幅を
+   活かして複数列で表示する。 */
 @media (min-width: 860px){
-  body{background:var(--surface-2);}
   #app{
-    max-width:900px;margin:32px auto;min-height:0;
-    box-shadow:var(--shadow);
+    max-width:900px;margin:0 auto;min-height:0;
   }
   .screen{padding:0 32px 32px;}
   .affix-list, .goro-list{
