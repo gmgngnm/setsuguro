@@ -25,6 +25,11 @@ const LOCAL_AFFIX_DICT = {
   "ex":     { reading: "エクス",   meaning: "外へ",                origin: "ラテン語 ex-" },
   "in":     { reading: "イン",     meaning: "中へ／〜でない",      origin: "ラテン語 in-" },
   "co":     { reading: "コ",       meaning: "共に",                origin: "ラテン語 com-" },
+  "con":    { reading: "コン",     meaning: "共に",                origin: "ラテン語 com- の異形" },
+  "com":    { reading: "コム",     meaning: "共に",                origin: "ラテン語 com-" },
+  "il":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形" },
+  "im":     { reading: "イム",     meaning: "〜でない",            origin: "ラテン語 in- の異形" },
+  "ir":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形" },
   "dict":   { reading: "ジクト",   meaning: "言う",                origin: "ラテン語 dicere" },
   "duc":    { reading: "デュク",   meaning: "導く",                origin: "ラテン語 ducere" },
   "tract":  { reading: "トラクト", meaning: "引く",                origin: "ラテン語 trahere" },
@@ -166,10 +171,14 @@ async function loadApiKey(provider) {
  * 3. 生成AIアダプタ層（OpenAI / Gemini / Claude）
  *    共通インターフェース: decompose(word) / goro(word, morphemes)
  * ------------------------------------------------------------------ */
+const KNOWN_AFFIXES = Object.keys(LOCAL_AFFIX_DICT).join(", ");
+
 const DECOMPOSE_SYS = [
   "あなたは英語の語源・形態素解析の専門家です。",
   "与えられた英単語を接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
-  "分割は教科書的に広く認められている境界を優先し、語根に接尾辞の一部（活用語尾や連結母音など）を含めないでください。",
+  `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${KNOWN_AFFIXES}`,
+  "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
+  "残った中間部分は語根として一つの要素にまとめ、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
   "各要素を連結すると元の単語と完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
