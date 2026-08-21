@@ -99,7 +99,14 @@
       <button class="tab on" id="tab-words">単語帳</button>
       <button class="tab" id="tab-affixes">接辞帳</button>
     </div>
-    <button class="memorize-entry-btn" id="memorize-entry-btn">🎴 暗記モードで学習</button>
+    <button class="memorize-entry-btn" id="memorize-entry-btn">🎴 暗記カード</button>
+    <div class="memorize-mode-sheet" id="memorize-mode-sheet" style="display:none;">
+      <div class="memorize-mode-hint">暗記カードのモードを選択</div>
+      <button class="memorize-mode-btn" id="mode-btn-all" type="button">🗂 全てのカード</button>
+      <button class="memorize-mode-btn" id="mode-btn-unlearned" type="button">📌 未学習済カードのみ</button>
+      <button class="memorize-mode-btn" id="mode-btn-auto" type="button">🔊 カード自動再生</button>
+      <button class="memorize-mode-close" id="memorize-mode-close" type="button">✕ 閉じる</button>
+    </div>
     <div class="book-csv-row" id="book-csv-row">
       <button class="csv-btn" id="csv-export-btn">📤 CSV出力</button>
       <button class="csv-btn" id="csv-import-btn">📥 CSV読み込み</button>
@@ -120,6 +127,7 @@
     <div class="word-meaning" id="word-detail-meaning"></div>
     <div class="section-label">接辞</div>
     <div class="affix-list" id="word-detail-affixes"></div>
+    <div class="memory-tip" id="word-detail-memory-tip" style="display:none;"></div>
     <div class="section-label" style="margin-top:6px;">選択した語呂合わせ</div>
     <div class="goro-list" id="word-detail-goro"></div>
   </section>
