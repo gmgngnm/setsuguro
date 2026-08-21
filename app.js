@@ -1259,6 +1259,7 @@ async function toggleSaveWord() {
       goro_highlight: c ? c.highlight : [],
       provider,
       feedback: idx !== null ? candidateStates[idx].feedback : null,
+      memorized: false,
       created_at: Date.now(),
     });
     toast(c ? "語呂合わせとともに単語を記録帳に保存しました" : "単語を記録帳に保存しました");
@@ -1340,7 +1341,8 @@ async function renderBookList() {
     rows.sort((a, b) => b.created_at - a.created_at);
     if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
     rows.forEach((r) => {
-      const row = buildBookRow(r.word, "", r.created_at, () => openWordDetail(r), async () => {
+      const title = r.memorized ? `✓ ${r.word}` : r.word;
+      const row = buildBookRow(title, "", r.created_at, () => openWordDetail(r), async () => {
         await idbDelete("words", r.id);
         renderBookList();
       });
@@ -1443,7 +1445,161 @@ function buildBookRow(title, sub, createdAt, onTap, onDelete) {
 }
 
 /* ------------------------------------------------------------------ *
- * 11. API設定画面
+ * 11. 暗記モード（単語帳のカードをスワイプで暗記済み／未暗記に仕分け）
+ * ------------------------------------------------------------------ */
+let memorizeQueue = [];
+let memorizeIndex = 0;
+let memorizeRevealed = false;
+
+document.getElementById("memorize-entry-btn").addEventListener("click", startMemorizeMode);
+
+async function startMemorizeMode() {
+  const words = await idbGetAll("words");
+  memorizeQueue = words.sort(() => Math.random() - 0.5);
+  memorizeIndex = 0;
+  showScreen("screen-memorize");
+  renderMemorizeCard();
+}
+
+function renderMemorizeCard() {
+  const emptyEl = document.getElementById("memorize-empty");
+  const swipeEl = document.getElementById("memorize-swipe");
+  const progressEl = document.getElementById("memorize-progress");
+
+  if (!memorizeQueue.length) {
+    emptyEl.textContent = "保存された単語がまだありません";
+    emptyEl.style.display = "block";
+    swipeEl.style.display = "none";
+    progressEl.textContent = "";
+    return;
+  }
+  if (memorizeIndex >= memorizeQueue.length) {
+    emptyEl.textContent = "お疲れさまでした！全カードをチェックしました。";
+    emptyEl.style.display = "block";
+    swipeEl.style.display = "none";
+    progressEl.textContent = "";
+    return;
+  }
+
+  emptyEl.style.display = "none";
+  swipeEl.style.display = "block";
+  progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}`;
+
+  const record = memorizeQueue[memorizeIndex];
+  memorizeRevealed = false;
+
+  const card = document.getElementById("memorize-card");
+  card.classList.toggle("memorized-tag", !!record.memorized);
+  card.style.transition = "none";
+  card.style.transform = "translateX(0)";
+  card.style.opacity = "1";
+  document.getElementById("memorize-reveal").classList.remove("reveal-left", "reveal-right");
+
+  const wordEl = document.getElementById("memorize-word");
+  wordEl.textContent = record.word;
+  wordEl.style.display = "";
+
+  const detailEl = document.getElementById("memorize-detail");
+  detailEl.innerHTML = "";
+  detailEl.style.display = "none";
+}
+
+function revealMemorizeDetail() {
+  if (memorizeRevealed) return;
+  const record = memorizeQueue[memorizeIndex];
+  if (!record) return;
+  memorizeRevealed = true;
+
+  document.getElementById("memorize-word").style.display = "none";
+
+  const detailEl = document.getElementById("memorize-detail");
+  detailEl.innerHTML = "";
+  if (record.word_meaning) {
+    const phoneticHtml = record.word_phonetic ? `<span class="phonetic">[${escapeHtml(record.word_phonetic)}]</span>` : "";
+    const meaningEl = document.createElement("div");
+    meaningEl.className = "word-meaning";
+    meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>`;
+    detailEl.appendChild(meaningEl);
+  }
+  const splitEl = document.createElement("div");
+  splitEl.className = "word-split";
+  (record.morphemes || []).forEach((m, i) => {
+    const tile = document.createElement("div");
+    tile.className = "morph shatter-in";
+    tile.style.animationDelay = `${i * 0.08}s`;
+    tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml([m.reading, m.meaning].filter(Boolean).join(" ・ "))}</div>`;
+    splitEl.appendChild(tile);
+  });
+  detailEl.appendChild(splitEl);
+  detailEl.style.display = "";
+}
+
+async function classifyMemorizeCard(memorized) {
+  const record = memorizeQueue[memorizeIndex];
+  if (!record) return;
+  record.memorized = memorized;
+  await idbPut("words", record);
+
+  const card = document.getElementById("memorize-card");
+  card.style.transition = "transform .25s ease, opacity .25s ease";
+  card.style.transform = `translateX(${memorized ? "-140%" : "140%"}) rotate(${memorized ? "-14" : "14"}deg)`;
+  card.style.opacity = "0";
+  toast(memorized ? "✓ 暗記済みにしました" : "📕 未暗記にしました");
+
+  await sleep(220);
+  memorizeIndex++;
+  renderMemorizeCard();
+}
+
+(function attachMemorizeSwipe() {
+  const card = document.getElementById("memorize-card");
+  const revealEl = document.getElementById("memorize-reveal");
+  let startX = 0, dx = 0, dragging = false, moved = false;
+  const threshold = 90;
+  const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
+
+  card.addEventListener("pointerdown", (e) => {
+    dragging = true; moved = false; startX = clientX(e);
+    card.style.transition = "none";
+  });
+  card.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    dx = clientX(e) - startX;
+    if (Math.abs(dx) > 6) moved = true;
+    card.style.transform = `translateX(${dx}px) rotate(${dx / 24}deg)`;
+    if (dx < 0) {
+      revealEl.textContent = "✓ 暗記済み";
+      revealEl.classList.add("reveal-left");
+      revealEl.classList.remove("reveal-right");
+    } else if (dx > 0) {
+      revealEl.textContent = "📕 未暗記";
+      revealEl.classList.add("reveal-right");
+      revealEl.classList.remove("reveal-left");
+    }
+  });
+  card.addEventListener("pointerup", () => {
+    if (!dragging) return;
+    dragging = false;
+    if (Math.abs(dx) > threshold) {
+      classifyMemorizeCard(dx < 0);
+      return;
+    }
+    card.style.transition = "transform .18s ease";
+    card.style.transform = "translateX(0)";
+    revealEl.classList.remove("reveal-left", "reveal-right");
+    if (!moved) revealMemorizeDetail();
+  });
+  card.addEventListener("pointerleave", () => {
+    if (!dragging) return;
+    dragging = false;
+    card.style.transition = "transform .18s ease";
+    card.style.transform = "translateX(0)";
+    revealEl.classList.remove("reveal-left", "reveal-right");
+  });
+})();
+
+/* ------------------------------------------------------------------ *
+ * 12. API設定画面
  * ------------------------------------------------------------------ */
 const PROVIDER_LABELS = { openai: "ChatGPT", gemini: "Gemini", claude: "Claude", groq: "Groq" };
 let activeProvider = "openai";
