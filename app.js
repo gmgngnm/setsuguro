@@ -184,8 +184,9 @@ const DECOMPOSE_SYS = [
   "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）も必ず記入してください。",
+  "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
+  '{"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -417,14 +418,16 @@ async function decomposeWord(word, provider, apiKey) {
     let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
     let wordMeaning = json.word_meaning || "";
+    let memoryTip = (json.memory_tip || "").slice(0, 100);
 
-    if (!wordMeaning || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
+    if (!wordMeaning || !memoryTip || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
       try {
-        const retryPrompt = `単語: ${word}\n前回の応答ではword_meaningや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
+        const retryPrompt = `単語: ${word}\n前回の応答ではword_meaning/memory_tipや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
         const retryJson = await callAI(provider, apiKey, DECOMPOSE_SYS, retryPrompt, 0.2);
         const retryMorphemes = reconcileWithLocalDict(retryJson.morphemes);
         if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
         if (!wordMeaning) wordMeaning = retryJson.word_meaning || "";
+        if (!memoryTip) memoryTip = (retryJson.memory_tip || "").slice(0, 100);
       } catch (retryErr) {
         console.warn("Stage1 retry for missing meanings failed:", retryErr);
       }
@@ -433,10 +436,10 @@ async function decomposeWord(word, provider, apiKey) {
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
-    return { correctedWord, wasCorrected, meaning: wordMeaning, morphemes };
+    return { correctedWord, wasCorrected, meaning: wordMeaning, memoryTip, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { correctedWord: word, wasCorrected: false, meaning: "", morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, meaning: "", memoryTip: "", morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -531,6 +534,7 @@ async function pushRecentWord(word) {
  * ------------------------------------------------------------------ */
 let currentWord = "";
 let currentWordMeaning = "";
+let currentMemoryTip = "";
 let currentMorphemes = [];
 let currentCandidates = [];
 let candidateStates = []; // { saved, feedback }
@@ -564,6 +568,10 @@ async function startDecompose(rawWord) {
   decomposeWordMeaningEl.textContent = "";
   decomposeWordMeaningEl.classList.remove("show");
   decomposeWordMeaningEl.style.display = "none";
+  const decomposeMemoryTipEl = document.getElementById("decompose-memory-tip");
+  decomposeMemoryTipEl.textContent = "";
+  decomposeMemoryTipEl.classList.remove("show");
+  decomposeMemoryTipEl.style.display = "none";
 
   const placeholder = document.createElement("div");
   placeholder.className = "morph word-pulse";
@@ -575,6 +583,7 @@ async function startDecompose(rawWord) {
     const decomposed = await decomposeWord(word, provider, apiKey);
     morphemes = decomposed.morphemes;
     currentWordMeaning = decomposed.meaning;
+    currentMemoryTip = decomposed.memoryTip;
     if (decomposed.wasCorrected) {
       await playSpellingFix(placeholder, word, decomposed.correctedWord);
       currentWord = decomposed.correctedWord;
@@ -629,7 +638,17 @@ async function startDecompose(rawWord) {
   meaningEls.forEach((el, i) => {
     setTimeout(() => el.classList.add("show"), SHATTER_MS + i * STAGGER_MS);
   });
-  const totalDelay = SHATTER_MS + meaningEls.length * STAGGER_MS + 400;
+  const lastMeaningDelay = SHATTER_MS + meaningEls.length * STAGGER_MS;
+
+  if (currentMemoryTip) {
+    setTimeout(() => {
+      decomposeMemoryTipEl.textContent = currentMemoryTip;
+      decomposeMemoryTipEl.style.display = "block";
+      requestAnimationFrame(() => decomposeMemoryTipEl.classList.add("show"));
+    }, lastMeaningDelay);
+  }
+
+  const totalDelay = lastMeaningDelay + 400;
 
   setTimeout(() => {
     renderResultScreen();
@@ -704,6 +723,10 @@ async function renderResultScreen() {
   const wordMeaningEl = document.getElementById("word-meaning");
   wordMeaningEl.textContent = currentWordMeaning || "";
   wordMeaningEl.style.display = currentWordMeaning ? "block" : "none";
+
+  const memoryTipEl = document.getElementById("memory-tip");
+  memoryTipEl.textContent = currentMemoryTip || "";
+  memoryTipEl.style.display = currentMemoryTip ? "block" : "none";
 
   document.getElementById("result-word-label").textContent = `${currentWord} の接辞`;
   const list = document.getElementById("affix-list");
