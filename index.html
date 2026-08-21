@@ -93,6 +93,7 @@
       <button class="tab on" id="tab-words">単語帳</button>
       <button class="tab" id="tab-affixes">接辞帳</button>
     </div>
+    <button class="memorize-entry-btn" id="memorize-entry-btn">🎴 暗記モードで学習</button>
     <div class="search-bar">🔍<input id="book-search" type="text" placeholder="検索"></div>
     <div class="book-list" id="book-list"></div>
   </section>
@@ -112,7 +113,27 @@
     <div class="goro-list" id="word-detail-goro"></div>
   </section>
 
-  <!-- ============ SCREEN 06: API設定 ============ -->
+  <!-- ============ SCREEN 06: 暗記モード ============ -->
+  <section id="screen-memorize" class="screen">
+    <div class="appbar">
+      <span class="logo">暗記モード</span>
+      <div class="nav-icons">
+        <span class="memorize-progress" id="memorize-progress"></span>
+        <button class="icon-btn" data-nav="book" title="記録帳へ戻る" aria-label="記録帳へ戻る">↰</button>
+      </div>
+    </div>
+    <div class="memorize-hint">タップで意味を表示 / 左スワイプで暗記済み・右スワイプで未暗記</div>
+    <div class="memorize-empty" id="memorize-empty" style="display:none;"></div>
+    <div class="memorize-swipe" id="memorize-swipe" style="display:none;">
+      <div class="memorize-reveal" id="memorize-reveal"></div>
+      <div class="memorize-card" id="memorize-card">
+        <div class="morph memorize-front" id="memorize-word"></div>
+        <div class="memorize-detail" id="memorize-detail" style="display:none;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SCREEN 07: API設定 ============ -->
   <section id="screen-settings" class="screen">
     <div class="appbar">
       <span class="logo">API設定</span>
