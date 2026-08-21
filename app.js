@@ -203,8 +203,8 @@ function goroSystemPrompt(word, morphemes) {
     "各文は簡潔にしてください。目安として40〜60文字程度に収め、冗長な修飾語や説明は削ってください。",
     "文法的な自然さを保った上で、思わずクスッと笑えるようなユーモアのある内容にしてください。意外な組み合わせ、ズッコケるようなオチ、大げさな展開などを取り入れつつも、あくまで一つの筋の通った話として成立させてください。",
     "擬音語・擬態語（例: ドカン、ズキューン、ガタガタ、ワクワク、ニヤリ、ドキドキ など）も、文脈上自然に使える場合に限り取り入れ、コミカルで記憶に残りやすい一文にしてください。無理に押し込む必要はありません。",
-    "候補を3件作ってください。3件は必ずそれぞれ大きく違うものにしてください。具体的には、①登場する人物・場所・物・情景をそれぞれ別のものにする、②文の構造や語順、文末表現を毎回変える、③3件の書き出し（最初の5文字程度）を互いに一致させない、④同じ接辞の読みに対して毎回同じ日本語の当て字を使い回さず、できる限り違う言葉を当てる、⑤3件とも文法的に自然で意味の通った一文になっている、という5点をすべて満たすよう、時間をかけてよく考えてから出力してください。似た内容の言い換えに留まる候補や、意味のつながらない不自然な候補は不可とします。",
-    "候補を3件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
+    "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
+    "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
     '{"candidates":[{"text":"軸とイオンがガチャン!とぶつかって起電力発生、なんとも愉快な実験だ","highlight":[{"part":"dict","in_text":"軸と"}]}]}',
   ].join("\n");
 }
@@ -455,19 +455,6 @@ async function decomposeWord(word, provider, apiKey) {
   }
 }
 
-function candidatesTooSimilar(candidates) {
-  for (let i = 0; i < candidates.length; i++) {
-    for (let j = i + 1; j < candidates.length; j++) {
-      const a = candidates[i].text || "";
-      const b = candidates[j].text || "";
-      let common = 0;
-      while (common < a.length && common < b.length && a[common] === b[common]) common++;
-      if (common >= 6) return true;
-    }
-  }
-  return false;
-}
-
 function goroValidationPrompt(word, morphemes, candidates) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   const candList = candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n");
@@ -480,15 +467,15 @@ function goroValidationPrompt(word, morphemes, candidates) {
     "③簡潔であること（40〜60文字程度が目安。冗長な修飾語や説明がないこと）。",
     "いずれかを満たしていない候補は、対象接辞の読みをすべて維持したまま書き直してください。3点をすべて満たしている候補はそのまま使ってください。",
     candList,
-    "書き直した場合も含め、必ず3件を出力してください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-    '{"candidates":[{"text":"（1件目の最終テキスト）"},{"text":"（2件目の最終テキスト）"},{"text":"（3件目の最終テキスト）"}]}',
+    "書き直した場合も含め、必ず1件を出力してください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"candidates":[{"text":"（最終テキスト）"}]}',
   ].join("\n");
 }
 
 async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey) {
   try {
     const sys = goroValidationPrompt(word, morphemes, candidates);
-    const json = await callAI(provider, apiKey, sys, "各候補を精査し、必要なら書き直して、3件をJSON形式で出力してください。", 0.4);
+    const json = await callAI(provider, apiKey, sys, "候補を精査し、必要なら書き直して、1件をJSON形式で出力してください。", 0.4);
     const revised = (json.candidates || []).map((c, i) => ({
       text: (c && c.text) || candidates[i]?.text || "",
       highlight: candidates[i]?.highlight || [],
@@ -505,20 +492,9 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
 
 async function generateGoro(word, morphemes, provider, apiKey) {
   const sys = goroSystemPrompt(word, morphemes);
-  const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を3件、JSON形式で出力してください。");
+  const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
   let candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
   if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
-
-  if (candidates.length > 1 && candidatesTooSimilar(candidates)) {
-    try {
-      const retryPrompt = "語呂合わせ候補を3件、JSON形式で出力してください。前回の候補は書き出しや情景が似すぎていました。今回は3件それぞれ、書き出し・登場する場面・使う言葉を必ずすべて別のものにしてください。";
-      const retryJson = await callAI(provider, apiKey, sys, retryPrompt);
-      const retryCandidates = (retryJson.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
-      if (retryCandidates.length) candidates = retryCandidates;
-    } catch (retryErr) {
-      console.warn("Goro retry for diversity failed:", retryErr);
-    }
-  }
 
   candidates = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey);
 
@@ -678,7 +654,6 @@ let currentWordPhonetic = "";
 let currentMemoryTip = "";
 let currentMorphemes = [];
 let currentCandidates = [];
-let candidateStates = []; // { feedback }
 let selectedCandidateIdx = null;
 
 async function startDecompose(rawWord) {
@@ -1084,6 +1059,7 @@ function attachAffixSwipe(card, morpheme, wrapEl) {
   card.addEventListener("pointermove", onMove);
   card.addEventListener("pointerup", onUp);
   card.addEventListener("pointerleave", onUp);
+  card.addEventListener("pointercancel", onUp);
 }
 
 async function saveAffixToBook(m, word) {
@@ -1102,7 +1078,7 @@ async function saveAffixToBook(m, word) {
   });
 }
 
-/* ---- 語呂合わせ候補（タップ=読み上げ / 👍👎 / 保存） ---- */
+/* ---- 語呂合わせ候補（タップ=読み上げ・選択 / 保存） ---- */
 async function loadGoroCandidates(provider, apiKey) {
   try {
     currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey);
@@ -1117,36 +1093,25 @@ async function loadGoroCandidates(provider, apiKey) {
     console.error(err);
     return;
   }
-  candidateStates = currentCandidates.map(() => ({ feedback: null }));
   selectedCandidateIdx = null;
   renderGoroList();
   await refreshSaveWordBtn();
   document.getElementById("regen-btn").disabled = false;
 }
 
-function renderGoroList(pop) {
+function renderGoroList() {
   const list = document.getElementById("goro-list");
   list.innerHTML = "";
   currentCandidates.forEach((c, idx) => {
-    const state = candidateStates[idx];
     const picked = selectedCandidateIdx === idx;
-    const badgePop = pop && pop.idx === idx ? " feedback-pop" : "";
-    const badgeHtml = state.feedback
-      ? `<span class="feedback-badge ${state.feedback}${badgePop}">${state.feedback === "up" ? "👍" : "👎"}</span>`
-      : "";
-    const wrap = document.createElement("div");
-    wrap.className = "goro-swipe";
-    wrap.innerHTML = `
-      <div class="reveal"></div>
-      <div class="goro-card${picked ? " picked" : ""}" data-idx="${idx}">
-        ${badgeHtml}
-        <div class="goro-tap" data-idx="${idx}">
-          <span class="spk">🔊</span><span class="txt">「${escapeHtml(c.text)}」</span>
-        </div>
+    const card = document.createElement("div");
+    card.className = `goro-card${picked ? " picked" : ""}`;
+    card.dataset.idx = idx;
+    card.innerHTML = `
+      <div class="goro-tap" data-idx="${idx}">
+        <span class="spk">🔊</span><span class="txt">「${escapeHtml(c.text)}」</span>
       </div>`;
-    const card = wrap.querySelector(".goro-card");
-    attachGoroSwipe(card, idx, wrap);
-    list.appendChild(wrap);
+    list.appendChild(card);
   });
 
   list.querySelectorAll(".goro-tap").forEach((el) => {
@@ -1159,68 +1124,12 @@ function renderGoroList(pop) {
   });
 }
 
-/* 語呂合わせカードを左右にスワイプして評価する（左=👍 高評価 / 右=👎 いまいち） */
-function attachGoroSwipe(card, idx, wrapEl) {
-  let startX = 0, dx = 0, dragging = false;
-  const threshold = 64;
-  const revealEl = wrapEl.querySelector(".reveal");
-
-  const onDown = (e) => {
-    dragging = true; startX = clientX(e); dx = 0;
-    card.style.transition = "none";
-  };
-  const onMove = (e) => {
-    if (!dragging) return;
-    dx = clientX(e) - startX;
-    card.style.transform = `translateX(${dx}px)`;
-    if (dx < 0) {
-      revealEl.textContent = "👍 高評価";
-      revealEl.classList.add("reveal-up");
-      revealEl.classList.remove("reveal-down");
-    } else if (dx > 0) {
-      revealEl.textContent = "👎 いまいち";
-      revealEl.classList.add("reveal-down");
-      revealEl.classList.remove("reveal-up");
-    }
-  };
-  const onUp = () => {
-    if (!dragging) return;
-    dragging = false;
-    if (Math.abs(dx) > threshold) {
-      toggleFeedback(idx, dx < 0 ? "up" : "down");
-      return;
-    }
-    card.style.transition = "transform .18s ease";
-    card.style.transform = "translateX(0)";
-    revealEl.classList.remove("reveal-up", "reveal-down");
-  };
-  const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
-
-  card.addEventListener("pointerdown", onDown);
-  card.addEventListener("pointermove", onMove);
-  card.addEventListener("pointerup", onUp);
-  card.addEventListener("pointerleave", onUp);
-}
-
 async function selectCandidate(idx) {
   selectedCandidateIdx = selectedCandidateIdx === idx ? null : idx;
   document.querySelectorAll(".goro-card").forEach((card) => {
     card.classList.toggle("picked", Number(card.dataset.idx) === selectedCandidateIdx);
   });
   await refreshSaveWordBtn();
-}
-
-function toggleFeedback(idx, kind) {
-  const s = candidateStates[idx];
-  const turnedOn = s.feedback !== kind;
-  s.feedback = s.feedback === kind ? null : kind;
-  renderGoroList({ idx, kind });
-  syncSavedFeedback(idx);
-  if (turnedOn) {
-    toast(kind === "up" ? "👍 高評価を記録しました" : "👎 低評価を記録しました");
-  } else {
-    toast("評価を取り消しました");
-  }
 }
 
 function wordCardId(word, idx) {
@@ -1258,23 +1167,12 @@ async function toggleSaveWord() {
       goro_text: c ? c.text : "",
       goro_highlight: c ? c.highlight : [],
       provider,
-      feedback: idx !== null ? candidateStates[idx].feedback : null,
       memorized: false,
       created_at: Date.now(),
     });
     toast(c ? "語呂合わせとともに単語を単語帳に保存しました" : "単語を単語帳に保存しました");
   }
   await refreshSaveWordBtn();
-}
-
-async function syncSavedFeedback(idx) {
-  if (idx !== selectedCandidateIdx) return;
-  const id = currentWordRecordId();
-  const existing = await idbGet("words", id);
-  if (existing) {
-    existing.feedback = candidateStates[idx].feedback;
-    await idbPut("words", existing);
-  }
 }
 
 document.getElementById("save-word-btn").addEventListener("click", toggleSaveWord);
@@ -1303,7 +1201,6 @@ async function submitCustomGoro() {
 
   const idx = currentCandidates.length;
   currentCandidates.push({ text, highlight: [] });
-  candidateStates.push({ feedback: null });
   selectedCandidateIdx = idx;
   renderGoroList();
   await refreshSaveWordBtn();
@@ -1367,7 +1264,7 @@ async function renderBookList() {
 /* --- CSV出力 / 読み込み（単語帳） --- */
 const CSV_COLUMNS = [
   "id", "word", "word_meaning", "word_phonetic", "morphemes",
-  "goro_text", "goro_highlight", "provider", "feedback", "memorized", "created_at",
+  "goro_text", "goro_highlight", "provider", "memorized", "created_at",
 ];
 
 function csvField(value) {
@@ -1387,7 +1284,6 @@ function wordsToCSV(records) {
       r.goro_text || "",
       JSON.stringify(r.goro_highlight || []),
       r.provider || "",
-      r.feedback ?? "",
       r.memorized ? "1" : "0",
       r.created_at || "",
     ].map(csvField).join(","));
@@ -1450,7 +1346,6 @@ function csvToWords(text) {
       goro_text: get(row, "goro_text"),
       goro_highlight: goroHighlight,
       provider: get(row, "provider"),
-      feedback: get(row, "feedback") || null,
       memorized: memorizedRaw === "1" || memorizedRaw === "true",
       created_at: Number(get(row, "created_at")) || Date.now(),
     });
