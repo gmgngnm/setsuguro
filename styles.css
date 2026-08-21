@@ -104,13 +104,37 @@ button{font-family:inherit;cursor:pointer;}
   font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
   animation:pop .5s ease both, wordPulse 1.2s ease-in-out .5s infinite;
 }
+.morph.crack-shake{ animation:shake .4s ease; }
+.morph.shatter-in{
+  animation:shatterIn .5s cubic-bezier(.22,1,.36,1) both;
+}
+.crack-overlay{position:absolute; top:0; left:0; pointer-events:none; overflow:visible;}
+.crack-line{
+  fill:none; stroke:var(--danger); stroke-width:1.5; stroke-linecap:round;
+  stroke-dasharray:80; stroke-dashoffset:80; animation:crackDraw .3s ease forwards;
+}
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
+@keyframes shake{
+  0%,100%{transform:translateX(0) rotate(0);}
+  20%{transform:translateX(-4px) rotate(-1.5deg);}
+  40%{transform:translateX(4px) rotate(1.5deg);}
+  60%{transform:translateX(-3px) rotate(-1deg);}
+  80%{transform:translateX(3px) rotate(1deg);}
+}
+@keyframes crackDraw{to{stroke-dashoffset:0;}}
+@keyframes shatterIn{
+  from{ transform:translateX(var(--from-x,0)) rotate(var(--from-rot,0)) scale(.75); opacity:0; }
+  to{ transform:translateX(0) rotate(0) scale(1); opacity:1; }
+}
 .spinner-row{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:24px;}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--accent);animation:spin 1s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
-@media (prefers-reduced-motion: reduce){ .morph, .morph.word-pulse, .spinner{animation:none;} .morph-meaning{transition:none;} }
+@media (prefers-reduced-motion: reduce){
+  .morph, .morph.word-pulse, .morph.crack-shake, .morph.shatter-in, .crack-line, .spinner{animation:none;}
+  .morph-meaning{transition:none;}
+}
 
 /* Result screen: affix cards + goro cards */
 .section-label{
