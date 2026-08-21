@@ -589,20 +589,37 @@ wordInput.addEventListener("keydown", (e) => {
 });
 
 const micBtn = document.getElementById("mic-btn");
+const micOverlay = document.getElementById("mic-overlay");
+const micOverlayBtn = document.getElementById("mic-overlay-btn");
+const micOverlayHint = document.getElementById("mic-overlay-hint");
+const micOverlayClose = document.getElementById("mic-overlay-close");
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (!SpeechRecognitionCtor) {
   micBtn.style.display = "none";
 } else {
-  let recognizing = false;
+  let recognition = null;
+  let listening = false;
+
   micBtn.addEventListener("click", () => {
-    if (recognizing) return;
-    const recognition = new SpeechRecognitionCtor();
+    micOverlayHint.textContent = "長押しして話す";
+    micOverlay.style.display = "flex";
+  });
+  micOverlayClose.addEventListener("click", () => {
+    if (listening) recognition.stop();
+    micOverlay.style.display = "none";
+  });
+
+  const startListening = () => {
+    if (listening) return;
+    listening = true;
+    recognition = new SpeechRecognitionCtor();
     recognition.lang = "en-US";
+    recognition.continuous = true;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
-    recognizing = true;
-    micBtn.classList.add("listening");
+    micOverlayBtn.classList.add("listening");
+    micOverlayHint.textContent = "話してください…";
     recognition.onresult = (e) => {
       const transcript = (e.results[0]?.[0]?.transcript || "").trim();
       const firstWord = transcript.split(/\s+/)[0] || "";
@@ -614,11 +631,21 @@ if (!SpeechRecognitionCtor) {
       toast("音声入力に失敗しました");
     };
     recognition.onend = () => {
-      recognizing = false;
-      micBtn.classList.remove("listening");
+      listening = false;
+      micOverlayBtn.classList.remove("listening");
+      micOverlay.style.display = "none";
     };
     recognition.start();
-  });
+  };
+  const stopListening = () => {
+    if (!listening || !recognition) return;
+    recognition.stop();
+  };
+
+  micOverlayBtn.addEventListener("pointerdown", startListening);
+  micOverlayBtn.addEventListener("pointerup", stopListening);
+  micOverlayBtn.addEventListener("pointerleave", stopListening);
+  micOverlayBtn.addEventListener("pointercancel", stopListening);
 }
 
 async function renderRecentChips() {
