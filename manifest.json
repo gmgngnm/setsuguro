@@ -1,0 +1,15 @@
+{
+  "name": "セツゴロ",
+  "short_name": "セツゴロ",
+  "description": "英単語を接辞に分解し、生成AIが音ベースの語呂合わせを作る暗記アプリ",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F1F3EE",
+  "theme_color": "#1F6F63",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

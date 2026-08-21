@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>セツゴロ</title>
+<meta name="description" content="英単語を接辞に分解し、音の語呂合わせで覚えるアプリ">
+<meta name="theme-color" content="#1F6F63">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ SCREEN 01: ホーム ============ -->
+  <section id="screen-home" class="screen active">
+    <div class="appbar">
+      <button class="logo" data-nav="home" aria-label="ホームへ">セツゴロ</button>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="book" title="記録帳" aria-label="記録帳">📒</button>
+        <button class="icon-btn" data-nav="settings" title="設定" aria-label="設定">⚙</button>
+      </div>
+    </div>
+    <div class="s-input-row">
+      <input id="word-input" type="text" placeholder="単語を入力" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <span class="enter-hint">⏎</span>
+    </div>
+    <div class="home-error" id="home-error"></div>
+    <div class="chip-row" id="recent-chips"></div>
+  </section>
+
+  <!-- ============ SCREEN 02: 分解アニメーション ============ -->
+  <section id="screen-decompose" class="screen">
+    <div class="appbar">
+      <button class="logo" data-nav="home" aria-label="ホームへ">セツゴロ</button>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="book" title="記録帳" aria-label="記録帳">📒</button>
+        <button class="icon-btn" data-nav="settings" title="設定" aria-label="設定">⚙</button>
+      </div>
+    </div>
+    <div class="word-split" id="word-split"></div>
+    <div class="spinner-row" id="decompose-spinner">
+      <div class="spinner"></div>
+      <span class="spin-label" id="decompose-label">接辞に分解中…</span>
+    </div>
+  </section>
+
+  <!-- ============ SCREEN 03: 接辞 & 語呂合わせ候補 ============ -->
+  <section id="screen-result" class="screen">
+    <div class="appbar">
+      <button class="logo" data-nav="home" aria-label="ホームへ">セツゴロ</button>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="book" title="記録帳" aria-label="記録帳">📒</button>
+        <button class="icon-btn" data-nav="settings" title="設定" aria-label="設定">⚙</button>
+      </div>
+    </div>
+    <div class="section-label"><span id="result-word-label">の接辞</span><span class="hint-text" id="swipe-hint">← スライドで保存</span></div>
+    <div class="affix-list" id="affix-list"></div>
+
+    <div class="section-label" style="margin-top:6px;">語呂合わせ候補 ↓ スクロール</div>
+    <div class="goro-list" id="goro-list"></div>
+    <button class="regen-btn" id="regen-btn">🔄 語呂を作り直す</button>
+  </section>
+
+  <!-- ============ SCREEN 04: 記録帳 ============ -->
+  <section id="screen-book" class="screen">
+    <div class="appbar">
+      <span class="logo">記録帳</span>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="home" title="ホーム" aria-label="ホームへ戻る">🏠</button>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab on" id="tab-words">単語帳</button>
+      <button class="tab" id="tab-affixes">接辞帳</button>
+    </div>
+    <div class="search-bar">🔍<input id="book-search" type="text" placeholder="検索"></div>
+    <div class="book-list" id="book-list"></div>
+  </section>
+
+  <!-- ============ SCREEN 05: API設定 ============ -->
+  <section id="screen-settings" class="screen">
+    <div class="appbar">
+      <span class="logo">API設定</span>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="home" title="閉じる" aria-label="閉じる">✕</button>
+      </div>
+    </div>
+
+    <div class="section-label">利用する生成AI</div>
+    <div class="provider-row" id="provider-row">
+      <button class="provider-pill on" data-provider="openai">ChatGPT</button>
+      <button class="provider-pill" data-provider="gemini">Gemini</button>
+      <button class="provider-pill" data-provider="claude">Claude</button>
+    </div>
+
+    <div class="form-row">
+      <label id="key-label">OpenAI API キー</label>
+      <div class="form-field">
+        <input id="api-key-input" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        <button id="toggle-key-visibility" type="button" aria-label="表示切替">👁</button>
+      </div>
+    </div>
+
+    <div class="usage-card">
+      <div class="usage-row"><span>今月の呼び出し</span><b id="usage-calls">0 回</b></div>
+      <div class="usage-row"><span>推定トークン消費</span><b id="usage-tokens">約 0</b></div>
+      <div class="usage-note">概算値です。正確な金額は各社の請求画面でご確認ください。</div>
+    </div>
+
+    <div class="lockrow">🔒 キーは端末内に暗号化して保存され、セツゴロの分解・語呂合わせ生成にのみ使用されます。</div>
+
+    <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
+    <div class="settings-status" id="settings-status"></div>
+  </section>
+
+  <div id="toast"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
