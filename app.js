@@ -1411,12 +1411,15 @@ async function selectCandidate(idx) {
   await refreshSaveWordBtn();
 }
 
-function wordCardId(word, idx) {
-  return `${word.toLowerCase()}__${idx}`;
+/* 単語帳のレコードIDは単語そのものだけで決める(選択中の語呂候補indexを含めない)。
+   含めてしまうと、同じ単語を語呂合わせを変えて後から保存した際に別レコードとして
+   二重登録されてしまう */
+function wordCardId(word) {
+  return word.toLowerCase();
 }
 
 function currentWordRecordId() {
-  return wordCardId(currentWord, selectedCandidateIdx !== null ? selectedCandidateIdx : "plain");
+  return wordCardId(currentWord);
 }
 
 async function refreshSaveWordBtn() {
@@ -1430,12 +1433,16 @@ async function refreshSaveWordBtn() {
 async function toggleSaveWord() {
   const id = currentWordRecordId();
   const existing = await idbGet("words", id);
-  if (existing) {
+  const idx = selectedCandidateIdx;
+  const c = idx !== null ? currentCandidates[idx] : null;
+  const newGoroText = c ? c.text : "";
+
+  /* 既に保存済みでも、選択中の語呂合わせが保存内容と同じ時だけ「取り消し」扱いにする。
+     語呂合わせを変えて再保存した場合は、既存レコードを上書き更新する */
+  if (existing && existing.goro_text === newGoroText) {
     await idbDelete("words", id);
     toast("保存を取り消しました");
   } else {
-    const idx = selectedCandidateIdx;
-    const c = idx !== null ? currentCandidates[idx] : null;
     const provider = await kvGet("provider", "openai");
     await idbPut("words", {
       id,
@@ -1444,13 +1451,13 @@ async function toggleSaveWord() {
       word_phonetic: currentWordPhonetic,
       word_memory_tip: currentMemoryTip,
       morphemes: currentMorphemes,
-      goro_text: c ? c.text : "",
+      goro_text: newGoroText,
       goro_highlight: c ? c.highlight : [],
       provider,
-      memorized: false,
-      created_at: Date.now(),
+      memorized: existing ? existing.memorized : false,
+      created_at: existing ? existing.created_at : Date.now(),
     });
-    toast(c ? "語呂合わせとともに単語を単語帳に保存しました" : "単語を単語帳に保存しました");
+    toast(existing ? "単語帳の内容を上書きしました" : (c ? "語呂合わせとともに単語を単語帳に保存しました" : "単語を単語帳に保存しました"));
   }
   await refreshSaveWordBtn();
 }
@@ -1676,7 +1683,7 @@ function csvToWords(text) {
     try { goroHighlight = JSON.parse(get(row, "goro_highlight") || "[]"); } catch { goroHighlight = []; }
     const memorizedRaw = get(row, "memorized").trim().toLowerCase();
     out.push({
-      id: get(row, "id").trim() || wordCardId(word, "plain"),
+      id: get(row, "id").trim() || wordCardId(word),
       word,
       word_meaning: get(row, "word_meaning"),
       word_phonetic: get(row, "word_phonetic"),
@@ -1887,15 +1894,24 @@ function renderMemorizeCard() {
   if (!memorizeQueue.length) {
     clearMemorizeAutoTimer();
     emptyEl.textContent = memorizeEmptyMessage;
-    emptyEl.style.display = "block";
+    emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
     progressEl.textContent = "";
     return;
   }
   if (memorizeIndex >= memorizeQueue.length) {
     clearMemorizeAutoTimer();
-    emptyEl.textContent = "お疲れさまでした！全カードをチェックしました。";
-    emptyEl.style.display = "block";
+    emptyEl.innerHTML = "";
+    const msgEl = document.createElement("div");
+    msgEl.textContent = "お疲れさまでした！全カードをチェックしました。";
+    emptyEl.appendChild(msgEl);
+    const finishBtn = document.createElement("button");
+    finishBtn.type = "button";
+    finishBtn.className = "memorize-finish-btn";
+    finishBtn.textContent = "終了";
+    finishBtn.addEventListener("click", () => showScreen("screen-book"));
+    emptyEl.appendChild(finishBtn);
+    emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
     progressEl.textContent = "";
     return;
@@ -2005,6 +2021,23 @@ function revealMemorizeDetail() {
   }
 }
 
+/* 裏面を表示中に再タップされた時、表面(単語のみ)に戻す */
+function hideMemorizeDetail() {
+  if (!memorizeRevealed) return;
+  const record = memorizeQueue[memorizeIndex];
+  if (!record) return;
+  memorizeRevealed = false;
+  clearMemorizeAutoTimer();
+
+  document.getElementById("memorize-word").style.display = "";
+  document.getElementById("memorize-detail").style.display = "none";
+  document.getElementById("memorize-extra").style.display = "none";
+
+  if (memorizeSpeechOn) speak(record.word, null, "en-US");
+
+  scheduleMemorizeAutoPlay();
+}
+
 async function classifyMemorizeCard(memorized) {
   const record = memorizeQueue[memorizeIndex];
   if (!record) return;
@@ -2061,7 +2094,10 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
     card.style.transition = "transform .18s ease";
     card.style.transform = "translateX(0)";
     revealEl.classList.remove("reveal-left", "reveal-right");
-    if (!moved) revealMemorizeDetail();
+    if (!moved) {
+      if (memorizeRevealed) hideMemorizeDetail();
+      else revealMemorizeDetail();
+    }
   };
   card.addEventListener("pointerup", onUp);
   card.addEventListener("pointercancel", onUp);
