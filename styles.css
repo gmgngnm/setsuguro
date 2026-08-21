@@ -272,6 +272,11 @@ button{font-family:inherit;cursor:pointer;}
 .goro-card{
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
   box-shadow:var(--shadow);position:relative;
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+.goro-card.picked{
+  border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent), var(--shadow);
 }
 .goro-tap{display:flex;align-items:flex-start;gap:10px;cursor:pointer;}
 .goro-tap .spk{flex-shrink:0;font-size:16px;margin-top:1px;}
@@ -292,11 +297,6 @@ button{font-family:inherit;cursor:pointer;}
   100%{transform:scale(1);}
 }
 @media (prefers-reduced-motion: reduce){ .act-btn.feedback-pop{animation:none;} }
-.pick-btn{
-  display:flex;align-items:center;gap:5px;background:none;border:none;
-  font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-faint);font-weight:600;
-}
-.pick-btn.on{color:var(--accent);}
 .save-word-btn{
   display:block;width:100%;margin-top:14px;
   background:var(--accent);color:#fff;border:none;border-radius:16px;
