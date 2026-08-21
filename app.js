@@ -265,13 +265,38 @@ const AI_ADAPTERS = {
   },
 };
 
+const RETRYABLE_STATUS = [429, 500, 502, 503, 504];
+const RETRY_DELAYS_MS = [1000, 2000, 4000];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function statusFromError(err) {
+  const match = /\((\d+)\)/.exec(err.message || "");
+  return match ? Number(match[1]) : null;
+}
+
 async function callAI(provider, apiKey, systemPrompt, userPrompt) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
   if (!apiKey) throw new Error("APIキーが設定されていません");
-  const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt);
-  await bumpUsage(tokens);
-  return extractJson(text);
+
+  let lastErr;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt);
+      await bumpUsage(tokens);
+      return extractJson(text);
+    } catch (err) {
+      lastErr = err;
+      const status = statusFromError(err);
+      const canRetry = RETRYABLE_STATUS.includes(status) && attempt < RETRY_DELAYS_MS.length;
+      if (!canRetry) throw err;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastErr;
 }
 
 /* ------------------------------------------------------------------ *
