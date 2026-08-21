@@ -1262,7 +1262,7 @@ async function toggleSaveWord() {
       memorized: false,
       created_at: Date.now(),
     });
-    toast(c ? "語呂合わせとともに単語を記録帳に保存しました" : "単語を記録帳に保存しました");
+    toast(c ? "語呂合わせとともに単語を単語帳に保存しました" : "単語を単語帳に保存しました");
   }
   await refreshSaveWordBtn();
 }
@@ -1311,7 +1311,7 @@ async function submitCustomGoro() {
   addGoroInput.value = "";
   addGoroForm.style.display = "none";
   addGoroBtn.style.display = "block";
-  toast("自分の語呂合わせを選択しました。下の「単語を保存」で記録帳に保存できます。");
+  toast("自分の語呂合わせを選択しました。下の「単語を保存」で単語帳に保存できます。");
 }
 
 document.getElementById("add-goro-submit").addEventListener("click", submitCustomGoro);
@@ -1320,7 +1320,7 @@ addGoroInput.addEventListener("keydown", (e) => {
 });
 
 /* ------------------------------------------------------------------ *
- * 10. 記録帳（単語帳 / 接辞帳）
+ * 10. 単語帳（単語 / 接辞）
  * ------------------------------------------------------------------ */
 let bookTab = "words";
 document.getElementById("tab-words").addEventListener("click", () => { bookTab = "words"; renderBookList(); });
@@ -1330,6 +1330,7 @@ document.getElementById("book-search").addEventListener("input", () => renderBoo
 async function renderBookList() {
   document.getElementById("tab-words").classList.toggle("on", bookTab === "words");
   document.getElementById("tab-affixes").classList.toggle("on", bookTab === "affixes");
+  document.getElementById("book-csv-row").style.display = bookTab === "words" ? "flex" : "none";
 
   const q = document.getElementById("book-search").value.trim().toLowerCase();
   const listEl = document.getElementById("book-list");
@@ -1362,6 +1363,130 @@ async function renderBookList() {
     });
   }
 }
+
+/* --- CSV出力 / 読み込み（単語帳） --- */
+const CSV_COLUMNS = [
+  "id", "word", "word_meaning", "word_phonetic", "morphemes",
+  "goro_text", "goro_highlight", "provider", "feedback", "memorized", "created_at",
+];
+
+function csvField(value) {
+  const s = value === null || value === undefined ? "" : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function wordsToCSV(records) {
+  const lines = [CSV_COLUMNS.join(",")];
+  records.forEach((r) => {
+    lines.push([
+      r.id,
+      r.word,
+      r.word_meaning || "",
+      r.word_phonetic || "",
+      JSON.stringify(r.morphemes || []),
+      r.goro_text || "",
+      JSON.stringify(r.goro_highlight || []),
+      r.provider || "",
+      r.feedback ?? "",
+      r.memorized ? "1" : "0",
+      r.created_at || "",
+    ].map(csvField).join(","));
+  });
+  return lines.join("\r\n");
+}
+
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field); field = "";
+    } else if (ch === "\n") {
+      row.push(field); rows.push(row); row = []; field = "";
+    } else if (ch === "\r") {
+      // ignore; paired \n handles the line break
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => !(r.length === 1 && r[0] === ""));
+}
+
+function csvToWords(text) {
+  const rows = parseCSV(text);
+  if (!rows.length) return [];
+  const headers = rows[0].map((h) => h.trim());
+  const colIndex = {};
+  headers.forEach((h, i) => { colIndex[h] = i; });
+  const get = (row, key) => (colIndex[key] !== undefined ? (row[colIndex[key]] ?? "") : "");
+
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const word = get(row, "word").trim();
+    if (!word) continue;
+    let morphemes = [];
+    try { morphemes = JSON.parse(get(row, "morphemes") || "[]"); } catch { morphemes = []; }
+    let goroHighlight = [];
+    try { goroHighlight = JSON.parse(get(row, "goro_highlight") || "[]"); } catch { goroHighlight = []; }
+    const memorizedRaw = get(row, "memorized").trim().toLowerCase();
+    out.push({
+      id: get(row, "id").trim() || wordCardId(word, "plain"),
+      word,
+      word_meaning: get(row, "word_meaning"),
+      word_phonetic: get(row, "word_phonetic"),
+      morphemes,
+      goro_text: get(row, "goro_text"),
+      goro_highlight: goroHighlight,
+      provider: get(row, "provider"),
+      feedback: get(row, "feedback") || null,
+      memorized: memorizedRaw === "1" || memorizedRaw === "true",
+      created_at: Number(get(row, "created_at")) || Date.now(),
+    });
+  }
+  return out;
+}
+
+document.getElementById("csv-export-btn").addEventListener("click", async () => {
+  const rows = await idbGetAll("words");
+  if (!rows.length) { toast("保存された単語がありません"); return; }
+  const csv = "\uFEFF" + wordsToCSV(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `engolo-wordbook-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast(`${rows.length}件をCSV出力しました`);
+});
+
+const csvImportInput = document.getElementById("csv-import-input");
+document.getElementById("csv-import-btn").addEventListener("click", () => csvImportInput.click());
+csvImportInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const text = await file.text();
+  const records = csvToWords(text);
+  if (!records.length) { toast("読み込めるデータが見つかりませんでした"); return; }
+  for (const r of records) await idbPut("words", r);
+  toast(`${records.length}件の単語を読み込みました`);
+  if (bookTab === "words") renderBookList();
+});
 
 /* 単語帳の1件をタップした際に、単語・意味・接辞・接辞の意味・語呂合わせをまとめて表示する */
 function openWordDetail(record) {
