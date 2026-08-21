@@ -668,16 +668,13 @@ async function playSpellingFix(placeholder, originalWord, correctedWord) {
     return;
   }
   placeholder.classList.remove("word-pulse");
-  placeholder.classList.add("typo-shake");
-  await sleep(400);
-  placeholder.classList.remove("typo-shake");
-  placeholder.classList.add("typo-out");
-  await sleep(180);
+  placeholder.classList.add("card-flip-out");
+  await sleep(250);
   placeholder.textContent = correctedWord;
-  placeholder.classList.remove("typo-out");
-  placeholder.classList.add("typo-in");
-  await sleep(220);
-  placeholder.classList.remove("typo-in");
+  placeholder.classList.remove("card-flip-out");
+  placeholder.classList.add("card-flip-in");
+  await sleep(250);
+  placeholder.classList.remove("card-flip-in");
   toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
 }
 
