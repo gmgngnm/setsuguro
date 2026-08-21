@@ -990,7 +990,8 @@ function renderGoroList(pop) {
     const upPop = pop && pop.idx === idx && pop.kind === "up" ? " feedback-pop" : "";
     const downPop = pop && pop.idx === idx && pop.kind === "down" ? " feedback-pop" : "";
     const card = document.createElement("div");
-    card.className = "goro-card";
+    card.className = `goro-card${picked ? " picked" : ""}`;
+    card.dataset.idx = idx;
     card.innerHTML = `
       <div class="goro-tap" data-idx="${idx}">
         <span class="spk">🔊</span><span class="txt">「${escapeHtml(c.text)}」</span>
@@ -998,7 +999,6 @@ function renderGoroList(pop) {
       <div class="goro-actions">
         <button class="act-btn up ${state.feedback === "up" ? "on" : ""}${upPop}" data-idx="${idx}" aria-label="良い">👍</button>
         <button class="act-btn down ${state.feedback === "down" ? "on" : ""}${downPop}" data-idx="${idx}" aria-label="いまいち">👎</button>
-        <button class="pick-btn ${picked ? "on" : ""}" data-idx="${idx}">${picked ? "✓ 選択中" : "⭐ これにする"}</button>
       </div>`;
     list.appendChild(card);
   });
@@ -1008,6 +1008,7 @@ function renderGoroList(pop) {
       const idx = Number(el.dataset.idx);
       el.classList.add("speaking");
       speak(currentCandidates[idx].text, () => el.classList.remove("speaking"));
+      selectCandidate(idx);
     });
   });
   list.querySelectorAll(".act-btn.up").forEach((el) => {
@@ -1016,14 +1017,13 @@ function renderGoroList(pop) {
   list.querySelectorAll(".act-btn.down").forEach((el) => {
     el.addEventListener("click", () => toggleFeedback(Number(el.dataset.idx), "down"));
   });
-  list.querySelectorAll(".pick-btn").forEach((el) => {
-    el.addEventListener("click", () => selectCandidate(Number(el.dataset.idx)));
-  });
 }
 
 async function selectCandidate(idx) {
   selectedCandidateIdx = selectedCandidateIdx === idx ? null : idx;
-  renderGoroList();
+  document.querySelectorAll(".goro-card").forEach((card) => {
+    card.classList.toggle("picked", Number(card.dataset.idx) === selectedCandidateIdx);
+  });
   await refreshSaveWordBtn();
 }
 
