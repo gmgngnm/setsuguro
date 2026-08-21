@@ -498,7 +498,7 @@ button{font-family:inherit;cursor:pointer;}
 @media (min-width: 860px){
   body{background:var(--surface-2);}
   #app{
-    max-width:900px;margin:32px auto;min-height:calc(100vh - 64px);
+    max-width:900px;margin:32px auto;min-height:0;
     box-shadow:var(--shadow);
   }
   .screen{padding:0 32px 32px;}
@@ -509,4 +509,6 @@ button{font-family:inherit;cursor:pointer;}
     display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;
   }
   .mic-overlay{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
+  #screen-result{position:relative;}
+  .save-word-btn{position:absolute;}
 }
