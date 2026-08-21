@@ -550,6 +550,39 @@ wordInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") startDecompose(wordInput.value);
 });
 
+const micBtn = document.getElementById("mic-btn");
+const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (!SpeechRecognitionCtor) {
+  micBtn.style.display = "none";
+} else {
+  let recognizing = false;
+  micBtn.addEventListener("click", () => {
+    if (recognizing) return;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognizing = true;
+    micBtn.classList.add("listening");
+    recognition.onresult = (e) => {
+      const transcript = (e.results[0]?.[0]?.transcript || "").trim();
+      const firstWord = transcript.split(/\s+/)[0] || "";
+      wordInput.value = firstWord;
+      homeError.textContent = "";
+      if (firstWord) startDecompose(firstWord);
+    };
+    recognition.onerror = () => {
+      toast("音声入力に失敗しました");
+    };
+    recognition.onend = () => {
+      recognizing = false;
+      micBtn.classList.remove("listening");
+    };
+    recognition.start();
+  });
+}
+
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
   const wrap = document.getElementById("recent-chips");

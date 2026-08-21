@@ -82,6 +82,8 @@ button{font-family:inherit;cursor:pointer;}
 }
 #word-input::placeholder{color:var(--ink-faint);}
 .enter-hint{color:var(--accent);font-size:18px;}
+.mic-btn{background:none;border:none;font-size:18px;color:var(--ink-faint);padding:2px;line-height:1;}
+.mic-btn.listening{color:var(--danger);animation:pulse .6s ease-in-out infinite;}
 .chip-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;}
 .chip{
   background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
