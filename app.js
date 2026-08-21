@@ -1683,6 +1683,10 @@ function renderMemorizeCard() {
   detailEl.innerHTML = "";
   detailEl.style.display = "none";
 
+  const extraEl = document.getElementById("memorize-extra");
+  extraEl.innerHTML = "";
+  extraEl.style.display = "none";
+
   scheduleMemorizeAutoPlay();
 }
 
@@ -1726,12 +1730,15 @@ function revealMemorizeDetail() {
     splitEl.appendChild(tile);
   });
   detailEl.appendChild(splitEl);
+  detailEl.style.display = "";
 
+  const extraEl = document.getElementById("memorize-extra");
+  extraEl.innerHTML = "";
   if (record.word_memory_tip) {
     const tipEl = document.createElement("div");
     tipEl.className = "memory-tip";
     tipEl.textContent = record.word_memory_tip;
-    detailEl.appendChild(tipEl);
+    extraEl.appendChild(tipEl);
   }
 
   if (record.goro_text) {
@@ -1739,15 +1746,13 @@ function revealMemorizeDetail() {
     goroCard.className = "goro-card";
     goroCard.innerHTML = `<div class="goro-tap"><span class="spk">🔊</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
     const tap = goroCard.querySelector(".goro-tap");
-    tap.addEventListener("click", (e) => {
-      e.stopPropagation();
+    tap.addEventListener("click", () => {
       tap.classList.add("speaking");
       speak(record.goro_text, () => tap.classList.remove("speaking"));
     });
-    detailEl.appendChild(goroCard);
+    extraEl.appendChild(goroCard);
   }
-
-  detailEl.style.display = "";
+  extraEl.style.display = extraEl.children.length ? "flex" : "none";
 
   if (memorizeSpeechOn) {
     const toSpeak = [record.word, record.word_meaning].filter(Boolean).join("、");
@@ -1776,6 +1781,9 @@ async function classifyMemorizeCard(memorized) {
   memorizeIndex++;
   renderMemorizeCard();
 }
+
+document.getElementById("memorize-btn-correct").addEventListener("click", () => classifyMemorizeCard(true));
+document.getElementById("memorize-btn-wrong").addEventListener("click", () => classifyMemorizeCard(false));
 
 (function attachMemorizeSwipe() {
   const card = document.getElementById("memorize-card");
