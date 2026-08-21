@@ -481,7 +481,11 @@ function showScreen(id) {
 document.querySelectorAll("[data-nav]").forEach((el) => {
   el.addEventListener("click", () => {
     const target = el.dataset.nav;
-    if (target === "home") showScreen("screen-home");
+    if (target === "home") {
+      showScreen("screen-home");
+      document.getElementById("word-input").value = "";
+      document.getElementById("home-error").textContent = "";
+    }
     if (target === "book") { showScreen("screen-book"); renderBookList(); }
     if (target === "settings") { showScreen("screen-settings"); refreshUsageDisplay(); }
   });
