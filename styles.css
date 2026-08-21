@@ -160,6 +160,12 @@ button{font-family:inherit;cursor:pointer;}
   background:color-mix(in srgb, var(--accent) 8%, var(--surface));border:1px solid var(--line);
   border-radius:12px;padding:12px 14px;font-size:14px;color:var(--ink);line-height:1.5;
 }
+#decompose-word-meaning{
+  opacity:0; transform:translateY(4px); transition:opacity .4s ease, transform .4s ease;
+  margin-bottom:4px; max-width:min(90vw, 320px);
+}
+#decompose-word-meaning.show{opacity:1; transform:translateY(0);}
+@media (prefers-reduced-motion: reduce){ #decompose-word-meaning{transition:none;} }
 .section-label{
   font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);
   font-family:'JetBrains Mono',monospace;display:flex;justify-content:space-between;align-items:baseline;
