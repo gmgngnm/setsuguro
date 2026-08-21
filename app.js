@@ -551,6 +551,10 @@ function speak(text, onEnd) {
  * 6. 画面遷移
  * ------------------------------------------------------------------ */
 function showScreen(id) {
+  if (id !== "screen-memorize" && memorizeAutoPlay) {
+    memorizeAutoPlay = false;
+    clearMemorizeAutoTimer();
+  }
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
 }
@@ -1188,6 +1192,7 @@ async function toggleSaveWord() {
       word: currentWord,
       word_meaning: currentWordMeaning,
       word_phonetic: currentWordPhonetic,
+      word_memory_tip: currentMemoryTip,
       morphemes: currentMorphemes,
       goro_text: c ? c.text : "",
       goro_highlight: c ? c.highlight : [],
@@ -1288,7 +1293,7 @@ async function renderBookList() {
 
 /* --- CSV出力 / 読み込み（単語帳） --- */
 const CSV_COLUMNS = [
-  "id", "word", "word_meaning", "word_phonetic", "morphemes",
+  "id", "word", "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
   "goro_text", "goro_highlight", "provider", "memorized", "created_at",
 ];
 
@@ -1305,6 +1310,7 @@ function wordsToCSV(records) {
       r.word,
       r.word_meaning || "",
       r.word_phonetic || "",
+      r.word_memory_tip || "",
       JSON.stringify(r.morphemes || []),
       r.goro_text || "",
       JSON.stringify(r.goro_highlight || []),
@@ -1367,6 +1373,7 @@ function csvToWords(text) {
       word,
       word_meaning: get(row, "word_meaning"),
       word_phonetic: get(row, "word_phonetic"),
+      word_memory_tip: get(row, "word_memory_tip"),
       morphemes,
       goro_text: get(row, "goro_text"),
       goro_highlight: goroHighlight,
@@ -1429,6 +1436,10 @@ function openWordDetail(record) {
   if (!affixList.children.length) {
     affixList.innerHTML = `<div class="empty-note">接辞の記録がありません</div>`;
   }
+
+  const memoryTipEl = document.getElementById("word-detail-memory-tip");
+  memoryTipEl.textContent = record.word_memory_tip || "";
+  memoryTipEl.style.display = record.word_memory_tip ? "block" : "none";
 
   const goroList = document.getElementById("word-detail-goro");
   goroList.innerHTML = "";
@@ -1495,13 +1506,43 @@ function buildBookRow(title, sub, createdAt, onTap, onDelete) {
 let memorizeQueue = [];
 let memorizeIndex = 0;
 let memorizeRevealed = false;
+let memorizeAutoPlay = false;
+let memorizeAutoTimer = null;
+let memorizeEmptyMessage = "保存された単語がまだありません";
 
-document.getElementById("memorize-entry-btn").addEventListener("click", startMemorizeMode);
+const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
+document.getElementById("memorize-entry-btn").addEventListener("click", () => {
+  memorizeModeSheet.style.display = "flex";
+});
+document.getElementById("memorize-mode-close").addEventListener("click", () => {
+  memorizeModeSheet.style.display = "none";
+});
+document.getElementById("mode-btn-all").addEventListener("click", () => {
+  memorizeModeSheet.style.display = "none";
+  startMemorizeMode("all");
+});
+document.getElementById("mode-btn-unlearned").addEventListener("click", () => {
+  memorizeModeSheet.style.display = "none";
+  startMemorizeMode("unlearned");
+});
+document.getElementById("mode-btn-auto").addEventListener("click", () => {
+  memorizeModeSheet.style.display = "none";
+  startMemorizeMode("auto");
+});
 
-async function startMemorizeMode() {
+function clearMemorizeAutoTimer() {
+  if (memorizeAutoTimer) { clearTimeout(memorizeAutoTimer); memorizeAutoTimer = null; }
+}
+
+async function startMemorizeMode(mode = "all") {
   const words = await idbGetAll("words");
-  memorizeQueue = words.sort(() => Math.random() - 0.5);
+  const pool = mode === "unlearned" ? words.filter((w) => !w.memorized) : words;
+  memorizeQueue = pool.sort(() => Math.random() - 0.5);
   memorizeIndex = 0;
+  memorizeAutoPlay = mode === "auto";
+  memorizeEmptyMessage = mode === "unlearned"
+    ? "未学習のカードはありません"
+    : "保存された単語がまだありません";
   showScreen("screen-memorize");
   renderMemorizeCard();
 }
@@ -1512,13 +1553,15 @@ function renderMemorizeCard() {
   const progressEl = document.getElementById("memorize-progress");
 
   if (!memorizeQueue.length) {
-    emptyEl.textContent = "保存された単語がまだありません";
+    clearMemorizeAutoTimer();
+    emptyEl.textContent = memorizeEmptyMessage;
     emptyEl.style.display = "block";
     swipeEl.style.display = "none";
     progressEl.textContent = "";
     return;
   }
   if (memorizeIndex >= memorizeQueue.length) {
+    clearMemorizeAutoTimer();
     emptyEl.textContent = "お疲れさまでした！全カードをチェックしました。";
     emptyEl.style.display = "block";
     swipeEl.style.display = "none";
@@ -1528,7 +1571,7 @@ function renderMemorizeCard() {
 
   emptyEl.style.display = "none";
   swipeEl.style.display = "block";
-  progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}`;
+  progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}${memorizeAutoPlay ? " 🔊" : ""}`;
 
   const record = memorizeQueue[memorizeIndex];
   memorizeRevealed = false;
@@ -1547,6 +1590,21 @@ function renderMemorizeCard() {
   const detailEl = document.getElementById("memorize-detail");
   detailEl.innerHTML = "";
   detailEl.style.display = "none";
+
+  scheduleMemorizeAutoPlay();
+}
+
+function scheduleMemorizeAutoPlay() {
+  clearMemorizeAutoTimer();
+  if (!memorizeAutoPlay) return;
+  if (!memorizeQueue.length || memorizeIndex >= memorizeQueue.length) return;
+  memorizeAutoTimer = setTimeout(revealMemorizeDetail, 1800);
+}
+
+function advanceMemorizeAutoPlay() {
+  if (!memorizeAutoPlay) return;
+  memorizeIndex++;
+  renderMemorizeCard();
 }
 
 function revealMemorizeDetail() {
@@ -1577,11 +1635,19 @@ function revealMemorizeDetail() {
   });
   detailEl.appendChild(splitEl);
   detailEl.style.display = "";
+
+  if (memorizeAutoPlay) {
+    const toSpeak = [record.word, record.word_meaning].filter(Boolean).join("、");
+    if (toSpeak) speak(toSpeak);
+    clearMemorizeAutoTimer();
+    memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, 3800);
+  }
 }
 
 async function classifyMemorizeCard(memorized) {
   const record = memorizeQueue[memorizeIndex];
   if (!record) return;
+  clearMemorizeAutoTimer();
   record.memorized = memorized;
   await idbPut("words", record);
 
@@ -1604,7 +1670,7 @@ async function classifyMemorizeCard(memorized) {
   const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
 
   card.addEventListener("pointerdown", (e) => {
-    dragging = true; moved = false; startX = clientX(e);
+    dragging = true; moved = false; startX = clientX(e); dx = 0;
     card.style.transition = "none";
   });
   card.addEventListener("pointermove", (e) => {
@@ -1622,10 +1688,10 @@ async function classifyMemorizeCard(memorized) {
       revealEl.classList.remove("reveal-left");
     }
   });
-  card.addEventListener("pointerup", () => {
+  const onUp = () => {
     if (!dragging) return;
     dragging = false;
-    if (Math.abs(dx) > threshold) {
+    if (moved && Math.abs(dx) > threshold) {
       classifyMemorizeCard(dx < 0);
       return;
     }
@@ -1633,7 +1699,9 @@ async function classifyMemorizeCard(memorized) {
     card.style.transform = "translateX(0)";
     revealEl.classList.remove("reveal-left", "reveal-right");
     if (!moved) revealMemorizeDetail();
-  });
+  };
+  card.addEventListener("pointerup", onUp);
+  card.addEventListener("pointercancel", onUp);
   card.addEventListener("pointerleave", () => {
     if (!dragging) return;
     dragging = false;
