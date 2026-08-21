@@ -564,7 +564,12 @@ async function loadGoroCandidates(provider, apiKey) {
   try {
     currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey);
   } catch (err) {
-    document.getElementById("goro-list").innerHTML = `<div class="empty-note">語呂合わせの生成に失敗しました。作り直すボタンでもう一度お試しください。</div>`;
+    const list = document.getElementById("goro-list");
+    list.innerHTML = "";
+    const note = document.createElement("div");
+    note.className = "empty-note";
+    note.textContent = `語呂合わせの生成に失敗しました（${err.message}）。作り直すボタンでもう一度お試しください。`;
+    list.appendChild(note);
     document.getElementById("regen-btn").disabled = false;
     console.error(err);
     return;
