@@ -175,8 +175,9 @@ const KNOWN_AFFIXES = Object.keys(LOCAL_AFFIX_DICT).join(", ");
 
 const DECOMPOSE_SYS = [
   "あなたは英語の語源・形態素解析の専門家です。",
-  "まず、与えられた単語のスペルが実在の英単語として誤っている可能性がないか確認してください。誤っていると判断した場合は、最も可能性の高い正しい英単語に修正し、corrected_wordにその修正後の単語を入れ、was_correctedをtrueにしてください。誤りがない場合はcorrected_wordに入力そのものを入れ、was_correctedをfalseにしてください。",
-  "以降の分割・分析は、修正後の単語（corrected_word）に対して行ってください。",
+  "まず、入力が実在の英単語かどうかを判定してください。単純なスペルミスとして妥当な範囲であれば、最も可能性の高い正しい英単語に修正し、word_existsをtrue、corrected_wordにその修正後の単語、was_correctedをtrueにしてください。誤りがなければword_existsをtrue、corrected_wordに入力そのもの、was_correctedをfalseにしてください。",
+  "一方、意味のない文字列や、どの英単語のスペルミスとも考えにくいもの（実在するどの英単語からも大きくかけ離れている場合）は、word_existsをfalseにしてください。この場合、corrected_wordには入力そのものを入れ、word_meaning・memory_tipは空文字、morphemesは空配列で構いません（それ以上分析しないでください）。",
+  "word_existsがtrueの場合のみ、以降の分割・分析を、修正後の単語（corrected_word）に対して行ってください。",
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
   `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${KNOWN_AFFIXES}`,
   "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
@@ -186,7 +187,7 @@ const DECOMPOSE_SYS = [
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）も必ず記入してください。",
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -416,6 +417,9 @@ function mergeMissingMeanings(morphemes, betterMorphemes) {
 async function decomposeWord(word, provider, apiKey) {
   try {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
+    if (json.word_exists === false) {
+      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", memoryTip: "", morphemes: [] };
+    }
     let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
     let wordMeaning = json.word_meaning || "";
@@ -437,10 +441,10 @@ async function decomposeWord(word, provider, apiKey) {
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
-    return { correctedWord, wasCorrected, meaning: wordMeaning, memoryTip, morphemes };
+    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, memoryTip, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { correctedWord: word, wasCorrected: false, meaning: "", memoryTip: "", morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", memoryTip: "", morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -578,6 +582,10 @@ async function startDecompose(rawWord) {
   decomposeMemoryTipEl.textContent = "";
   decomposeMemoryTipEl.classList.remove("show");
   decomposeMemoryTipEl.style.display = "none";
+  const errorMsgEl = document.getElementById("word-error-msg");
+  errorMsgEl.textContent = "";
+  errorMsgEl.classList.remove("show");
+  errorMsgEl.style.display = "none";
 
   const placeholder = document.createElement("div");
   placeholder.className = "morph word-pulse";
@@ -587,6 +595,10 @@ async function startDecompose(rawWord) {
   let morphemes;
   try {
     const decomposed = await decomposeWord(word, provider, apiKey);
+    if (decomposed.wordExists === false) {
+      await playNotFoundError(placeholder, word);
+      return;
+    }
     morphemes = decomposed.morphemes;
     currentWordMeaning = decomposed.meaning;
     currentMemoryTip = decomposed.memoryTip;
@@ -678,6 +690,43 @@ async function playSpellingFix(placeholder, originalWord, correctedWord) {
   await sleep(250);
   placeholder.classList.remove("card-flip-in");
   toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
+}
+
+/* 実在しない単語と判定した場合、単語ブロックをゴミ箱に投げ込んでからホームへ戻る */
+async function playNotFoundError(placeholder, word) {
+  const splitEl = document.getElementById("word-split");
+  const errorMsgEl = document.getElementById("word-error-msg");
+  const trashEl = document.createElement("div");
+  trashEl.className = "trash-can";
+  trashEl.textContent = "🗑️";
+  splitEl.appendChild(trashEl);
+
+  if (reducedMotion()) {
+    placeholder.remove();
+  } else {
+    placeholder.classList.remove("word-pulse");
+    placeholder.classList.add("trash-shake");
+    await sleep(400);
+    placeholder.classList.remove("trash-shake");
+    placeholder.classList.add("trash-toss");
+    trashEl.classList.add("show");
+    await sleep(600);
+    placeholder.remove();
+  }
+
+  errorMsgEl.textContent = `"${word}" という英単語は見つかりませんでした`;
+  errorMsgEl.style.display = "block";
+  requestAnimationFrame(() => errorMsgEl.classList.add("show"));
+
+  await sleep(reducedMotion() ? 900 : 1300);
+
+  showScreen("screen-home");
+  wordInput.value = "";
+  homeError.textContent = "";
+  errorMsgEl.classList.remove("show");
+  errorMsgEl.style.display = "none";
+  errorMsgEl.textContent = "";
+  splitEl.innerHTML = "";
 }
 
 function reducedMotion() {
