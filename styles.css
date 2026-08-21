@@ -101,24 +101,18 @@ button{font-family:inherit;cursor:pointer;}
 #word-input::placeholder{color:var(--ink-faint);}
 .enter-hint{color:var(--accent);font-size:18px;background:none;border:none;padding:2px;line-height:1;}
 .enter-hint:active{transform:scale(.9);}
-.mic-btn{background:none;border:none;padding:2px;line-height:1;display:inline-flex;align-items:center;justify-content:center;}
-.mic-overlay{
-  position:fixed;left:0;right:0;bottom:0;z-index:40;
+.mic-section{
   display:flex;flex-direction:column;align-items:center;gap:10px;
-  padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+  margin-top:26px;
 }
-.mic-overlay-hint{font-size:12.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
-.mic-overlay-btn{
-  width:84px;height:84px;border-radius:50%;
-  background:var(--accent);color:#fff;border:none;font-size:34px;
+.mic-section-hint{font-size:12.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
+.mic-section-btn{
+  width:68px;height:68px;border-radius:50%;
+  background:var(--accent);color:#fff;border:none;
   box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
   touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
-.mic-overlay-btn.listening{background:var(--danger);animation:pulse .6s ease-in-out infinite;}
-.mic-overlay-close{
-  background:none;border:none;color:var(--ink-faint);
-  font-size:12px;font-family:'JetBrains Mono',monospace;padding:4px 8px;
-}
+.mic-section-btn.listening{background:var(--danger);animation:pulse .6s ease-in-out infinite;}
 .chip-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;}
 .chip{
   background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
@@ -713,7 +707,6 @@ button{font-family:inherit;cursor:pointer;}
   .book-list{
     display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;
   }
-  .mic-overlay{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
   .memorize-mode-sheet{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
   #screen-result{position:relative;}
   .save-word-btn{position:absolute;}

@@ -30,16 +30,14 @@
     </div>
     <div class="s-input-row">
       <input id="word-input" type="text" placeholder="単語を入力" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <button class="mic-btn" id="mic-btn" type="button" aria-label="音声入力"><svg class="icon-svg icon-svg-mic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
       <button class="enter-hint" id="word-submit-btn" type="button" aria-label="単語を分解する">⏎</button>
     </div>
     <div class="home-error" id="home-error"></div>
-    <div class="chip-row" id="recent-chips"></div>
-    <div class="mic-overlay" id="mic-overlay" style="display:none;">
-      <div class="mic-overlay-hint" id="mic-overlay-hint">長押しして話す</div>
-      <button class="mic-overlay-btn" id="mic-overlay-btn" type="button" aria-label="長押しで音声入力"><svg class="icon-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-      <button class="mic-overlay-close" id="mic-overlay-close" type="button" aria-label="閉じる">✕ 閉じる</button>
+    <div class="mic-section" id="mic-section">
+      <button class="mic-section-btn" id="mic-overlay-btn" type="button" aria-label="長押しで音声入力"><svg class="icon-svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+      <div class="mic-section-hint" id="mic-overlay-hint">長押しして話す</div>
     </div>
+    <div class="chip-row" id="recent-chips"></div>
   </section>
 
   <!-- ============ SCREEN 02: 分解アニメーション ============ -->

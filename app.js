@@ -632,27 +632,16 @@ wordInput.addEventListener("keydown", (e) => {
 });
 document.getElementById("word-submit-btn").addEventListener("click", () => startDecompose(wordInput.value));
 
-const micBtn = document.getElementById("mic-btn");
-const micOverlay = document.getElementById("mic-overlay");
+const micSection = document.getElementById("mic-section");
 const micOverlayBtn = document.getElementById("mic-overlay-btn");
 const micOverlayHint = document.getElementById("mic-overlay-hint");
-const micOverlayClose = document.getElementById("mic-overlay-close");
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (!SpeechRecognitionCtor) {
-  micBtn.style.display = "none";
+  micSection.style.display = "none";
 } else {
   let recognition = null;
   let listening = false;
-
-  micBtn.addEventListener("click", () => {
-    micOverlayHint.textContent = "長押しして話す";
-    micOverlay.style.display = "flex";
-  });
-  micOverlayClose.addEventListener("click", () => {
-    if (listening) recognition.stop();
-    micOverlay.style.display = "none";
-  });
 
   const startListening = () => {
     if (listening) return;
@@ -677,7 +666,7 @@ if (!SpeechRecognitionCtor) {
     recognition.onend = () => {
       listening = false;
       micOverlayBtn.classList.remove("listening");
-      micOverlay.style.display = "none";
+      micOverlayHint.textContent = "長押しして話す";
     };
     recognition.start();
   };
