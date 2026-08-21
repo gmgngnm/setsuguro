@@ -1026,23 +1026,19 @@ async function renderResultScreen() {
 
   for (const [i, m] of currentMorphemes.entries()) {
     const existing = await idbGet("affixes", m.part.toLowerCase());
-    const wrap = document.createElement("div");
-    wrap.className = "affix-swipe";
-    wrap.innerHTML = `
-      <div class="reveal">✓ 接辞帳に保存</div>
-      <div class="affix-card ${existing ? "saved" : ""}">
-        ${existing ? '<span class="saved-tag">✓ 保存済み</span>' : ""}
-        <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
-        <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>
-      </div>`;
-    const card = wrap.querySelector(".affix-card");
-    attachAffixSwipe(card, m, wrap);
+    const card = document.createElement("div");
+    card.className = `affix-card${existing ? " saved" : ""}`;
+    card.innerHTML = `
+      ${existing ? '<span class="saved-tag">✓ 保存済み</span>' : ""}
+      <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
+      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
+    attachAffixTap(card, m);
     if (i === 0 && !hintSeen) {
-      card.classList.add("wiggle");
+      card.classList.add("tap-hint");
       kvSet("affix_hint_seen", true);
-      document.getElementById("swipe-hint").textContent = "← スライドで保存（初回ヒント）";
+      document.getElementById("affix-save-hint").textContent = "タップで保存（初回ヒント）";
     }
-    list.appendChild(wrap);
+    list.appendChild(card);
   }
 
   document.getElementById("goro-list").innerHTML = `<div class="empty-note">語呂合わせを準備中…</div>`;
@@ -1052,43 +1048,19 @@ async function renderResultScreen() {
   await refreshSaveWordBtn();
 }
 
-function attachAffixSwipe(card, morpheme, wrapEl) {
-  let startX = 0, dx = 0, dragging = false;
-  const threshold = 64;
-
-  const onDown = (e) => {
-    dragging = true; startX = clientX(e); dx = 0;
-    card.style.transition = "none";
-  };
-  const onMove = (e) => {
-    if (!dragging) return;
-    dx = clientX(e) - startX;
-    card.style.transform = `translateX(${dx}px)`;
-  };
-  const onUp = async () => {
-    if (!dragging) return;
-    dragging = false;
-    card.style.transition = "transform .18s ease";
-    if (Math.abs(dx) > threshold) {
-      await saveAffixToBook(morpheme, currentWord);
-      card.classList.add("saved");
-      if (!card.querySelector(".saved-tag")) {
-        const tag = document.createElement("span");
-        tag.className = "saved-tag";
-        tag.textContent = "✓ 保存済み";
-        card.prepend(tag);
-      }
-      toast(`「${morpheme.part}」を接辞帳に保存しました`);
+function attachAffixTap(card, morpheme) {
+  card.addEventListener("click", async () => {
+    if (card.classList.contains("saved")) return;
+    await saveAffixToBook(morpheme, currentWord);
+    card.classList.add("saved");
+    if (!card.querySelector(".saved-tag")) {
+      const tag = document.createElement("span");
+      tag.className = "saved-tag";
+      tag.textContent = "✓ 保存済み";
+      card.prepend(tag);
     }
-    card.style.transform = "translateX(0)";
-  };
-  const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
-
-  card.addEventListener("pointerdown", onDown);
-  card.addEventListener("pointermove", onMove);
-  card.addEventListener("pointerup", onUp);
-  card.addEventListener("pointerleave", onUp);
-  card.addEventListener("pointercancel", onUp);
+    toast(`「${morpheme.part}」を接辞帳に保存しました`);
+  });
 }
 
 async function saveAffixToBook(m, word) {
@@ -1731,8 +1703,8 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
   });
 
-  renderModePills(await kvGet("theme_mode", "auto"));
-  renderThemeSwatches(await kvGet("theme_color", "teal"));
+  renderModePills(await kvGet("theme_mode", "light"));
+  renderThemeSwatches(await kvGet("theme_color", "blue"));
 }
 
 document.querySelectorAll(".anim-pill").forEach((pill) => {
@@ -1799,14 +1771,14 @@ const THEME_COLORS = {
 };
 
 async function isDarkActive() {
-  const mode = await kvGet("theme_mode", "auto");
+  const mode = await kvGet("theme_mode", "light");
   if (mode === "dark") return true;
   if (mode === "light") return false;
   return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
 }
 
 async function applyThemeMode() {
-  const mode = await kvGet("theme_mode", "auto");
+  const mode = await kvGet("theme_mode", "light");
   const root = document.documentElement;
   if (mode === "light") root.setAttribute("data-theme", "light");
   else if (mode === "dark") root.setAttribute("data-theme", "dark");
@@ -1829,7 +1801,7 @@ document.querySelectorAll(".mode-pill").forEach((pill) => {
 });
 
 async function applyThemeColor() {
-  const key = await kvGet("theme_color", "teal");
+  const key = await kvGet("theme_color", "blue");
   const preset = THEME_COLORS[key] || THEME_COLORS.teal;
   const isDark = await isDarkActive();
   const variant = isDark ? preset.dark : preset.light;
