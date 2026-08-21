@@ -515,7 +515,7 @@ button{font-family:inherit;cursor:pointer;}
   box-shadow:0 0 0 2px var(--accent), var(--shadow);
 }
 .goro-tap{display:flex;align-items:flex-start;gap:10px;cursor:pointer;}
-.goro-tap .spk{flex-shrink:0;font-size:16px;margin-top:1px;}
+.goro-tap .spk{flex-shrink:0;color:var(--accent);margin-top:1px;display:inline-flex;align-items:center;}
 .goro-tap .txt{font-size:15px;line-height:1.6;color:var(--ink);}
 .goro-tap.speaking .spk{animation:pulse .6s ease-in-out infinite;}
 @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.25);}}
