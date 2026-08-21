@@ -316,9 +316,18 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes wiggle{0%,100%{transform:translateX(0);}25%{transform:translateX(-10px);}75%{transform:translateX(10px);}}
 
 .goro-list{display:flex;flex-direction:column;gap:12px;}
+.goro-swipe{position:relative;overflow:hidden;border-radius:16px;}
+.goro-swipe .reveal{
+  position:absolute;inset:0;border-radius:16px;color:#fff;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:14px;font-family:'JetBrains Mono',monospace;font-weight:700;
+  opacity:0;
+}
+.goro-swipe .reveal.reveal-up{background:var(--accent);opacity:1;}
+.goro-swipe .reveal.reveal-down{background:var(--danger);opacity:1;}
 .goro-card{
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
-  box-shadow:var(--shadow);position:relative;
+  box-shadow:var(--shadow);position:relative;touch-action:pan-y;user-select:none;
   transition:border-color .15s ease, box-shadow .15s ease;
 }
 .goro-card.picked{
@@ -330,27 +339,29 @@ button{font-family:inherit;cursor:pointer;}
 .goro-tap .txt{font-size:15px;line-height:1.6;color:var(--ink);}
 .goro-tap.speaking .spk{animation:pulse .6s ease-in-out infinite;}
 @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.25);}}
-.goro-actions{
-  display:flex;align-items:center;justify-content:flex-end;gap:16px;margin-top:12px;
-  padding-top:10px;border-top:1px dashed var(--line);
+.feedback-badge{
+  position:absolute;top:-9px;right:14px;font-size:15px;
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:2px 7px;box-shadow:var(--shadow);
 }
-.act-btn{background:none;border:none;font-size:18px;color:var(--ink-faint);padding:2px;line-height:1;}
-.act-btn.on{color:var(--accent);}
-.act-btn.down.on{color:var(--danger);}
-.act-btn.feedback-pop{animation:feedbackPop .4s ease;}
+.feedback-badge.down{border-color:var(--danger);}
+.feedback-badge.up{border-color:var(--accent);}
+.feedback-badge.feedback-pop{animation:feedbackPop .4s ease;}
 @keyframes feedbackPop{
   0%{transform:scale(1);}
   40%{transform:scale(1.5);}
   100%{transform:scale(1);}
 }
-@media (prefers-reduced-motion: reduce){ .act-btn.feedback-pop{animation:none;} }
+@media (prefers-reduced-motion: reduce){ .feedback-badge.feedback-pop{animation:none;} }
 .save-word-btn{
-  display:block;width:100%;margin-top:14px;
+  position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
+  width:calc(100% - 36px);max-width:444px;
   background:var(--accent);color:#fff;border:none;border-radius:16px;
   padding:16px 20px;font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;
-  box-shadow:var(--shadow);
+  box-shadow:var(--shadow);z-index:30;
 }
 .save-word-btn.on{background:var(--surface);color:var(--accent-ink);border:1.5px solid var(--accent);}
+#screen-result{padding-bottom:96px;}
 .regen-btn{
   align-self:center;margin-top:6px;
   background:var(--surface);border:1.5px solid var(--accent);color:var(--accent-ink);border-radius:999px;

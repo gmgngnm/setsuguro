@@ -1071,20 +1071,23 @@ function renderGoroList(pop) {
   currentCandidates.forEach((c, idx) => {
     const state = candidateStates[idx];
     const picked = selectedCandidateIdx === idx;
-    const upPop = pop && pop.idx === idx && pop.kind === "up" ? " feedback-pop" : "";
-    const downPop = pop && pop.idx === idx && pop.kind === "down" ? " feedback-pop" : "";
-    const card = document.createElement("div");
-    card.className = `goro-card${picked ? " picked" : ""}`;
-    card.dataset.idx = idx;
-    card.innerHTML = `
-      <div class="goro-tap" data-idx="${idx}">
-        <span class="spk">🔊</span><span class="txt">「${escapeHtml(c.text)}」</span>
-      </div>
-      <div class="goro-actions">
-        <button class="act-btn up ${state.feedback === "up" ? "on" : ""}${upPop}" data-idx="${idx}" aria-label="良い">👍</button>
-        <button class="act-btn down ${state.feedback === "down" ? "on" : ""}${downPop}" data-idx="${idx}" aria-label="いまいち">👎</button>
+    const badgePop = pop && pop.idx === idx ? " feedback-pop" : "";
+    const badgeHtml = state.feedback
+      ? `<span class="feedback-badge ${state.feedback}${badgePop}">${state.feedback === "up" ? "👍" : "👎"}</span>`
+      : "";
+    const wrap = document.createElement("div");
+    wrap.className = "goro-swipe";
+    wrap.innerHTML = `
+      <div class="reveal"></div>
+      <div class="goro-card${picked ? " picked" : ""}" data-idx="${idx}">
+        ${badgeHtml}
+        <div class="goro-tap" data-idx="${idx}">
+          <span class="spk">🔊</span><span class="txt">「${escapeHtml(c.text)}」</span>
+        </div>
       </div>`;
-    list.appendChild(card);
+    const card = wrap.querySelector(".goro-card");
+    attachGoroSwipe(card, idx, wrap);
+    list.appendChild(wrap);
   });
 
   list.querySelectorAll(".goro-tap").forEach((el) => {
@@ -1095,12 +1098,49 @@ function renderGoroList(pop) {
       selectCandidate(idx);
     });
   });
-  list.querySelectorAll(".act-btn.up").forEach((el) => {
-    el.addEventListener("click", () => toggleFeedback(Number(el.dataset.idx), "up"));
-  });
-  list.querySelectorAll(".act-btn.down").forEach((el) => {
-    el.addEventListener("click", () => toggleFeedback(Number(el.dataset.idx), "down"));
-  });
+}
+
+/* 語呂合わせカードを左右にスワイプして評価する（左=👍 高評価 / 右=👎 いまいち） */
+function attachGoroSwipe(card, idx, wrapEl) {
+  let startX = 0, dx = 0, dragging = false;
+  const threshold = 64;
+  const revealEl = wrapEl.querySelector(".reveal");
+
+  const onDown = (e) => {
+    dragging = true; startX = clientX(e); dx = 0;
+    card.style.transition = "none";
+  };
+  const onMove = (e) => {
+    if (!dragging) return;
+    dx = clientX(e) - startX;
+    card.style.transform = `translateX(${dx}px)`;
+    if (dx < 0) {
+      revealEl.textContent = "👍 高評価";
+      revealEl.classList.add("reveal-up");
+      revealEl.classList.remove("reveal-down");
+    } else if (dx > 0) {
+      revealEl.textContent = "👎 いまいち";
+      revealEl.classList.add("reveal-down");
+      revealEl.classList.remove("reveal-up");
+    }
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    if (Math.abs(dx) > threshold) {
+      toggleFeedback(idx, dx < 0 ? "up" : "down");
+      return;
+    }
+    card.style.transition = "transform .18s ease";
+    card.style.transform = "translateX(0)";
+    revealEl.classList.remove("reveal-up", "reveal-down");
+  };
+  const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
+
+  card.addEventListener("pointerdown", onDown);
+  card.addEventListener("pointermove", onMove);
+  card.addEventListener("pointerup", onUp);
+  card.addEventListener("pointerleave", onUp);
 }
 
 async function selectCandidate(idx) {
