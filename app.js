@@ -199,7 +199,8 @@ function goroSystemPrompt(word, morphemes) {
     "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にして、音が似た日本語表現を組み合わせ、意味の通る一文の語呂合わせを作ってください。",
     "例: dict(ジクト)/ion(イオン)/ary(アリー) → 「軸と(dict)イオン(ion)がガチャン!とぶつかって起電力あり(ary)、なんて愉快な実験だ」",
     "最優先事項として、生成する一文は日本語として文法的に自然で、一つの筋が通った情景・出来事を描写する文にしてください。読みを詰め込むために言葉を無理やり羅列しただけの、意味のつながらない不自然な文は不可とします。誰が読んでも情景がすっと思い浮かぶ、破綻のない一文にしてください。",
-    "各接辞の読みは一音も欠かさず文中のどこかに反映してください。下品・差別的・実在の人物名を用いた表現は避けてください。",
+    "各接辞の読みは一音も欠かさず文中のどこかに反映してください。ただし、読みをそのまま人名として使うこと（「〜という名の…」「〜さん」「〜くん」など、実在・架空を問わず人物の名前として読みを当てはめること）は禁止します。人物を登場させる場合は、名前ではなく役割や属性（店員、少年、隣人、先生 など）で表現してください。下品・差別的な表現も避けてください。",
+    "各文は簡潔にしてください。目安として40〜60文字程度に収め、冗長な修飾語や説明は削ってください。",
     "文法的な自然さを保った上で、思わずクスッと笑えるようなユーモアのある内容にしてください。意外な組み合わせ、ズッコケるようなオチ、大げさな展開などを取り入れつつも、あくまで一つの筋の通った話として成立させてください。",
     "擬音語・擬態語（例: ドカン、ズキューン、ガタガタ、ワクワク、ニヤリ、ドキドキ など）も、文脈上自然に使える場合に限り取り入れ、コミカルで記憶に残りやすい一文にしてください。無理に押し込む必要はありません。",
     "候補を3件作ってください。3件は必ずそれぞれ大きく違うものにしてください。具体的には、①登場する人物・場所・物・情景をそれぞれ別のものにする、②文の構造や語順、文末表現を毎回変える、③3件の書き出し（最初の5文字程度）を互いに一致させない、④同じ接辞の読みに対して毎回同じ日本語の当て字を使い回さず、できる限り違う言葉を当てる、⑤3件とも文法的に自然で意味の通った一文になっている、という5点をすべて満たすよう、時間をかけてよく考えてから出力してください。似た内容の言い換えに留まる候補や、意味のつながらない不自然な候補は不可とします。",
@@ -467,6 +468,41 @@ function candidatesTooSimilar(candidates) {
   return false;
 }
 
+function goroValidationPrompt(word, morphemes, candidates) {
+  const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
+  const candList = candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n");
+  return [
+    "あなたは日本語の語呂合わせの校閲者です。",
+    `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
+    "以下は語呂合わせ候補の一文です。各文について、次の3点をすべて満たしているか厳しく確認してください。",
+    "①読みを人名として扱っていないこと（「〜という名の…」「〜さん」「〜くん」など、実在・架空を問わず人物の名前として読みを当てはめていないこと）。",
+    "②日本語として文法的に自然で、一つの筋が通った意味のある文になっていること（読みを詰め込むための不自然な言い回しがないこと）。",
+    "③簡潔であること（40〜60文字程度が目安。冗長な修飾語や説明がないこと）。",
+    "いずれかを満たしていない候補は、対象接辞の読みをすべて維持したまま書き直してください。3点をすべて満たしている候補はそのまま使ってください。",
+    candList,
+    "書き直した場合も含め、必ず3件を出力してください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"candidates":[{"text":"（1件目の最終テキスト）"},{"text":"（2件目の最終テキスト）"},{"text":"（3件目の最終テキスト）"}]}',
+  ].join("\n");
+}
+
+async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey) {
+  try {
+    const sys = goroValidationPrompt(word, morphemes, candidates);
+    const json = await callAI(provider, apiKey, sys, "各候補を精査し、必要なら書き直して、3件をJSON形式で出力してください。", 0.4);
+    const revised = (json.candidates || []).map((c, i) => ({
+      text: (c && c.text) || candidates[i]?.text || "",
+      highlight: candidates[i]?.highlight || [],
+    }));
+    if (revised.length === candidates.length && revised.every((c) => c.text)) {
+      return revised;
+    }
+    return candidates;
+  } catch (err) {
+    console.warn("Goro validation pass failed, using original candidates:", err);
+    return candidates;
+  }
+}
+
 async function generateGoro(word, morphemes, provider, apiKey) {
   const sys = goroSystemPrompt(word, morphemes);
   const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を3件、JSON形式で出力してください。");
@@ -483,6 +519,8 @@ async function generateGoro(word, morphemes, provider, apiKey) {
       console.warn("Goro retry for diversity failed:", retryErr);
     }
   }
+
+  candidates = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey);
 
   return candidates;
 }
