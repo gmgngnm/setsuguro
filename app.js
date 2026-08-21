@@ -574,12 +574,12 @@ async function bumpUsage(tokens) {
 /* ------------------------------------------------------------------ *
  * 5. 読み上げ (Web Speech API)
  * ------------------------------------------------------------------ */
-function speak(text, onEnd) {
+function speak(text, onEnd, lang = "ja-JP") {
   if (!("speechSynthesis" in window)) { if (onEnd) onEnd(); return; }
   window.speechSynthesis.cancel();
   const spoken = text.replace(/[（(][^）)]*[）)]/g, "").replace(/\s{2,}/g, " ").trim() || text;
   const u = new SpeechSynthesisUtterance(spoken);
-  u.lang = "ja-JP";
+  u.lang = lang;
   u.rate = 1.0;
   if (onEnd) u.onend = onEnd;
   window.speechSynthesis.speak(u);
@@ -1687,6 +1687,8 @@ function renderMemorizeCard() {
   extraEl.innerHTML = "";
   extraEl.style.display = "none";
 
+  if (memorizeSpeechOn) speak(record.word, null, "en-US");
+
   scheduleMemorizeAutoPlay();
 }
 
@@ -1754,9 +1756,8 @@ function revealMemorizeDetail() {
   }
   extraEl.style.display = extraEl.children.length ? "flex" : "none";
 
-  if (memorizeSpeechOn) {
-    const toSpeak = [record.word, record.word_meaning].filter(Boolean).join("、");
-    if (toSpeak) speak(toSpeak);
+  if (memorizeSpeechOn && record.word_meaning) {
+    speak(record.word_meaning);
   }
   if (memorizeAutoPlay) {
     clearMemorizeAutoTimer();
@@ -1775,7 +1776,6 @@ async function classifyMemorizeCard(memorized) {
   card.style.transition = "transform .25s ease, opacity .25s ease";
   card.style.transform = `translateX(${memorized ? "-140%" : "140%"}) rotate(${memorized ? "-14" : "14"}deg)`;
   card.style.opacity = "0";
-  toast(memorized ? "✓ 暗記済みにしました" : "📕 未暗記にしました");
 
   await sleep(220);
   memorizeIndex++;
