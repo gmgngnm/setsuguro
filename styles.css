@@ -157,6 +157,7 @@ button{font-family:inherit;cursor:pointer;}
 }
 .morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
 .morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
+.letter-fix{ color:var(--danger); animation:letterFixBlink .34s ease-in-out 3; }
 .morph.trash-shake{ animation:trashShake .4s ease; border-color:var(--danger); }
 .morph.trash-toss{ animation:trashToss .6s cubic-bezier(.55,0,.85,.35) forwards; border-color:var(--danger); }
 .trash-can{
@@ -409,6 +410,10 @@ button{font-family:inherit;cursor:pointer;}
   from{ transform:perspective(600px) rotateY(-90deg); }
   to{ transform:perspective(600px) rotateY(0deg); }
 }
+@keyframes letterFixBlink{
+  0%,100%{ color:var(--danger); }
+  50%{ color:var(--ink-faint); }
+}
 @keyframes trashShake{
   0%,100%{transform:rotate(0deg) translateY(0);}
   20%{transform:rotate(-8deg) translateY(0);}
@@ -441,7 +446,8 @@ button{font-family:inherit;cursor:pointer;}
   .morph.scatter-out, .morph.scatter-in, .scatter-shard,
   .morph.centrifuge-spin, .morph.centrifuge-in,
   .morph.scissors-cut, .morph.scissors-in, .scissors-line, .scissors-icon,
-  .morph.box-drop, .morph.box-out-in, .drop-box, .drop-box.shake{animation:none;}
+  .morph.box-drop, .morph.box-out-in, .drop-box, .drop-box.shake,
+  .letter-fix{animation:none;}
   .morph-meaning{transition:none;}
 }
 
