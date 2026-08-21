@@ -1267,7 +1267,6 @@ document.getElementById("book-search").addEventListener("input", () => renderBoo
 async function renderBookList() {
   document.getElementById("tab-words").classList.toggle("on", bookTab === "words");
   document.getElementById("tab-affixes").classList.toggle("on", bookTab === "affixes");
-  document.getElementById("book-csv-row").style.display = bookTab === "words" ? "flex" : "none";
 
   const q = document.getElementById("book-search").value.trim().toLowerCase();
   const listEl = document.getElementById("book-list");
@@ -1301,15 +1300,73 @@ async function renderBookList() {
   }
 }
 
-/* --- CSV出力 / 読み込み（単語帳） --- */
+/* --- CSV出力 / 読み込み（単語帳 / 接辞帳） --- */
 const CSV_COLUMNS = [
   "id", "word", "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
   "goro_text", "goro_highlight", "provider", "memorized", "created_at",
 ];
+const AFFIX_CSV_COLUMNS = ["part", "display", "reading", "meaning", "origin", "source_words", "created_at"];
 
 function csvField(value) {
   const s = value === null || value === undefined ? "" : String(value);
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCSV(csvBody, filenamePrefix) {
+  const csv = "\uFEFF" + csvBody;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filenamePrefix}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function affixesToCSV(records) {
+  const lines = [AFFIX_CSV_COLUMNS.join(",")];
+  records.forEach((r) => {
+    lines.push([
+      r.part,
+      r.display || r.part,
+      r.reading || "",
+      r.meaning || "",
+      r.origin || "",
+      JSON.stringify(r.source_words || []),
+      r.created_at || "",
+    ].map(csvField).join(","));
+  });
+  return lines.join("\r\n");
+}
+
+function csvToAffixes(text) {
+  const rows = parseCSV(text);
+  if (!rows.length) return [];
+  const headers = rows[0].map((h) => h.trim());
+  const colIndex = {};
+  headers.forEach((h, i) => { colIndex[h] = i; });
+  const get = (row, key) => (colIndex[key] !== undefined ? (row[colIndex[key]] ?? "") : "");
+
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const part = get(row, "part").trim().toLowerCase();
+    if (!part) continue;
+    let sourceWords = [];
+    try { sourceWords = JSON.parse(get(row, "source_words") || "[]"); } catch { sourceWords = []; }
+    out.push({
+      part,
+      display: get(row, "display") || part,
+      reading: get(row, "reading"),
+      meaning: get(row, "meaning"),
+      origin: get(row, "origin"),
+      source_words: sourceWords,
+      created_at: Number(get(row, "created_at")) || Date.now(),
+    });
+  }
+  return out;
 }
 
 function wordsToCSV(records) {
@@ -1396,19 +1453,17 @@ function csvToWords(text) {
 }
 
 document.getElementById("csv-export-btn").addEventListener("click", async () => {
-  const rows = await idbGetAll("words");
-  if (!rows.length) { toast("保存された単語がありません"); return; }
-  const csv = "\uFEFF" + wordsToCSV(rows);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `engolo-wordbook-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  toast(`${rows.length}件をCSV出力しました`);
+  if (bookTab === "affixes") {
+    const rows = await idbGetAll("affixes");
+    if (!rows.length) { toast("保存された接辞がありません"); return; }
+    downloadCSV(affixesToCSV(rows), "engolo-affixbook");
+    toast(`${rows.length}件をCSV出力しました`);
+  } else {
+    const rows = await idbGetAll("words");
+    if (!rows.length) { toast("保存された単語がありません"); return; }
+    downloadCSV(wordsToCSV(rows), "engolo-wordbook");
+    toast(`${rows.length}件をCSV出力しました`);
+  }
 });
 
 const csvImportInput = document.getElementById("csv-import-input");
@@ -1418,11 +1473,18 @@ csvImportInput.addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   const text = await file.text();
-  const records = csvToWords(text);
-  if (!records.length) { toast("読み込めるデータが見つかりませんでした"); return; }
-  for (const r of records) await idbPut("words", r);
-  toast(`${records.length}件の単語を読み込みました`);
-  if (bookTab === "words") renderBookList();
+  if (bookTab === "affixes") {
+    const records = csvToAffixes(text);
+    if (!records.length) { toast("読み込めるデータが見つかりませんでした"); return; }
+    for (const r of records) await idbPut("affixes", r);
+    toast(`${records.length}件の接辞を読み込みました`);
+  } else {
+    const records = csvToWords(text);
+    if (!records.length) { toast("読み込めるデータが見つかりませんでした"); return; }
+    for (const r of records) await idbPut("words", r);
+    toast(`${records.length}件の単語を読み込みました`);
+  }
+  renderBookList();
 });
 
 /* 単語帳の1件をタップした際に、単語・意味・接辞・接辞の意味・語呂合わせをまとめて表示する */
