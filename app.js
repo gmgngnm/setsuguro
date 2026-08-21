@@ -175,15 +175,17 @@ const KNOWN_AFFIXES = Object.keys(LOCAL_AFFIX_DICT).join(", ");
 
 const DECOMPOSE_SYS = [
   "あなたは英語の語源・形態素解析の専門家です。",
-  "与えられた英単語を接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
+  "まず、与えられた単語のスペルが実在の英単語として誤っている可能性がないか確認してください。誤っていると判断した場合は、最も可能性の高い正しい英単語に修正し、corrected_wordにその修正後の単語を入れ、was_correctedをtrueにしてください。誤りがない場合はcorrected_wordに入力そのものを入れ、was_correctedをfalseにしてください。",
+  "以降の分割・分析は、修正後の単語（corrected_word）に対して行ってください。",
+  "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
   `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${KNOWN_AFFIXES}`,
   "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
   "残った中間部分は語根として一つの要素にまとめ、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
-  "各要素を連結すると元の単語と完全に一致するようにしてください（文字の欠落・重複がないこと）。",
+  "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）も必ず記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_meaning":"調査する・捜査する","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
+  '{"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -355,10 +357,13 @@ async function decomposeWord(word, provider, apiKey) {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     const morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
-    return { meaning: json.word_meaning || "", morphemes };
+    const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
+    const correctedWord = validCorrection ? json.corrected_word : word;
+    const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
+    return { correctedWord, wasCorrected, meaning: json.word_meaning || "", morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { meaning: "", morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, meaning: "", morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -493,6 +498,10 @@ async function startDecompose(rawWord) {
     const decomposed = await decomposeWord(word, provider, apiKey);
     morphemes = decomposed.morphemes;
     currentWordMeaning = decomposed.meaning;
+    if (decomposed.wasCorrected) {
+      await playSpellingFix(placeholder, word, decomposed.correctedWord);
+      currentWord = decomposed.correctedWord;
+    }
   } catch (err) {
     placeholder.remove();
     spinnerRow.style.display = "flex";
@@ -503,7 +512,7 @@ async function startDecompose(rawWord) {
   }
   currentMorphemes = morphemes;
 
-  await playCrack(placeholder, word, morphemes);
+  await playCrack(placeholder, currentWord, morphemes);
   placeholder.remove();
 
   splitEl.innerHTML = "";
@@ -529,7 +538,7 @@ async function startDecompose(rawWord) {
     splitEl.appendChild(el);
   });
 
-  await pushRecentWord(word);
+  await pushRecentWord(currentWord);
 
   const SHATTER_MS = 450;
   const STAGGER_MS = 320;
@@ -544,6 +553,27 @@ async function startDecompose(rawWord) {
     showScreen("screen-result");
     loadGoroCandidates(provider, apiKey); // Stage2をバックグラウンドで先行実行
   }, totalDelay);
+}
+
+/* スペルミスを検出した場合、赤く揺れてから正しい綴りにクロスフェードする */
+async function playSpellingFix(placeholder, originalWord, correctedWord) {
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    placeholder.textContent = correctedWord;
+    toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
+    return;
+  }
+  placeholder.classList.remove("word-pulse");
+  placeholder.classList.add("typo-shake");
+  await sleep(400);
+  placeholder.classList.remove("typo-shake");
+  placeholder.classList.add("typo-out");
+  await sleep(180);
+  placeholder.textContent = correctedWord;
+  placeholder.classList.remove("typo-out");
+  placeholder.classList.add("typo-in");
+  await sleep(220);
+  placeholder.classList.remove("typo-in");
+  toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
 }
 
 /* 単語ブロックに亀裂が入り、揺れてから砕けるアニメーション */
