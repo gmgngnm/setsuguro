@@ -536,9 +536,7 @@ button{font-family:inherit;cursor:pointer;}
 }
 .regen-btn:disabled{opacity:.5;}
 .add-goro-btn{
-  align-self:center;margin-top:2px;
-  background:none;border:none;color:var(--ink-faint);
-  font-size:12.5px;padding:8px 10px;font-family:'JetBrains Mono',monospace;font-weight:600;
+  background:none;border:none;padding:0;font-family:inherit;font-weight:600;
 }
 .add-goro-form{
   display:flex;gap:8px;align-items:center;
