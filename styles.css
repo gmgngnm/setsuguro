@@ -144,9 +144,9 @@ button{font-family:inherit;cursor:pointer;}
   display:flex;align-items:center;justify-content:flex-end;gap:16px;margin-top:12px;
   padding-top:10px;border-top:1px dashed var(--line);
 }
-.act-btn{background:none;border:none;font-size:18px;color:var(--ink-faint);padding:2px;line-height:1;}
-.act-btn.on{color:var(--accent);}
-.act-btn.down.on{color:var(--danger);}
+.act-btn{background:none;border:none;font-size:18px;color:var(--ink-faint);padding:2px;line-height:1;border-radius:8px;transition:transform .15s ease, color .15s ease, background .15s ease;}
+.act-btn.on{color:var(--accent);background:color-mix(in srgb, var(--accent) 16%, transparent);transform:scale(1.35);filter:drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 55%, transparent));}
+.act-btn.down.on{color:var(--danger);background:color-mix(in srgb, var(--danger) 16%, transparent);filter:drop-shadow(0 0 4px color-mix(in srgb, var(--danger) 55%, transparent));}
 .save-btn{
   display:flex;align-items:center;gap:5px;background:none;border:none;
   font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-faint);font-weight:600;
