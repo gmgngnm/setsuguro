@@ -451,12 +451,12 @@ button{font-family:inherit;cursor:pointer;}
 .form-field input{border:none;outline:none;background:transparent;color:var(--ink);flex:1;font-family:'JetBrains Mono',monospace;font-size:13px;}
 .form-field button{background:none;border:none;display:flex;align-items:center;}
 .provider-row{display:flex;gap:8px;flex-wrap:wrap;}
-.provider-row .provider-pill, .provider-row .anim-pill{min-width:64px;}
-.provider-pill, .anim-pill{
+.provider-row .provider-pill, .provider-row .anim-pill, .provider-row .mode-pill{min-width:64px;}
+.provider-pill, .anim-pill, .mode-pill{
   flex:1;text-align:center;border-radius:12px;padding:12px 4px;font-size:12px;
   font-family:'JetBrains Mono',monospace;border:1.5px solid var(--line);color:var(--ink-faint);background:var(--surface);
 }
-.provider-pill.on, .anim-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
+.provider-pill.on, .anim-pill.on, .mode-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
 .theme-swatch-row{display:flex;gap:10px;flex-wrap:wrap;}
 .theme-swatch{
   width:34px;height:34px;border-radius:50%;border:2px solid transparent;
