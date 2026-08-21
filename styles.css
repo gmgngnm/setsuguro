@@ -126,6 +126,19 @@ button{font-family:inherit;cursor:pointer;}
 .morph.spin-in{
   animation:spinIn .85s cubic-bezier(.34,1.56,.64,1) both;
 }
+.morph.mitosis-stretch{ animation:mitosisStretch .35s ease-in-out both; }
+.morph.mitosis-pinch{ animation:mitosisPinch .27s ease-in both; }
+.morph.mitosis-split{ animation:mitosisSplit .4s ease-in both; }
+.morph.mitosis-in{
+  animation:mitosisIn .6s cubic-bezier(.34,1.56,.64,1) both;
+}
+.mitosis-cell{
+  position:absolute; top:50%; left:50%; border-radius:50%;
+  background:color-mix(in srgb, var(--accent) 35%, var(--surface)); border:1.5px solid var(--accent);
+  pointer-events:none;
+}
+.mitosis-cell.a{ animation:mitosisCellA .4s ease-out forwards; }
+.mitosis-cell.b{ animation:mitosisCellB .4s ease-out forwards; }
 .morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
 .morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
 .morph.trash-shake{ animation:trashShake .4s ease; border-color:var(--danger); }
@@ -180,6 +193,33 @@ button{font-family:inherit;cursor:pointer;}
   from{ transform:translateY(var(--from-y,0)) rotate(var(--from-rot,0)) scale(.4); opacity:0; }
   to{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
 }
+@keyframes mitosisStretch{
+  0%{ transform:scale(1,1); border-radius:12px; }
+  100%{ transform:scale(1.2,.82); border-radius:50%; }
+}
+@keyframes mitosisPinch{
+  0%{ transform:scale(1.2,.82); border-radius:50%; opacity:1; }
+  100%{ transform:scale(.85,.55); border-radius:50%; opacity:.5; }
+}
+@keyframes mitosisSplit{
+  0%{ opacity:.5; }
+  100%{ opacity:0; transform:scale(.4,.3); }
+}
+@keyframes mitosisCellA{
+  0%{ transform:translate(-50%,-50%) scale(.2); opacity:0; }
+  30%{ opacity:1; }
+  100%{ transform:translate(calc(-50% - 34px), -50%) scale(1); opacity:1; }
+}
+@keyframes mitosisCellB{
+  0%{ transform:translate(-50%,-50%) scale(.2); opacity:0; }
+  30%{ opacity:1; }
+  100%{ transform:translate(calc(-50% + 34px), -50%) scale(1); opacity:1; }
+}
+@keyframes mitosisIn{
+  from{ transform:translate(var(--from-x,0), var(--from-y,0)) scale(.15); opacity:0; border-radius:50%; }
+  60%{ border-radius:20%; }
+  to{ transform:translate(0,0) scale(1); opacity:1; border-radius:12px; }
+}
 @keyframes cardFlipOut{
   from{ transform:perspective(600px) rotateY(0deg); }
   to{ transform:perspective(600px) rotateY(90deg); }
@@ -212,6 +252,8 @@ button{font-family:inherit;cursor:pointer;}
   .morph, .morph.word-pulse, .morph.crack-shake, .morph.shatter-in,
   .morph.burst-shake, .morph.burst-in, .morph.spin-wind-up, .morph.spin-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
+  .morph.mitosis-stretch, .morph.mitosis-pinch, .morph.mitosis-split, .morph.mitosis-in,
+  .mitosis-cell.a, .mitosis-cell.b,
   .trash-can.show, .crack-line, .burst-flash, .spinner{animation:none;}
   .morph-meaning{transition:none;}
 }

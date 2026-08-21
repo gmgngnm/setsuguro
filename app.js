@@ -896,6 +896,43 @@ const DECOMPOSE_ANIM_STYLES = {
       await sleep(620);
     },
   },
+
+  mitosis: {
+    label: "細胞分裂",
+    tileClass: "mitosis-in",
+    tileVars(i, mid) {
+      const dir = i - mid;
+      return { "--from-x": `${-dir * 14}px`, "--from-y": "0px", "--from-rot": "0deg" };
+    },
+    /* 単語ブロックが細胞のようにくびれて2つに分かれ、そこから接辞タイルが増殖するように現れる */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.classList.add("mitosis-stretch");
+      await sleep(350);
+
+      const rect = placeholder.getBoundingClientRect();
+      const size = `${rect.height}px`;
+      placeholder.classList.remove("mitosis-stretch");
+      placeholder.classList.add("mitosis-pinch");
+      const cellA = document.createElement("div");
+      cellA.className = "mitosis-cell a";
+      cellA.style.width = size;
+      cellA.style.height = size;
+      const cellB = document.createElement("div");
+      cellB.className = "mitosis-cell b";
+      cellB.style.width = size;
+      cellB.style.height = size;
+      placeholder.style.position = "relative";
+      placeholder.appendChild(cellA);
+      placeholder.appendChild(cellB);
+      await sleep(270);
+
+      placeholder.classList.add("mitosis-split");
+      await sleep(400);
+    },
+  },
 };
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
