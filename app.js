@@ -184,10 +184,10 @@ const DECOMPOSE_SYS = [
   "残った中間部分は語根として一つの要素にまとめ、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
   "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
-  "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）も必ず記入してください。",
+  "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -421,20 +421,22 @@ async function decomposeWord(word, provider, apiKey) {
   try {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     if (json.word_exists === false) {
-      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", memoryTip: "", morphemes: [] };
+      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", morphemes: [] };
     }
     let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
     let wordMeaning = json.word_meaning || "";
+    let wordPhonetic = json.word_phonetic || "";
     let memoryTip = (json.memory_tip || "").slice(0, 100);
 
-    if (!wordMeaning || !memoryTip || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
+    if (!wordMeaning || !wordPhonetic || !memoryTip || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
       try {
-        const retryPrompt = `単語: ${word}\n前回の応答ではword_meaning/memory_tipや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
+        const retryPrompt = `単語: ${word}\n前回の応答ではword_meaning/word_phonetic/memory_tipや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
         const retryJson = await callAI(provider, apiKey, DECOMPOSE_SYS, retryPrompt, 0.2);
         const retryMorphemes = reconcileWithLocalDict(retryJson.morphemes);
         if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
         if (!wordMeaning) wordMeaning = retryJson.word_meaning || "";
+        if (!wordPhonetic) wordPhonetic = retryJson.word_phonetic || "";
         if (!memoryTip) memoryTip = (retryJson.memory_tip || "").slice(0, 100);
       } catch (retryErr) {
         console.warn("Stage1 retry for missing meanings failed:", retryErr);
@@ -444,10 +446,10 @@ async function decomposeWord(word, provider, apiKey) {
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
-    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, memoryTip, morphemes };
+    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", memoryTip: "", morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -572,6 +574,7 @@ async function pushRecentWord(word) {
  * ------------------------------------------------------------------ */
 let currentWord = "";
 let currentWordMeaning = "";
+let currentWordPhonetic = "";
 let currentMemoryTip = "";
 let currentMorphemes = [];
 let currentCandidates = [];
@@ -604,7 +607,7 @@ async function startDecompose(rawWord) {
   spinnerRow.style.display = "none";
   document.getElementById("decompose-appbar").style.display = "none";
   const decomposeWordMeaningEl = document.getElementById("decompose-word-meaning");
-  decomposeWordMeaningEl.textContent = "";
+  decomposeWordMeaningEl.innerHTML = "";
   decomposeWordMeaningEl.classList.remove("show");
   decomposeWordMeaningEl.style.display = "none";
   const decomposeMemoryTipEl = document.getElementById("decompose-memory-tip");
@@ -630,6 +633,7 @@ async function startDecompose(rawWord) {
     }
     morphemes = decomposed.morphemes;
     currentWordMeaning = decomposed.meaning;
+    currentWordPhonetic = decomposed.phonetic;
     currentMemoryTip = decomposed.memoryTip;
     if (decomposed.wasCorrected) {
       await playSpellingFix(placeholder, word, decomposed.correctedWord);
@@ -650,7 +654,8 @@ async function startDecompose(rawWord) {
   placeholder.remove();
 
   if (currentWordMeaning) {
-    decomposeWordMeaningEl.textContent = currentWordMeaning;
+    const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
+    decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
     decomposeWordMeaningEl.style.display = "block";
     requestAnimationFrame(() => decomposeWordMeaningEl.classList.add("show"));
   }

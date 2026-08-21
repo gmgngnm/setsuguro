@@ -225,6 +225,9 @@ button{font-family:inherit;cursor:pointer;}
 }
 #decompose-word-meaning.show{opacity:1; transform:translateY(0);}
 @media (prefers-reduced-motion: reduce){ #decompose-word-meaning{transition:none;} }
+.word-meaning-word{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:17px;color:var(--accent-ink);}
+.word-meaning-word .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;font-size:12px;color:var(--ink-faint);margin-left:6px;}
+.word-meaning-text{margin-top:4px;font-weight:700;font-size:16px;color:var(--ink);}
 .memory-tip{
   border-left:3px solid var(--accent-2);padding:8px 12px;
   font-size:12.5px;color:var(--ink-soft);line-height:1.5;font-style:italic;
