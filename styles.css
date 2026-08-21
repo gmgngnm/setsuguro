@@ -117,7 +117,7 @@ button{font-family:inherit;cursor:pointer;}
 .morph.shatter-in{
   animation:shatterIn .7s cubic-bezier(.22,1,.36,1) both;
 }
-.morph.burst-shake{ animation:burstShake .55s ease; }
+.morph.burst-shake{ animation:burstShake .65s cubic-bezier(.36,.07,.19,.97); }
 .morph.burst-in{
   animation:burstIn .8s cubic-bezier(.34,1.56,.64,1) both;
 }
@@ -125,19 +125,6 @@ button{font-family:inherit;cursor:pointer;}
 .morph.spin-in{
   animation:spinIn .85s cubic-bezier(.34,1.56,.64,1) both;
 }
-.morph.mitosis-stretch{ animation:mitosisStretch .35s ease-in-out both; }
-.morph.mitosis-pinch{ animation:mitosisPinch .27s ease-in both; }
-.morph.mitosis-split{ animation:mitosisSplit .4s ease-in both; }
-.morph.mitosis-in{
-  animation:mitosisIn .6s cubic-bezier(.34,1.56,.64,1) both;
-}
-.mitosis-cell{
-  position:absolute; top:50%; left:50%; border-radius:50%;
-  background:color-mix(in srgb, var(--accent) 35%, var(--surface)); border:1.5px solid var(--accent);
-  pointer-events:none;
-}
-.mitosis-cell.a{ animation:mitosisCellA .4s ease-out forwards; }
-.mitosis-cell.b{ animation:mitosisCellB .4s ease-out forwards; }
 .morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
 .morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
 .morph.trash-shake{ animation:trashShake .4s ease; border-color:var(--danger); }
@@ -154,8 +141,21 @@ button{font-family:inherit;cursor:pointer;}
 }
 .burst-flash{
   position:absolute; transform:translate(-50%,-50%); border-radius:50%;
-  border:2.5px solid var(--accent-2); pointer-events:none;
-  animation:burstFlash .65s ease-out forwards;
+  pointer-events:none;
+}
+.burst-flash.ring1{ border:2.5px solid var(--accent-2); animation:burstFlash .65s ease-out forwards; }
+.burst-flash.ring2{ border:1.5px solid #FFD26B; animation:burstFlash .8s ease-out .12s forwards; }
+.burst-core-flash{
+  position:absolute; transform:translate(-50%,-50%); border-radius:50%;
+  width:16px; height:16px; pointer-events:none;
+  background:radial-gradient(circle, #fff 0%, #FFD26B 35%, var(--accent-2) 70%, transparent 100%);
+  animation:burstCoreFlash .3s ease-out forwards;
+}
+.burst-spark{
+  position:absolute; width:5px; height:5px; border-radius:50%;
+  background:linear-gradient(135deg, #FFD26B, var(--accent-2));
+  pointer-events:none;
+  animation:burstSpark .55s cubic-bezier(.25,.9,.4,1) both;
 }
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
@@ -167,9 +167,13 @@ button{font-family:inherit;cursor:pointer;}
   80%{transform:translateX(3px) rotate(1deg);}
 }
 @keyframes burstShake{
-  0%{transform:scale(1);}
-  50%{transform:scale(1.12) rotate(2deg);}
-  100%{transform:scale(1);}
+  0%{ transform:translate(0,0) scale(1) rotate(0); }
+  10%{ transform:translate(-3px,2px) scale(1.05) rotate(-2deg); }
+  20%{ transform:translate(4px,-3px) scale(1.15) rotate(3deg); }
+  35%{ transform:translate(-5px,3px) scale(1.2) rotate(-3deg); }
+  50%{ transform:translate(4px,-2px) scale(1.12) rotate(2deg); }
+  70%{ transform:translate(-2px,2px) scale(1.05) rotate(-1deg); }
+  100%{ transform:translate(0,0) scale(1) rotate(0); }
 }
 @keyframes spinWindUp{
   0%,100%{transform:rotate(0) scale(1);}
@@ -179,6 +183,14 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes burstFlash{
   from{ width:0; height:0; opacity:1; }
   to{ width:220px; height:220px; opacity:0; }
+}
+@keyframes burstCoreFlash{
+  0%{ transform:translate(-50%,-50%) scale(.2); opacity:1; }
+  100%{ transform:translate(-50%,-50%) scale(3.2); opacity:0; }
+}
+@keyframes burstSpark{
+  0%{ transform:translate(-50%,-50%) scale(1); opacity:1; }
+  100%{ transform:translate(calc(-50% + var(--spark-x)), calc(-50% + var(--spark-y))) scale(.2); opacity:0; }
 }
 @keyframes shatterIn{
   from{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.75); opacity:0; }
@@ -191,33 +203,6 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes spinIn{
   from{ transform:translateY(var(--from-y,0)) rotate(var(--from-rot,0)) scale(.4); opacity:0; }
   to{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
-}
-@keyframes mitosisStretch{
-  0%{ transform:scale(1,1); border-radius:12px; }
-  100%{ transform:scale(1.2,.82); border-radius:50%; }
-}
-@keyframes mitosisPinch{
-  0%{ transform:scale(1.2,.82); border-radius:50%; opacity:1; }
-  100%{ transform:scale(.85,.55); border-radius:50%; opacity:.5; }
-}
-@keyframes mitosisSplit{
-  0%{ opacity:.5; }
-  100%{ opacity:0; transform:scale(.4,.3); }
-}
-@keyframes mitosisCellA{
-  0%{ transform:translate(-50%,-50%) scale(.2); opacity:0; }
-  30%{ opacity:1; }
-  100%{ transform:translate(calc(-50% - 34px), -50%) scale(1); opacity:1; }
-}
-@keyframes mitosisCellB{
-  0%{ transform:translate(-50%,-50%) scale(.2); opacity:0; }
-  30%{ opacity:1; }
-  100%{ transform:translate(calc(-50% + 34px), -50%) scale(1); opacity:1; }
-}
-@keyframes mitosisIn{
-  from{ transform:translate(var(--from-x,0), var(--from-y,0)) scale(.15); opacity:0; border-radius:50%; }
-  60%{ border-radius:20%; }
-  to{ transform:translate(0,0) scale(1); opacity:1; border-radius:12px; }
 }
 @keyframes cardFlipOut{
   from{ transform:perspective(600px) rotateY(0deg); }
@@ -251,9 +236,8 @@ button{font-family:inherit;cursor:pointer;}
   .morph, .morph.word-pulse, .morph.crack-shake, .morph.shatter-in,
   .morph.burst-shake, .morph.burst-in, .morph.spin-wind-up, .morph.spin-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
-  .morph.mitosis-stretch, .morph.mitosis-pinch, .morph.mitosis-split, .morph.mitosis-in,
-  .mitosis-cell.a, .mitosis-cell.b,
-  .trash-can.show, .crack-line, .burst-flash, .spinner{animation:none;}
+  .trash-can.show, .crack-line, .burst-flash.ring1, .burst-flash.ring2,
+  .burst-core-flash, .burst-spark, .spinner{animation:none;}
   .morph-meaning{transition:none;}
 }
 

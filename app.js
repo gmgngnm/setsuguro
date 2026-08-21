@@ -894,27 +894,57 @@ const DECOMPOSE_ANIM_STYLES = {
     tileClass: "burst-in",
     tileVars(i, mid) {
       const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
-      const dist = 50 + Math.abs(dir) * 26;
+      const dist = 60 + Math.abs(dir) * 32;
       return {
         "--from-x": `${Math.sign(dir) * dist}px`,
-        "--from-y": `${-24 - Math.random() * 22}px`,
-        "--from-rot": `${dir * 30}deg`,
+        "--from-y": `${-28 - Math.random() * 26}px`,
+        "--from-rot": `${dir * 36}deg`,
       };
     },
-    /* 単語ブロックが光って弾ける */
+    /* 単語ブロックが閃光と火花を伴って本格的に爆発する */
     async intro(placeholder) {
       if (reducedMotion()) return;
 
       placeholder.classList.remove("word-pulse");
       const rect = placeholder.getBoundingClientRect();
-      const ring = document.createElement("div");
-      ring.className = "burst-flash";
-      ring.style.left = `${rect.width / 2}px`;
-      ring.style.top = `${rect.height / 2}px`;
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
       placeholder.style.position = "relative";
-      placeholder.appendChild(ring);
+
+      const core = document.createElement("div");
+      core.className = "burst-core-flash";
+      core.style.left = `${cx}px`;
+      core.style.top = `${cy}px`;
+      placeholder.appendChild(core);
+
+      const ring1 = document.createElement("div");
+      ring1.className = "burst-flash ring1";
+      ring1.style.left = `${cx}px`;
+      ring1.style.top = `${cy}px`;
+      placeholder.appendChild(ring1);
+
+      const ring2 = document.createElement("div");
+      ring2.className = "burst-flash ring2";
+      ring2.style.left = `${cx}px`;
+      ring2.style.top = `${cy}px`;
+      placeholder.appendChild(ring2);
+
+      const sparkCount = 12;
+      for (let i = 0; i < sparkCount; i++) {
+        const spark = document.createElement("div");
+        spark.className = "burst-spark";
+        const angle = (Math.PI * 2 * i) / sparkCount + (Math.random() - 0.5) * 0.5;
+        const dist = 40 + Math.random() * 60;
+        spark.style.left = `${cx}px`;
+        spark.style.top = `${cy}px`;
+        spark.style.setProperty("--spark-x", `${Math.cos(angle) * dist}px`);
+        spark.style.setProperty("--spark-y", `${Math.sin(angle) * dist}px`);
+        spark.style.animationDelay = `${Math.random() * 0.08}s`;
+        placeholder.appendChild(spark);
+      }
+
       placeholder.classList.add("burst-shake");
-      await sleep(560);
+      await sleep(900);
     },
   },
 
@@ -932,43 +962,6 @@ const DECOMPOSE_ANIM_STYLES = {
       placeholder.classList.remove("word-pulse");
       placeholder.classList.add("spin-wind-up");
       await sleep(620);
-    },
-  },
-
-  mitosis: {
-    label: "細胞分裂",
-    tileClass: "mitosis-in",
-    tileVars(i, mid) {
-      const dir = i - mid;
-      return { "--from-x": `${-dir * 14}px`, "--from-y": "0px", "--from-rot": "0deg" };
-    },
-    /* 単語ブロックが細胞のようにくびれて2つに分かれ、そこから接辞タイルが増殖するように現れる */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-
-      placeholder.classList.remove("word-pulse");
-      placeholder.classList.add("mitosis-stretch");
-      await sleep(350);
-
-      const rect = placeholder.getBoundingClientRect();
-      const size = `${rect.height}px`;
-      placeholder.classList.remove("mitosis-stretch");
-      placeholder.classList.add("mitosis-pinch");
-      const cellA = document.createElement("div");
-      cellA.className = "mitosis-cell a";
-      cellA.style.width = size;
-      cellA.style.height = size;
-      const cellB = document.createElement("div");
-      cellB.className = "mitosis-cell b";
-      cellB.style.width = size;
-      cellB.style.height = size;
-      placeholder.style.position = "relative";
-      placeholder.appendChild(cellA);
-      placeholder.appendChild(cellB);
-      await sleep(270);
-
-      placeholder.classList.add("mitosis-split");
-      await sleep(400);
     },
   },
 };
