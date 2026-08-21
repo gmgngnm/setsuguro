@@ -324,6 +324,89 @@ button{font-family:inherit;cursor:pointer;}
   60%{ transform:translateY(6px) rotate(calc(var(--from-rot,0) * -0.15)) scale(1.08); opacity:1; }
   100%{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
 }
+
+.scatter-shard{
+  position:absolute; width:6px; height:6px; background:var(--accent-ink); border-radius:2px;
+  pointer-events:none; animation:scatterShard .55s cubic-bezier(.25,.9,.4,1) both;
+}
+.morph.scatter-out{ animation:scatterOut .5s cubic-bezier(.45,0,.55,1) forwards; }
+.morph.scatter-in{ animation:scatterIn .65s cubic-bezier(.22,1,.36,1) both; }
+@keyframes scatterShard{
+  0%{ transform:translate(-50%,-50%) scale(1); opacity:1; }
+  100%{ transform:translate(calc(-50% + var(--sx)), calc(-50% + var(--sy))) rotate(var(--srot)) scale(.2); opacity:0; }
+}
+@keyframes scatterOut{
+  0%{ transform:scale(1); opacity:1; filter:blur(0); }
+  100%{ transform:scale(.7); opacity:0; filter:blur(2px); }
+}
+@keyframes scatterIn{
+  0%{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.3); opacity:0; filter:blur(3px); }
+  70%{ filter:blur(0); }
+  100%{ transform:translate(0,0) rotate(0) scale(1); opacity:1; filter:blur(0); }
+}
+
+.morph.centrifuge-spin{ animation:centrifugeSpin .7s cubic-bezier(.55,0,.85,.35) forwards; }
+.morph.centrifuge-in{ animation:centrifugeIn .7s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes centrifugeSpin{
+  0%{ transform:rotate(0deg) scale(1); opacity:1; }
+  30%{ transform:rotate(180deg) scale(1); opacity:1; }
+  55%{ transform:rotate(540deg) scale(1.05); opacity:1; }
+  75%{ transform:rotate(1080deg) scale(1.05); opacity:1; }
+  100%{ transform:rotate(1800deg) scale(.2); opacity:0; }
+}
+@keyframes centrifugeIn{
+  0%{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.3); opacity:0; }
+  100%{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
+}
+
+.scissors-line{
+  position:absolute; top:0; bottom:0; width:1.5px; background:var(--ink-faint); opacity:0;
+  transform:translateX(-50%); animation:scissorsLine .3s ease forwards;
+}
+.scissors-icon{
+  position:absolute; top:50%; font-size:18px; pointer-events:none;
+  transform:translate(-50%,-90px) rotate(-90deg) scale(.6); opacity:0;
+  animation:scissorsSnip .5s cubic-bezier(.34,1.56,.64,1) forwards;
+}
+.morph.scissors-cut{ animation:scissorsCut .4s ease .3s forwards; }
+.morph.scissors-in{ animation:scissorsIn .5s cubic-bezier(.22,1,.36,1) both; }
+@keyframes scissorsLine{ to{ opacity:1; } }
+@keyframes scissorsSnip{
+  0%{ transform:translate(-50%,-90px) rotate(-90deg) scale(.6); opacity:0; }
+  40%{ transform:translate(-50%,-50%) rotate(-90deg) scale(1); opacity:1; }
+  60%{ transform:translate(-50%,-50%) rotate(-70deg) scale(1.15); }
+  75%{ transform:translate(-50%,-50%) rotate(-95deg) scale(1); }
+  100%{ transform:translate(-50%,40px) rotate(-90deg) scale(.8); opacity:0; }
+}
+@keyframes scissorsCut{ to{ opacity:0; transform:scale(.94); } }
+@keyframes scissorsIn{
+  from{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)); opacity:0; }
+  to{ transform:translate(0,0) rotate(0); opacity:1; }
+}
+
+.drop-box{
+  position:absolute; left:50%; bottom:-30px; font-size:30px; pointer-events:none;
+  transform:translateX(-50%) scale(0); opacity:0; animation:boxAppear .3s ease .3s forwards;
+}
+.drop-box.shake{ animation:boxShake .3s ease; }
+.morph.box-drop{ animation:boxDrop .5s cubic-bezier(.55,0,.85,.35) forwards; }
+.morph.box-out-in{ animation:boxOutIn .55s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes boxAppear{ to{ opacity:1; transform:translateX(-50%) scale(1); } }
+@keyframes boxShake{
+  0%,100%{ transform:translateX(-50%) rotate(0); }
+  25%{ transform:translateX(-50%) rotate(-8deg); }
+  75%{ transform:translateX(-50%) rotate(8deg); }
+}
+@keyframes boxDrop{
+  0%{ transform:translateY(0) scale(1); opacity:1; }
+  60%{ transform:translateY(20px) scale(.85); opacity:1; }
+  100%{ transform:translateY(50px) scale(.3); opacity:0; }
+}
+@keyframes boxOutIn{
+  0%{ transform:translate(var(--from-x,0), var(--from-y,50px)) rotate(var(--from-rot,0)) scale(.5); opacity:0; }
+  60%{ transform:translate(calc(var(--from-x,0) * -0.15), -6px) rotate(0) scale(1.06); opacity:1; }
+  100%{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
+}
 @keyframes cardFlipOut{
   from{ transform:perspective(600px) rotateY(0deg); }
   to{ transform:perspective(600px) rotateY(90deg); }
@@ -360,7 +443,11 @@ button{font-family:inherit;cursor:pointer;}
   .burst-core-flash, .burst-spark, .spinner,
   .morph.warp-shrink, .morph.warp-in, .warp-beam,
   .morph.glitch-out, .morph.glitch-in, .glitch-ghost.cyan, .glitch-ghost.magenta,
-  .morph.confetti-pop, .morph.confetti-in, .confetti-piece{animation:none;}
+  .morph.confetti-pop, .morph.confetti-in, .confetti-piece,
+  .morph.scatter-out, .morph.scatter-in, .scatter-shard,
+  .morph.centrifuge-spin, .morph.centrifuge-in,
+  .morph.scissors-cut, .morph.scissors-in, .scissors-line, .scissors-icon,
+  .morph.box-drop, .morph.box-out-in, .drop-box, .drop-box.shake{animation:none;}
   .morph-meaning{transition:none;}
 }
 
