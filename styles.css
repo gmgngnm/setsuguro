@@ -259,7 +259,8 @@ button{font-family:inherit;cursor:pointer;}
 }
 .form-field input{border:none;outline:none;background:transparent;color:var(--ink);flex:1;font-family:'JetBrains Mono',monospace;font-size:13px;}
 .form-field button{background:none;border:none;color:var(--ink-faint);font-size:14px;}
-.provider-row{display:flex;gap:8px;}
+.provider-row{display:flex;gap:8px;flex-wrap:wrap;}
+.provider-row .provider-pill{min-width:64px;}
 .provider-pill{
   flex:1;text-align:center;border-radius:12px;padding:12px 4px;font-size:12px;
   font-family:'JetBrains Mono',monospace;border:1.5px solid var(--line);color:var(--ink-faint);background:var(--surface);

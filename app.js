@@ -279,6 +279,29 @@ const AI_ADAPTERS = {
       return { text, tokens };
     },
   },
+  groq: {
+    label: "Groq",
+    async chat(apiKey, systemPrompt, userPrompt, temperature) {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "qwen/qwen3.6-27b",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          response_format: { type: "json_object" },
+          temperature,
+        }),
+      });
+      if (!res.ok) throw new Error(`Groq API エラー (${res.status})`);
+      const json = await res.json();
+      const text = json.choices?.[0]?.message?.content || "{}";
+      const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
+      return { text, tokens };
+    },
+  },
 };
 
 const RETRYABLE_STATUS = [429, 500, 502, 503, 504];
@@ -909,7 +932,7 @@ function buildBookRow(title, sub, createdAt, onTap, onDelete) {
 /* ------------------------------------------------------------------ *
  * 11. API設定画面
  * ------------------------------------------------------------------ */
-const PROVIDER_LABELS = { openai: "ChatGPT", gemini: "Gemini", claude: "Claude" };
+const PROVIDER_LABELS = { openai: "ChatGPT", gemini: "Gemini", claude: "Claude", groq: "Groq" };
 let activeProvider = "openai";
 
 async function initSettingsScreen() {
