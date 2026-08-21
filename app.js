@@ -331,6 +331,31 @@ const AI_ADAPTERS = {
       return { text, tokens };
     },
   },
+  sakura: {
+    label: "さくらのAI",
+    async chat(apiKey, systemPrompt, userPrompt, temperature) {
+      const res = await fetch("https://api.ai.sakura.ad.jp/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "gpt-oss-120b",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature,
+        }),
+      });
+      if (!res.ok) {
+        const detail = await extractErrorDetail(res);
+        throw new Error(`さくらのAI API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+      }
+      const json = await res.json();
+      const text = json.choices?.[0]?.message?.content || "{}";
+      const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
+      return { text, tokens };
+    },
+  },
 };
 
 const RETRYABLE_STATUS = [429, 500, 502, 503, 504];
@@ -1621,7 +1646,7 @@ async function classifyMemorizeCard(memorized) {
 /* ------------------------------------------------------------------ *
  * 12. API設定画面
  * ------------------------------------------------------------------ */
-const PROVIDER_LABELS = { openai: "ChatGPT", gemini: "Gemini", claude: "Claude", groq: "Groq" };
+const PROVIDER_LABELS = { openai: "ChatGPT", gemini: "Gemini", claude: "Claude", groq: "Groq", sakura: "さくらのAI" };
 let activeProvider = "openai";
 
 async function initSettingsScreen() {
