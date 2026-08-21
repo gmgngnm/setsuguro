@@ -199,7 +199,8 @@ function goroSystemPrompt(word, morphemes) {
     "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にして、音が似た日本語表現を組み合わせ、意味の通る一文の語呂合わせを作ってください。",
     "例: dict(ジクト)/ion(イオン)/ary(アリー) → 「軸と(dict)イオン(ion)で起電力あり(ary)」",
     "各接辞の読みは一音も欠かさず文中のどこかに反映してください。下品・差別的・実在の人物名を用いた表現は避けてください。",
-    "候補を3件作り、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
+    "候補を3件作ってください。3件は必ずそれぞれ大きく違うものにしてください。具体的には、①登場する人物・場所・物・情景をそれぞれ別のものにする、②文の構造や語順、文末表現を毎回変える、③3件の書き出し（最初の5文字程度）を互いに一致させない、④同じ接辞の読みに対して毎回同じ日本語の当て字を使い回さず、できる限り違う言葉を当てる、という4点をすべて満たすよう、時間をかけてよく考えてから出力してください。似た内容の言い換えに留まる候補は不可とします。",
+    "候補を3件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
     '{"candidates":[{"text":"軸とイオンで起電力あり","highlight":[{"part":"dict","in_text":"軸と"}]}]}',
   ].join("\n");
 }
@@ -448,11 +449,36 @@ async function decomposeWord(word, provider, apiKey) {
   }
 }
 
+function candidatesTooSimilar(candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      const a = candidates[i].text || "";
+      const b = candidates[j].text || "";
+      let common = 0;
+      while (common < a.length && common < b.length && a[common] === b[common]) common++;
+      if (common >= 6) return true;
+    }
+  }
+  return false;
+}
+
 async function generateGoro(word, morphemes, provider, apiKey) {
   const sys = goroSystemPrompt(word, morphemes);
   const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を3件、JSON形式で出力してください。");
-  const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
+  let candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
   if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
+
+  if (candidates.length > 1 && candidatesTooSimilar(candidates)) {
+    try {
+      const retryPrompt = "語呂合わせ候補を3件、JSON形式で出力してください。前回の候補は書き出しや情景が似すぎていました。今回は3件それぞれ、書き出し・登場する場面・使う言葉を必ずすべて別のものにしてください。";
+      const retryJson = await callAI(provider, apiKey, sys, retryPrompt);
+      const retryCandidates = (retryJson.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
+      if (retryCandidates.length) candidates = retryCandidates;
+    } catch (retryErr) {
+      console.warn("Goro retry for diversity failed:", retryErr);
+    }
+  }
+
   return candidates;
 }
 
