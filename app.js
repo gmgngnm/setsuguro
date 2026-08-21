@@ -473,10 +473,48 @@ async function decomposeWord(word, provider, apiKey) {
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
+
+    morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey);
+
     return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
     return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", morphemes: fallbackDecompose(word) };
+  }
+}
+
+function decomposeValidationPrompt(word, morphemes) {
+  const partsList = morphemes
+    .map((m, i) => `${i + 1}. ${m.part} - 読み:${m.reading} / 意味:${m.meaning} / 由来:${m.origin} / 発音記号:${m.phonetic}`)
+    .join("\n");
+  return [
+    "あなたは英語の語源・形態素解析の専門家であり、厳格な校閲者です。",
+    `対象の英単語は "${word}"。以下は、この単語を接頭辞・語根・接尾辞（接辞）に分割した結果です。`,
+    partsList,
+    "各要素について、次の点を厳しく確認してください。",
+    "①各要素を順番に連結すると、対象の英単語と文字列として完全に一致すること（文字の欠落・重複・誤字がないこと）。",
+    "②各要素への切り方が、言語学的・語源的に見て妥当な形態素分割になっていること（実在しない、あるいは明らかに誤った分割になっていないこと）。",
+    "③各要素の意味（meaning）・由来（origin）・カタカナ読み（reading）・発音記号（phonetic）が、その要素について事実として正確であること（誤りや当てずっぽうの記載がないこと）。",
+    "いずれかに誤りが見つかった場合は、正しい分割・正しい情報にすべて書き直してください。問題がなければそのまま使ってください。",
+    "出力は、書き直した場合も含め、必ず全要素を次のJSON形式のみで返してください。それ以外の文章は一切書かないでください。",
+    '{"morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}',
+  ].join("\n");
+}
+
+async function validateDecomposition(word, morphemes, provider, apiKey) {
+  if (!morphemes.length) return morphemes;
+  try {
+    const sys = decomposeValidationPrompt(word, morphemes);
+    const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2);
+    const revised = reconcileWithLocalDict(json.morphemes);
+    const concatenated = revised.map((m) => m.part).join("").toLowerCase();
+    if (revised.length && concatenated === word.toLowerCase()) {
+      return revised;
+    }
+    return morphemes;
+  } catch (err) {
+    console.warn("Decomposition validation pass failed, using original morphemes:", err);
+    return morphemes;
   }
 }
 
@@ -1481,6 +1519,24 @@ let memorizeRevealed = false;
 let memorizeAutoPlay = false;
 let memorizeAutoTimer = null;
 let memorizeEmptyMessage = "保存された単語がまだありません";
+let memorizeSpeechOn = true;
+
+const ICON_VOLUME_ON = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>';
+const ICON_VOLUME_OFF = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>';
+
+function renderMemorizeSpeechToggle() {
+  const icon = document.getElementById("memorize-speech-icon");
+  icon.innerHTML = memorizeSpeechOn ? ICON_VOLUME_ON : ICON_VOLUME_OFF;
+  const btn = document.getElementById("memorize-speech-toggle");
+  btn.title = memorizeSpeechOn ? "読み上げ: オン" : "読み上げ: オフ";
+  btn.setAttribute("aria-label", btn.title);
+}
+
+document.getElementById("memorize-speech-toggle").addEventListener("click", async () => {
+  memorizeSpeechOn = !memorizeSpeechOn;
+  await kvSet("memorize_speech_on", memorizeSpeechOn);
+  renderMemorizeSpeechToggle();
+});
 
 const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
 document.getElementById("memorize-entry-btn").addEventListener("click", () => {
@@ -1515,6 +1571,8 @@ async function startMemorizeMode(mode = "all") {
   memorizeEmptyMessage = mode === "unlearned"
     ? "未学習のカードはありません"
     : "保存された単語がまだありません";
+  memorizeSpeechOn = await kvGet("memorize_speech_on", true);
+  renderMemorizeSpeechToggle();
   showScreen("screen-memorize");
   renderMemorizeCard();
 }
@@ -1606,11 +1664,34 @@ function revealMemorizeDetail() {
     splitEl.appendChild(tile);
   });
   detailEl.appendChild(splitEl);
+
+  if (record.word_memory_tip) {
+    const tipEl = document.createElement("div");
+    tipEl.className = "memory-tip";
+    tipEl.textContent = record.word_memory_tip;
+    detailEl.appendChild(tipEl);
+  }
+
+  if (record.goro_text) {
+    const goroCard = document.createElement("div");
+    goroCard.className = "goro-card";
+    goroCard.innerHTML = `<div class="goro-tap"><span class="spk">🔊</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
+    const tap = goroCard.querySelector(".goro-tap");
+    tap.addEventListener("click", (e) => {
+      e.stopPropagation();
+      tap.classList.add("speaking");
+      speak(record.goro_text, () => tap.classList.remove("speaking"));
+    });
+    detailEl.appendChild(goroCard);
+  }
+
   detailEl.style.display = "";
 
-  if (memorizeAutoPlay) {
+  if (memorizeSpeechOn) {
     const toSpeak = [record.word, record.word_meaning].filter(Boolean).join("、");
     if (toSpeak) speak(toSpeak);
+  }
+  if (memorizeAutoPlay) {
     clearMemorizeAutoTimer();
     memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, 3800);
   }
