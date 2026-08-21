@@ -1224,6 +1224,8 @@ async function toggleSaveWord() {
     await idbPut("words", {
       id,
       word: currentWord,
+      word_meaning: currentWordMeaning,
+      word_phonetic: currentWordPhonetic,
       morphemes: currentMorphemes,
       goro_text: c ? c.text : "",
       goro_highlight: c ? c.highlight : [],
@@ -1310,7 +1312,7 @@ async function renderBookList() {
     rows.sort((a, b) => b.created_at - a.created_at);
     if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
     rows.forEach((r) => {
-      const row = buildBookRow(r.word, r.goro_text, r.created_at, () => speak(r.goro_text), async () => {
+      const row = buildBookRow(r.word, "", r.created_at, () => openWordDetail(r), async () => {
         await idbDelete("words", r.id);
         renderBookList();
       });
@@ -1331,15 +1333,57 @@ async function renderBookList() {
   }
 }
 
+/* 単語帳の1件をタップした際に、単語・意味・接辞・接辞の意味・語呂合わせをまとめて表示する */
+function openWordDetail(record) {
+  const meaningEl = document.getElementById("word-detail-meaning");
+  const phoneticHtml = record.word_phonetic ? `<span class="phonetic">[${escapeHtml(record.word_phonetic)}]</span>` : "";
+  const meaningTextHtml = record.word_meaning ? `<div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>` : "";
+  meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div>${meaningTextHtml}`;
+  meaningEl.style.display = "block";
+
+  const affixList = document.getElementById("word-detail-affixes");
+  affixList.innerHTML = "";
+  (record.morphemes || []).forEach((m) => {
+    const card = document.createElement("div");
+    card.className = "affix-card";
+    card.innerHTML = `
+      <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
+      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
+    affixList.appendChild(card);
+  });
+  if (!affixList.children.length) {
+    affixList.innerHTML = `<div class="empty-note">接辞の記録がありません</div>`;
+  }
+
+  const goroList = document.getElementById("word-detail-goro");
+  goroList.innerHTML = "";
+  if (record.goro_text) {
+    const card = document.createElement("div");
+    card.className = "goro-card";
+    card.innerHTML = `<div class="goro-tap"><span class="spk">🔊</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
+    const tap = card.querySelector(".goro-tap");
+    tap.addEventListener("click", () => {
+      tap.classList.add("speaking");
+      speak(record.goro_text, () => tap.classList.remove("speaking"));
+    });
+    goroList.appendChild(card);
+  } else {
+    goroList.innerHTML = `<div class="empty-note">語呂合わせは登録されていません</div>`;
+  }
+
+  showScreen("screen-word-detail");
+}
+
 function buildBookRow(title, sub, createdAt, onTap, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
   const date = new Date(createdAt);
   const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
+  const subHtml = sub ? `<div class="g">${escapeHtml(sub)}</div>` : "";
   wrap.innerHTML = `
     <div class="del-reveal">🗑 削除</div>
     <div class="row-body">
-      <div><div class="w">${escapeHtml(title)}</div><div class="g">${escapeHtml(sub)}</div></div>
+      <div><div class="w">${escapeHtml(title)}</div>${subHtml}</div>
       <div class="date">${dateStr}</div>
     </div>`;
   const body = wrap.querySelector(".row-body");
