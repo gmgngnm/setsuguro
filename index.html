@@ -33,7 +33,7 @@
 
   <!-- ============ SCREEN 02: 分解アニメーション ============ -->
   <section id="screen-decompose" class="screen">
-    <div class="appbar">
+    <div class="appbar" id="decompose-appbar" style="display:none;">
       <button class="logo" data-nav="home" aria-label="ホームへ">セツゴロ</button>
       <div class="nav-icons">
         <button class="icon-btn" data-nav="book" title="記録帳" aria-label="記録帳">📒</button>
@@ -56,6 +56,7 @@
         <button class="icon-btn" data-nav="settings" title="設定" aria-label="設定">⚙</button>
       </div>
     </div>
+    <div class="word-meaning" id="word-meaning"></div>
     <div class="section-label"><span id="result-word-label">の接辞</span><span class="hint-text" id="swipe-hint">← スライドで保存</span></div>
     <div class="affix-list" id="affix-list"></div>
 
