@@ -169,9 +169,12 @@ async function loadApiKey(provider) {
 const DECOMPOSE_SYS = [
   "あなたは英語の語源・形態素解析の専門家です。",
   "与えられた英単語を接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
-  "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を付けてください。",
+  "分割は教科書的に広く認められている境界を優先し、語根に接尾辞の一部（活用語尾や連結母音など）を含めないでください。",
+  "各要素を連結すると元の単語と完全に一致するようにしてください（文字の欠落・重複がないこと）。",
+  "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"}]}',
+  '{"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io"}]}',
+  "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
 function goroSystemPrompt(word, morphemes) {
@@ -197,7 +200,7 @@ function extractJson(text) {
 const AI_ADAPTERS = {
   openai: {
     label: "ChatGPT",
-    async chat(apiKey, systemPrompt, userPrompt) {
+    async chat(apiKey, systemPrompt, userPrompt, temperature) {
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -208,7 +211,7 @@ const AI_ADAPTERS = {
             { role: "user", content: userPrompt },
           ],
           response_format: { type: "json_object" },
-          temperature: 0.9,
+          temperature,
         }),
       });
       if (!res.ok) throw new Error(`OpenAI API エラー (${res.status})`);
@@ -220,7 +223,7 @@ const AI_ADAPTERS = {
   },
   gemini: {
     label: "Gemini",
-    async chat(apiKey, systemPrompt, userPrompt) {
+    async chat(apiKey, systemPrompt, userPrompt, temperature) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
       const res = await fetch(url, {
         method: "POST",
@@ -228,7 +231,7 @@ const AI_ADAPTERS = {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
+          generationConfig: { responseMimeType: "application/json", temperature },
         }),
       });
       if (!res.ok) throw new Error(`Gemini API エラー (${res.status})`);
@@ -240,7 +243,7 @@ const AI_ADAPTERS = {
   },
   claude: {
     label: "Claude",
-    async chat(apiKey, systemPrompt, userPrompt) {
+    async chat(apiKey, systemPrompt, userPrompt, temperature) {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -254,6 +257,7 @@ const AI_ADAPTERS = {
           max_tokens: 1024,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
+          temperature,
         }),
       });
       if (!res.ok) throw new Error(`Claude API エラー (${res.status})`);
@@ -277,7 +281,7 @@ function statusFromError(err) {
   return match ? Number(match[1]) : null;
 }
 
-async function callAI(provider, apiKey, systemPrompt, userPrompt) {
+async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
   if (!apiKey) throw new Error("APIキーが設定されていません");
@@ -285,7 +289,7 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt) {
   let lastErr;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt);
+      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature);
       await bumpUsage(tokens);
       return extractJson(text);
     } catch (err) {
@@ -338,7 +342,7 @@ function fallbackDecompose(word) {
 
 async function decomposeWord(word, provider, apiKey) {
   try {
-    const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`);
+    const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     const morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
     return morphemes;
