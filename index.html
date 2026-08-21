@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>セツゴロ</title>
+<title>EnGolo</title>
 <meta name="description" content="英単語を接辞に分解し、音の語呂合わせで覚えるアプリ">
 <meta name="theme-color" content="#1F6F63">
 <link rel="manifest" href="manifest.json">
@@ -17,7 +17,10 @@
   <!-- ============ SCREEN 01: ホーム ============ -->
   <section id="screen-home" class="screen active">
     <div class="appbar">
-      <button class="logo" data-nav="home" aria-label="ホームへ">セツゴロ</button>
+      <button class="logo" data-nav="home" aria-label="ホームへ">
+        <span class="logo-word"><span class="logo-en">En</span><span class="logo-golo">Golo</span></span>
+        <svg class="logo-wave" viewBox="0 0 230 46" width="30" height="6" aria-hidden="true"><path d="M10 24 Q 40 2, 70 24 T 130 24 T 190 24" stroke="currentColor" stroke-width="14" stroke-linecap="round" fill="none"/></svg>
+      </button>
       <div class="nav-icons">
         <button class="icon-btn" data-nav="book" title="記録帳" aria-label="記録帳">☰</button>
         <button class="icon-btn" data-nav="settings" title="設定" aria-label="設定">⚙︎</button>
@@ -40,7 +43,10 @@
   <!-- ============ SCREEN 02: 分解アニメーション ============ -->
   <section id="screen-decompose" class="screen">
     <div class="appbar" id="decompose-appbar" style="display:none;">
-      <button class="logo" data-nav="home" aria-label="ホームへ">セツゴロ</button>
+      <button class="logo" data-nav="home" aria-label="ホームへ">
+        <span class="logo-word"><span class="logo-en">En</span><span class="logo-golo">Golo</span></span>
+        <svg class="logo-wave" viewBox="0 0 230 46" width="30" height="6" aria-hidden="true"><path d="M10 24 Q 40 2, 70 24 T 130 24 T 190 24" stroke="currentColor" stroke-width="14" stroke-linecap="round" fill="none"/></svg>
+      </button>
       <div class="nav-icons">
         <button class="icon-btn" data-nav="book" title="記録帳" aria-label="記録帳">☰</button>
         <button class="icon-btn" data-nav="settings" title="設定" aria-label="設定">⚙︎</button>
@@ -164,7 +170,7 @@
       <div class="usage-note">概算値です。正確な金額は各社の請求画面でご確認ください。</div>
     </div>
 
-    <div class="lockrow">🔒 キーは端末内に暗号化して保存され、セツゴロの分解・語呂合わせ生成にのみ使用されます。</div>
+    <div class="lockrow">🔒 キーは端末内に暗号化して保存され、EnGoloの分解・語呂合わせ生成にのみ使用されます。</div>
 
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>

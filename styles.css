@@ -12,6 +12,7 @@
   --accent-2:#E2622F;
   --line:#D6DBCF;
   --danger:#C74B3F;
+  --brand-blue:#2F6FED;
   --shadow: 0 1px 2px rgba(23,33,28,0.06), 0 8px 24px rgba(23,33,28,0.08);
 }
 @media (prefers-color-scheme: dark){
@@ -19,7 +20,7 @@
     --bg:#101711; --surface:#182019; --surface-2:#202A21;
     --ink:#ECF1E8; --ink-soft:#AAB6A4; --ink-faint:#7E8B80;
     --accent:#4FBFA8; --accent-ink:#BEEFE1; --accent-2:#F0855A;
-    --line:#2A342A; --danger:#E27B70;
+    --line:#2A342A; --danger:#E27B70; --brand-blue:#7CA2FF;
     --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.4);
   }
 }
@@ -27,7 +28,7 @@
   --bg:#101711; --surface:#182019; --surface-2:#202A21;
   --ink:#ECF1E8; --ink-soft:#AAB6A4; --ink-faint:#7E8B80;
   --accent:#4FBFA8; --accent-ink:#BEEFE1; --accent-2:#F0855A;
-  --line:#2A342A; --danger:#E27B70;
+  --line:#2A342A; --danger:#E27B70; --brand-blue:#7CA2FF;
   --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.4);
 }
 
@@ -50,8 +51,15 @@ button{font-family:inherit;cursor:pointer;}
   display:flex;align-items:center;justify-content:space-between;
   padding:16px 18px 12px;flex-shrink:0;position:sticky;top:0;background:var(--bg);z-index:10;
 }
-.appbar .logo{font-family:'Shippori Mincho',serif;font-weight:700;font-size:20px;color:var(--accent-ink);
-  background:none;border:none;padding:0;cursor:pointer;}
+.appbar .logo{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  font-family:'Zen Kaku Gothic New',sans-serif;font-weight:700;font-size:19px;
+  background:none;border:none;padding:0;cursor:pointer;line-height:1;
+}
+.logo-word{display:flex;letter-spacing:-.3px;}
+.logo-en{color:var(--ink);}
+.logo-golo{color:var(--brand-blue);}
+.logo-wave{color:var(--brand-blue);}
 .nav-icons{display:flex;gap:8px;}
 .icon-btn{
   width:34px;height:34px;border-radius:9px;background:var(--surface-2);border:1px solid var(--line);
