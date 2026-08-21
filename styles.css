@@ -331,18 +331,9 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes wiggle{0%,100%{transform:translateX(0);}25%{transform:translateX(-10px);}75%{transform:translateX(10px);}}
 
 .goro-list{display:flex;flex-direction:column;gap:12px;}
-.goro-swipe{position:relative;overflow:hidden;border-radius:16px;}
-.goro-swipe .reveal{
-  position:absolute;inset:0;border-radius:16px;color:#fff;
-  display:flex;align-items:center;justify-content:center;gap:6px;
-  font-size:14px;font-family:'JetBrains Mono',monospace;font-weight:700;
-  opacity:0;
-}
-.goro-swipe .reveal.reveal-up{background:var(--accent);opacity:1;}
-.goro-swipe .reveal.reveal-down{background:var(--danger);opacity:1;}
 .goro-card{
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
-  box-shadow:var(--shadow);position:relative;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  box-shadow:var(--shadow);position:relative;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   transition:border-color .15s ease, box-shadow .15s ease;
 }
 .goro-card.picked{
@@ -354,20 +345,6 @@ button{font-family:inherit;cursor:pointer;}
 .goro-tap .txt{font-size:15px;line-height:1.6;color:var(--ink);}
 .goro-tap.speaking .spk{animation:pulse .6s ease-in-out infinite;}
 @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.25);}}
-.feedback-badge{
-  position:absolute;top:-9px;right:14px;font-size:15px;
-  background:var(--surface);border:1px solid var(--line);border-radius:999px;
-  padding:2px 7px;box-shadow:var(--shadow);
-}
-.feedback-badge.down{border-color:var(--danger);}
-.feedback-badge.up{border-color:var(--accent);}
-.feedback-badge.feedback-pop{animation:feedbackPop .4s ease;}
-@keyframes feedbackPop{
-  0%{transform:scale(1);}
-  40%{transform:scale(1.5);}
-  100%{transform:scale(1);}
-}
-@media (prefers-reduced-motion: reduce){ .feedback-badge.feedback-pop{animation:none;} }
 .save-word-btn{
   position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
   width:calc(100% - 36px);max-width:444px;
