@@ -1,6 +1,6 @@
 {
-  "name": "セツゴロ",
-  "short_name": "セツゴロ",
+  "name": "EnGolo",
+  "short_name": "EnGolo",
   "description": "英単語を接辞に分解し、生成AIが音ベースの語呂合わせを作る暗記アプリ",
   "start_url": "./index.html",
   "scope": "./",
