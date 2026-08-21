@@ -86,19 +86,31 @@ button{font-family:inherit;cursor:pointer;}
 
 /* Decompose animation */
 #screen-decompose{justify-content:center;align-items:center;text-align:center;}
-.word-split{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;}
+.word-split{display:flex;justify-content:center;align-items:flex-start;gap:8px;flex-wrap:wrap;max-width:100%;}
 .morph{
-  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
   background:var(--surface);border:1.5px solid var(--accent);border-radius:12px;padding:12px 14px;
   box-shadow:var(--shadow); animation:pop .5s ease both;
+  display:flex; flex-direction:column; align-items:center; gap:4px; max-width:150px;
 }
-.morph:nth-child(2n){border-color:var(--accent-2);color:var(--accent-2);}
+.morph:nth-child(2n){border-color:var(--accent-2);}
+.morph:nth-child(2n) .morph-part{color:var(--accent-2);}
+.morph-part{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);}
+.morph-meaning{
+  font-size:11px;color:var(--ink-soft);line-height:1.4;
+  opacity:0;transform:translateY(4px);transition:opacity .35s ease, transform .35s ease;
+}
+.morph-meaning.show{opacity:1;transform:translateY(0);}
+.morph.word-pulse{
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
+  animation:pop .5s ease both, wordPulse 1.2s ease-in-out .5s infinite;
+}
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
+@keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
 .spinner-row{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:24px;}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--accent);animation:spin 1s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
-@media (prefers-reduced-motion: reduce){ .morph, .spinner{animation:none;} }
+@media (prefers-reduced-motion: reduce){ .morph, .morph.word-pulse, .spinner{animation:none;} .morph-meaning{transition:none;} }
 
 /* Result screen: affix cards + goro cards */
 .section-label{
