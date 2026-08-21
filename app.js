@@ -573,7 +573,8 @@ let currentWordMeaning = "";
 let currentMemoryTip = "";
 let currentMorphemes = [];
 let currentCandidates = [];
-let candidateStates = []; // { saved, feedback }
+let candidateStates = []; // { feedback }
+let selectedCandidateIdx = null;
 
 async function startDecompose(rawWord) {
   const word = (rawWord || "").trim();
@@ -899,6 +900,9 @@ async function renderResultScreen() {
 
   document.getElementById("goro-list").innerHTML = `<div class="empty-note">語呂合わせを準備中…</div>`;
   document.getElementById("regen-btn").disabled = true;
+
+  selectedCandidateIdx = null;
+  await refreshSaveWordBtn();
 }
 
 function attachAffixSwipe(card, morpheme, wrapEl) {
@@ -970,8 +974,10 @@ async function loadGoroCandidates(provider, apiKey) {
     console.error(err);
     return;
   }
-  candidateStates = currentCandidates.map(() => ({ saved: false, feedback: null }));
+  candidateStates = currentCandidates.map(() => ({ feedback: null }));
+  selectedCandidateIdx = null;
   renderGoroList();
+  await refreshSaveWordBtn();
   document.getElementById("regen-btn").disabled = false;
 }
 
@@ -980,6 +986,7 @@ function renderGoroList(pop) {
   list.innerHTML = "";
   currentCandidates.forEach((c, idx) => {
     const state = candidateStates[idx];
+    const picked = selectedCandidateIdx === idx;
     const upPop = pop && pop.idx === idx && pop.kind === "up" ? " feedback-pop" : "";
     const downPop = pop && pop.idx === idx && pop.kind === "down" ? " feedback-pop" : "";
     const card = document.createElement("div");
@@ -991,7 +998,7 @@ function renderGoroList(pop) {
       <div class="goro-actions">
         <button class="act-btn up ${state.feedback === "up" ? "on" : ""}${upPop}" data-idx="${idx}" aria-label="良い">👍</button>
         <button class="act-btn down ${state.feedback === "down" ? "on" : ""}${downPop}" data-idx="${idx}" aria-label="いまいち">👎</button>
-        <button class="save-btn ${state.saved ? "on" : ""}" data-idx="${idx}">💾 ${state.saved ? "保存済み" : "保存"}</button>
+        <button class="pick-btn ${picked ? "on" : ""}" data-idx="${idx}">${picked ? "✓ 選択中" : "⭐ これにする"}</button>
       </div>`;
     list.appendChild(card);
   });
@@ -1009,9 +1016,15 @@ function renderGoroList(pop) {
   list.querySelectorAll(".act-btn.down").forEach((el) => {
     el.addEventListener("click", () => toggleFeedback(Number(el.dataset.idx), "down"));
   });
-  list.querySelectorAll(".save-btn").forEach((el) => {
-    el.addEventListener("click", () => toggleSave(Number(el.dataset.idx)));
+  list.querySelectorAll(".pick-btn").forEach((el) => {
+    el.addEventListener("click", () => selectCandidate(Number(el.dataset.idx)));
   });
+}
+
+async function selectCandidate(idx) {
+  selectedCandidateIdx = selectedCandidateIdx === idx ? null : idx;
+  renderGoroList();
+  await refreshSaveWordBtn();
 }
 
 function toggleFeedback(idx, kind) {
@@ -1019,7 +1032,7 @@ function toggleFeedback(idx, kind) {
   const turnedOn = s.feedback !== kind;
   s.feedback = s.feedback === kind ? null : kind;
   renderGoroList({ idx, kind });
-  persistIfSaved(idx);
+  syncSavedFeedback(idx);
   if (turnedOn) {
     toast(kind === "up" ? "👍 高評価を記録しました" : "👎 低評価を記録しました");
   } else {
@@ -1027,39 +1040,58 @@ function toggleFeedback(idx, kind) {
   }
 }
 
-async function toggleSave(idx) {
-  const s = candidateStates[idx];
-  s.saved = !s.saved;
-  if (s.saved) {
-    await persistIfSaved(idx);
-    toast("記録帳に保存しました");
-  } else {
-    await idbDelete("words", wordCardId(currentWord, idx));
-    toast("保存を取り消しました");
-  }
-  renderGoroList();
-}
-
 function wordCardId(word, idx) {
   return `${word.toLowerCase()}__${idx}`;
 }
 
-async function persistIfSaved(idx) {
-  const s = candidateStates[idx];
-  if (!s.saved) return;
-  const c = currentCandidates[idx];
-  const provider = await kvGet("provider", "openai");
-  await idbPut("words", {
-    id: wordCardId(currentWord, idx),
-    word: currentWord,
-    morphemes: currentMorphemes,
-    goro_text: c.text,
-    goro_highlight: c.highlight,
-    provider,
-    feedback: s.feedback,
-    created_at: Date.now(),
-  });
+function currentWordRecordId() {
+  return wordCardId(currentWord, selectedCandidateIdx !== null ? selectedCandidateIdx : "plain");
 }
+
+async function refreshSaveWordBtn() {
+  const btn = document.getElementById("save-word-btn");
+  if (!btn) return;
+  const existing = await idbGet("words", currentWordRecordId());
+  btn.classList.toggle("on", !!existing);
+  btn.textContent = existing ? "✓ 単語を保存済み" : "💾 単語を保存";
+}
+
+async function toggleSaveWord() {
+  const id = currentWordRecordId();
+  const existing = await idbGet("words", id);
+  if (existing) {
+    await idbDelete("words", id);
+    toast("保存を取り消しました");
+  } else {
+    const idx = selectedCandidateIdx;
+    const c = idx !== null ? currentCandidates[idx] : null;
+    const provider = await kvGet("provider", "openai");
+    await idbPut("words", {
+      id,
+      word: currentWord,
+      morphemes: currentMorphemes,
+      goro_text: c ? c.text : "",
+      goro_highlight: c ? c.highlight : [],
+      provider,
+      feedback: idx !== null ? candidateStates[idx].feedback : null,
+      created_at: Date.now(),
+    });
+    toast(c ? "語呂合わせとともに単語を記録帳に保存しました" : "単語を記録帳に保存しました");
+  }
+  await refreshSaveWordBtn();
+}
+
+async function syncSavedFeedback(idx) {
+  if (idx !== selectedCandidateIdx) return;
+  const id = currentWordRecordId();
+  const existing = await idbGet("words", id);
+  if (existing) {
+    existing.feedback = candidateStates[idx].feedback;
+    await idbPut("words", existing);
+  }
+}
+
+document.getElementById("save-word-btn").addEventListener("click", toggleSaveWord);
 
 document.getElementById("regen-btn").addEventListener("click", async () => {
   const provider = await kvGet("provider", "openai");
@@ -1085,14 +1117,15 @@ async function submitCustomGoro() {
 
   const idx = currentCandidates.length;
   currentCandidates.push({ text, highlight: [] });
-  candidateStates.push({ saved: true, feedback: null });
-  await persistIfSaved(idx);
+  candidateStates.push({ feedback: null });
+  selectedCandidateIdx = idx;
   renderGoroList();
+  await refreshSaveWordBtn();
 
   addGoroInput.value = "";
   addGoroForm.style.display = "none";
   addGoroBtn.style.display = "block";
-  toast("自分の語呂合わせを記録帳に保存しました");
+  toast("自分の語呂合わせを選択しました。下の「単語を保存」で記録帳に保存できます。");
 }
 
 document.getElementById("add-goro-submit").addEventListener("click", submitCustomGoro);
