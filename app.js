@@ -785,6 +785,12 @@ async function startDecompose(rawWord) {
   }
   currentMorphemes = morphemes;
 
+  /* Stage2(語呂合わせ生成)は接辞が確定した時点で先行開始し、分解アニメーションの
+     再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない */
+  document.getElementById("regen-btn").disabled = true;
+  let goroDone = false;
+  const goroPromise = loadGoroCandidates(provider, apiKey).then(() => { goroDone = true; });
+
   const animStyle = DECOMPOSE_ANIM_STYLES[await kvGet("decompose_anim", "crack")] || DECOMPOSE_ANIM_STYLES.crack;
   await animStyle.intro(placeholder, currentWord, morphemes);
   placeholder.remove();
@@ -836,12 +842,17 @@ async function startDecompose(rawWord) {
   }
 
   const totalDelay = lastMeaningDelay + 1700;
+  await sleep(totalDelay);
 
-  setTimeout(() => {
-    renderResultScreen();
-    showScreen("screen-result");
-    loadGoroCandidates(provider, apiKey); // Stage2をバックグラウンドで先行実行
-  }, totalDelay);
+  if (!goroDone) {
+    document.getElementById("decompose-label").textContent = "語呂合わせを準備中…";
+    spinnerRow.style.display = "flex";
+    await goroPromise;
+    spinnerRow.style.display = "none";
+  }
+
+  renderResultScreen();
+  showScreen("screen-result");
 }
 
 /* スペルミスを検出した場合、赤く揺れてから正しい綴りにクロスフェードする */
@@ -1313,9 +1324,6 @@ async function renderResultScreen() {
       <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
     list.appendChild(card);
   });
-
-  document.getElementById("goro-list").innerHTML = `<div class="empty-note">語呂合わせを準備中…</div>`;
-  document.getElementById("regen-btn").disabled = true;
 
   await refreshSaveWordBtn();
 }
