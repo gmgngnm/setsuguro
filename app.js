@@ -497,11 +497,18 @@ async function startDecompose(rawWord) {
   }
   currentMorphemes = morphemes;
 
+  await playCrack(placeholder, word, morphemes);
+  placeholder.remove();
+
   splitEl.innerHTML = "";
+  const mid = (morphemes.length - 1) / 2;
   morphemes.forEach((m, i) => {
     const el = document.createElement("div");
-    el.className = "morph";
-    el.style.animationDelay = `${i * 0.12}s`;
+    el.className = "morph shatter-in";
+    const dir = i - mid;
+    el.style.setProperty("--from-x", `${-dir * 22}px`);
+    el.style.setProperty("--from-rot", `${dir * 5}deg`);
+    el.style.animationDelay = `${i * 0.05}s`;
 
     const partEl = document.createElement("div");
     partEl.className = "morph-part";
@@ -518,19 +525,59 @@ async function startDecompose(rawWord) {
 
   await pushRecentWord(word);
 
-  const POP_MS = 500;
+  const SHATTER_MS = 450;
   const STAGGER_MS = 320;
   const meaningEls = splitEl.querySelectorAll(".morph-meaning");
   meaningEls.forEach((el, i) => {
-    setTimeout(() => el.classList.add("show"), POP_MS + i * STAGGER_MS);
+    setTimeout(() => el.classList.add("show"), SHATTER_MS + i * STAGGER_MS);
   });
-  const totalDelay = POP_MS + meaningEls.length * STAGGER_MS + 400;
+  const totalDelay = SHATTER_MS + meaningEls.length * STAGGER_MS + 400;
 
   setTimeout(() => {
     renderResultScreen();
     showScreen("screen-result");
     loadGoroCandidates(provider, apiKey); // Stage2をバックグラウンドで先行実行
   }, totalDelay);
+}
+
+/* 単語ブロックに亀裂が入り、揺れてから砕けるアニメーション */
+async function playCrack(placeholder, word, morphemes) {
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  placeholder.classList.remove("word-pulse");
+  const rect = placeholder.getBoundingClientRect();
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("class", "crack-overlay");
+  svg.setAttribute("width", rect.width);
+  svg.setAttribute("height", rect.height);
+
+  let acc = 0;
+  const boundaries = [];
+  morphemes.slice(0, -1).forEach((m) => {
+    acc += (m.part || "").length;
+    boundaries.push(acc / word.length);
+  });
+
+  boundaries.forEach((frac, i) => {
+    const x = rect.width * frac;
+    const steps = 5;
+    const points = Array.from({ length: steps }, (_, j) => {
+      const y = (rect.height / (steps - 1)) * j;
+      const jitter = (j % 2 === 0 ? -1 : 1) * (3 + Math.random() * 4);
+      return `${(x + jitter).toFixed(1)},${y.toFixed(1)}`;
+    });
+    const path = document.createElementNS(svgNS, "path");
+    path.setAttribute("d", `M ${points.join(" L ")}`);
+    path.setAttribute("class", "crack-line");
+    path.style.animationDelay = `${i * 0.06}s`;
+    svg.appendChild(path);
+  });
+
+  placeholder.style.position = "relative";
+  placeholder.appendChild(svg);
+  placeholder.classList.add("crack-shake");
+  await sleep(420);
 }
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
