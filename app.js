@@ -310,6 +310,7 @@ const AI_ADAPTERS = {
             { role: "user", content: userPrompt },
           ],
           response_format: { type: "json_object" },
+          reasoning_effort: "none",
           temperature,
         }),
       });
