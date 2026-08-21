@@ -1517,6 +1517,11 @@ async function renderBookList() {
 
   let rows = await idbGetAll("words");
   rows.sort((a, b) => b.created_at - a.created_at);
+
+  const memorizedCount = rows.filter((r) => r.memorized).length;
+  document.getElementById("book-stats").textContent =
+    `全${rows.length}語 ・ 暗記済み${memorizedCount} ・ 未暗記${rows.length - memorizedCount}`;
+
   if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
   rows.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
