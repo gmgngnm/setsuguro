@@ -124,9 +124,8 @@ button{font-family:inherit;cursor:pointer;}
 .morph.spin-in{
   animation:spinIn .6s cubic-bezier(.34,1.56,.64,1) both;
 }
-.morph.typo-shake{ animation:typoShake .4s ease; color:var(--danger); text-decoration:line-through; }
-.morph.typo-out{ animation:typoOut .18s ease forwards; }
-.morph.typo-in{ animation:typoIn .22s ease forwards; }
+.morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
+.morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
 .crack-overlay{position:absolute; top:0; left:0; pointer-events:none; overflow:visible;}
 .crack-line{
   fill:none; stroke:var(--danger); stroke-width:1.5; stroke-linecap:round;
@@ -172,14 +171,14 @@ button{font-family:inherit;cursor:pointer;}
   from{ transform:translateY(var(--from-y,0)) rotate(var(--from-rot,0)) scale(.4); opacity:0; }
   to{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
 }
-@keyframes typoShake{
-  0%,100%{transform:translateX(0);}
-  25%{transform:translateX(-5px);}
-  50%{transform:translateX(5px);}
-  75%{transform:translateX(-3px);}
+@keyframes cardFlipOut{
+  from{ transform:perspective(600px) rotateY(0deg); }
+  to{ transform:perspective(600px) rotateY(90deg); }
 }
-@keyframes typoOut{to{opacity:0; transform:scale(.85);}}
-@keyframes typoIn{from{opacity:0; transform:scale(.85);} to{opacity:1; transform:scale(1);}}
+@keyframes cardFlipIn{
+  from{ transform:perspective(600px) rotateY(-90deg); }
+  to{ transform:perspective(600px) rotateY(0deg); }
+}
 .spinner-row{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:24px;}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--accent);animation:spin 1s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
@@ -187,7 +186,7 @@ button{font-family:inherit;cursor:pointer;}
 @media (prefers-reduced-motion: reduce){
   .morph, .morph.word-pulse, .morph.crack-shake, .morph.shatter-in,
   .morph.burst-shake, .morph.burst-in, .morph.spin-wind-up, .morph.spin-in,
-  .morph.typo-shake, .morph.typo-out, .morph.typo-in, .crack-line, .burst-flash, .spinner{animation:none;}
+  .morph.card-flip-out, .morph.card-flip-in, .crack-line, .burst-flash, .spinner{animation:none;}
   .morph-meaning{transition:none;}
 }
 
