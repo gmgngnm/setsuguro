@@ -487,6 +487,10 @@ async function startDecompose(rawWord) {
   splitEl.innerHTML = "";
   spinnerRow.style.display = "none";
   document.getElementById("decompose-appbar").style.display = "none";
+  const decomposeWordMeaningEl = document.getElementById("decompose-word-meaning");
+  decomposeWordMeaningEl.textContent = "";
+  decomposeWordMeaningEl.classList.remove("show");
+  decomposeWordMeaningEl.style.display = "none";
 
   const placeholder = document.createElement("div");
   placeholder.className = "morph word-pulse";
@@ -514,6 +518,12 @@ async function startDecompose(rawWord) {
 
   await playCrack(placeholder, currentWord, morphemes);
   placeholder.remove();
+
+  if (currentWordMeaning) {
+    decomposeWordMeaningEl.textContent = currentWordMeaning;
+    decomposeWordMeaningEl.style.display = "block";
+    requestAnimationFrame(() => decomposeWordMeaningEl.classList.add("show"));
+  }
 
   splitEl.innerHTML = "";
   const mid = (morphemes.length - 1) / 2;
