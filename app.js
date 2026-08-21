@@ -478,36 +478,59 @@ async function startDecompose(rawWord) {
   const splitEl = document.getElementById("word-split");
   const spinnerRow = document.getElementById("decompose-spinner");
   splitEl.innerHTML = "";
-  spinnerRow.style.display = "flex";
-  document.getElementById("decompose-label").textContent = "接辞に分解中…";
+  spinnerRow.style.display = "none";
+
+  const placeholder = document.createElement("div");
+  placeholder.className = "morph word-pulse";
+  placeholder.textContent = word;
+  splitEl.appendChild(placeholder);
 
   let morphemes;
   try {
     morphemes = await decomposeWord(word, provider, apiKey);
   } catch (err) {
+    placeholder.remove();
+    spinnerRow.style.display = "flex";
     document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
     console.error(err);
     return;
   }
   currentMorphemes = morphemes;
 
-  spinnerRow.style.display = "none";
   splitEl.innerHTML = "";
   morphemes.forEach((m, i) => {
     const el = document.createElement("div");
     el.className = "morph";
-    el.textContent = m.part;
     el.style.animationDelay = `${i * 0.12}s`;
+
+    const partEl = document.createElement("div");
+    partEl.className = "morph-part";
+    partEl.textContent = m.part;
+
+    const meaningEl = document.createElement("div");
+    meaningEl.className = "morph-meaning";
+    meaningEl.textContent = [m.reading, m.meaning].filter(Boolean).join(" ・ ");
+
+    el.appendChild(partEl);
+    el.appendChild(meaningEl);
     splitEl.appendChild(el);
   });
 
   await pushRecentWord(word);
 
+  const POP_MS = 500;
+  const STAGGER_MS = 320;
+  const meaningEls = splitEl.querySelectorAll(".morph-meaning");
+  meaningEls.forEach((el, i) => {
+    setTimeout(() => el.classList.add("show"), POP_MS + i * STAGGER_MS);
+  });
+  const totalDelay = POP_MS + meaningEls.length * STAGGER_MS + 400;
+
   setTimeout(() => {
     renderResultScreen();
     showScreen("screen-result");
     loadGoroCandidates(provider, apiKey); // Stage2をバックグラウンドで先行実行
-  }, 550);
+  }, totalDelay);
 }
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
