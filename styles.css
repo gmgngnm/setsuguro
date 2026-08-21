@@ -116,6 +116,14 @@ button{font-family:inherit;cursor:pointer;}
 .morph.shatter-in{
   animation:shatterIn .5s cubic-bezier(.22,1,.36,1) both;
 }
+.morph.burst-shake{ animation:burstShake .38s ease; }
+.morph.burst-in{
+  animation:burstIn .55s cubic-bezier(.34,1.56,.64,1) both;
+}
+.morph.spin-wind-up{ animation:spinWindUp .42s ease; }
+.morph.spin-in{
+  animation:spinIn .6s cubic-bezier(.34,1.56,.64,1) both;
+}
 .morph.typo-shake{ animation:typoShake .4s ease; color:var(--danger); text-decoration:line-through; }
 .morph.typo-out{ animation:typoOut .18s ease forwards; }
 .morph.typo-in{ animation:typoIn .22s ease forwards; }
@@ -123,6 +131,11 @@ button{font-family:inherit;cursor:pointer;}
 .crack-line{
   fill:none; stroke:var(--danger); stroke-width:1.5; stroke-linecap:round;
   stroke-dasharray:80; stroke-dashoffset:80; animation:crackDraw .3s ease forwards;
+}
+.burst-flash{
+  position:absolute; transform:translate(-50%,-50%); border-radius:50%;
+  border:2.5px solid var(--accent-2); pointer-events:none;
+  animation:burstFlash .5s ease-out forwards;
 }
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
@@ -133,10 +146,31 @@ button{font-family:inherit;cursor:pointer;}
   60%{transform:translateX(-3px) rotate(-1deg);}
   80%{transform:translateX(3px) rotate(1deg);}
 }
+@keyframes burstShake{
+  0%{transform:scale(1);}
+  50%{transform:scale(1.12) rotate(2deg);}
+  100%{transform:scale(1);}
+}
+@keyframes spinWindUp{
+  0%,100%{transform:rotate(0) scale(1);}
+  50%{transform:rotate(-8deg) scale(1.08);}
+}
 @keyframes crackDraw{to{stroke-dashoffset:0;}}
+@keyframes burstFlash{
+  from{ width:0; height:0; opacity:1; }
+  to{ width:220px; height:220px; opacity:0; }
+}
 @keyframes shatterIn{
-  from{ transform:translateX(var(--from-x,0)) rotate(var(--from-rot,0)) scale(.75); opacity:0; }
-  to{ transform:translateX(0) rotate(0) scale(1); opacity:1; }
+  from{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.75); opacity:0; }
+  to{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
+}
+@keyframes burstIn{
+  from{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.3); opacity:0; }
+  to{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
+}
+@keyframes spinIn{
+  from{ transform:translateY(var(--from-y,0)) rotate(var(--from-rot,0)) scale(.4); opacity:0; }
+  to{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
 }
 @keyframes typoShake{
   0%,100%{transform:translateX(0);}
@@ -152,7 +186,8 @@ button{font-family:inherit;cursor:pointer;}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 @media (prefers-reduced-motion: reduce){
   .morph, .morph.word-pulse, .morph.crack-shake, .morph.shatter-in,
-  .morph.typo-shake, .morph.typo-out, .morph.typo-in, .crack-line, .spinner{animation:none;}
+  .morph.burst-shake, .morph.burst-in, .morph.spin-wind-up, .morph.spin-in,
+  .morph.typo-shake, .morph.typo-out, .morph.typo-in, .crack-line, .burst-flash, .spinner{animation:none;}
   .morph-meaning{transition:none;}
 }
 
@@ -288,12 +323,12 @@ button{font-family:inherit;cursor:pointer;}
 .form-field input{border:none;outline:none;background:transparent;color:var(--ink);flex:1;font-family:'JetBrains Mono',monospace;font-size:13px;}
 .form-field button{background:none;border:none;color:var(--ink-faint);font-size:14px;}
 .provider-row{display:flex;gap:8px;flex-wrap:wrap;}
-.provider-row .provider-pill{min-width:64px;}
-.provider-pill{
+.provider-row .provider-pill, .provider-row .anim-pill{min-width:64px;}
+.provider-pill, .anim-pill{
   flex:1;text-align:center;border-radius:12px;padding:12px 4px;font-size:12px;
   font-family:'JetBrains Mono',monospace;border:1.5px solid var(--line);color:var(--ink-faint);background:var(--surface);
 }
-.provider-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
+.provider-pill.on, .anim-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
 .usage-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;}
 .usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-soft);}
 .usage-row b{color:var(--accent-ink);}
