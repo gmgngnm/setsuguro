@@ -63,10 +63,9 @@ button{font-family:inherit;cursor:pointer;}
 #screen-result .appbar:active, #screen-result .appbar:focus-within{opacity:1;}
 #screen-result .appbar .icon-btn{width:24px;height:24px;font-size:11px;border-radius:7px;}
 #screen-result .appbar .icon-btn.back-btn{
-  width:34px;height:34px;font-size:17px;font-weight:700;border-radius:50%;
-  background:linear-gradient(135deg, var(--accent), var(--accent-2));
-  border:none;color:#fff;
-  box-shadow:0 3px 8px color-mix(in srgb, var(--accent) 45%, transparent);
+  width:34px;height:34px;font-size:18px;font-weight:700;border-radius:50%;
+  background:var(--accent);border:none;color:#fff;
+  -webkit-text-stroke:1px #fff;
 }
 
 /* ---------- Screens ---------- */
@@ -88,7 +87,23 @@ button{font-family:inherit;cursor:pointer;}
 #word-input::placeholder{color:var(--ink-faint);}
 .enter-hint{color:var(--accent);font-size:18px;}
 .mic-btn{background:none;border:none;font-size:18px;color:var(--ink-faint);padding:2px;line-height:1;}
-.mic-btn.listening{color:var(--danger);animation:pulse .6s ease-in-out infinite;}
+.mic-overlay{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+}
+.mic-overlay-hint{font-size:12.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
+.mic-overlay-btn{
+  width:84px;height:84px;border-radius:50%;
+  background:var(--accent);color:#fff;border:none;font-size:34px;
+  box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
+  touch-action:none;user-select:none;
+}
+.mic-overlay-btn.listening{background:var(--danger);animation:pulse .6s ease-in-out infinite;}
+.mic-overlay-close{
+  background:none;border:none;color:var(--ink-faint);
+  font-size:12px;font-family:'JetBrains Mono',monospace;padding:4px 8px;
+}
 .chip-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;}
 .chip{
   background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
