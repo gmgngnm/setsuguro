@@ -716,7 +716,6 @@ let currentWordPhonetic = "";
 let currentMemoryTip = "";
 let currentMorphemes = [];
 let currentCandidates = [];
-let selectedCandidateIdx = null;
 
 async function startDecompose(rawWord) {
   const word = (rawWord || "").trim();
@@ -1306,63 +1305,22 @@ async function renderResultScreen() {
   const list = document.getElementById("affix-list");
   list.innerHTML = "";
 
-  const hintSeen = await kvGet("affix_hint_seen", false);
-
-  for (const [i, m] of currentMorphemes.entries()) {
-    const existing = await idbGet("affixes", m.part.toLowerCase());
+  currentMorphemes.forEach((m) => {
     const card = document.createElement("div");
-    card.className = `affix-card${existing ? " saved" : ""}`;
+    card.className = "affix-card";
     card.innerHTML = `
-      ${existing ? '<span class="saved-tag">✓ 保存済み</span>' : ""}
       <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
       <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
-    attachAffixTap(card, m);
-    if (i === 0 && !hintSeen) {
-      card.classList.add("tap-hint");
-      kvSet("affix_hint_seen", true);
-    }
     list.appendChild(card);
-  }
+  });
 
   document.getElementById("goro-list").innerHTML = `<div class="empty-note">語呂合わせを準備中…</div>`;
   document.getElementById("regen-btn").disabled = true;
 
-  selectedCandidateIdx = null;
   await refreshSaveWordBtn();
 }
 
-function attachAffixTap(card, morpheme) {
-  card.addEventListener("click", async () => {
-    if (card.classList.contains("saved")) return;
-    await saveAffixToBook(morpheme, currentWord);
-    card.classList.add("saved");
-    if (!card.querySelector(".saved-tag")) {
-      const tag = document.createElement("span");
-      tag.className = "saved-tag";
-      tag.textContent = "✓ 保存済み";
-      card.prepend(tag);
-    }
-    toast(`「${morpheme.part}」を接辞帳に保存しました`);
-  });
-}
-
-async function saveAffixToBook(m, word) {
-  const key = m.part.toLowerCase();
-  const existing = await idbGet("affixes", key);
-  const sourceWords = new Set(existing ? existing.source_words : []);
-  sourceWords.add(word);
-  await idbPut("affixes", {
-    part: key,
-    display: m.part,
-    reading: m.reading,
-    meaning: m.meaning,
-    origin: m.origin,
-    source_words: Array.from(sourceWords),
-    created_at: existing ? existing.created_at : Date.now(),
-  });
-}
-
-/* ---- 語呂合わせ候補（タップ=読み上げ・選択 / 保存） ---- */
+/* ---- 語呂合わせ候補（タップ=読み上げ / 保存） ---- */
 async function loadGoroCandidates(provider, apiKey) {
   try {
     currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey);
@@ -1377,7 +1335,6 @@ async function loadGoroCandidates(provider, apiKey) {
     console.error(err);
     return;
   }
-  selectedCandidateIdx = null;
   renderGoroList();
   await refreshSaveWordBtn();
   document.getElementById("regen-btn").disabled = false;
@@ -1387,9 +1344,8 @@ function renderGoroList() {
   const list = document.getElementById("goro-list");
   list.innerHTML = "";
   currentCandidates.forEach((c, idx) => {
-    const picked = selectedCandidateIdx === idx;
     const card = document.createElement("div");
-    card.className = `goro-card${picked ? " picked" : ""}`;
+    card.className = "goro-card";
     card.dataset.idx = idx;
     card.innerHTML = `
       <div class="goro-tap" data-idx="${idx}">
@@ -1403,20 +1359,11 @@ function renderGoroList() {
       const idx = Number(el.dataset.idx);
       el.classList.add("speaking");
       speak(currentCandidates[idx].text, () => el.classList.remove("speaking"));
-      selectCandidate(idx);
     });
   });
 }
 
-async function selectCandidate(idx) {
-  selectedCandidateIdx = selectedCandidateIdx === idx ? null : idx;
-  document.querySelectorAll(".goro-card").forEach((card) => {
-    card.classList.toggle("picked", Number(card.dataset.idx) === selectedCandidateIdx);
-  });
-  await refreshSaveWordBtn();
-}
-
-/* 単語帳のレコードIDは単語そのものだけで決める(選択中の語呂候補indexを含めない)。
+/* 単語帳のレコードIDは単語そのものだけで決める(語呂合わせの内容を含めない)。
    含めてしまうと、同じ単語を語呂合わせを変えて後から保存した際に別レコードとして
    二重登録されてしまう */
 function wordCardId(word) {
@@ -1438,15 +1385,13 @@ async function refreshSaveWordBtn() {
 async function toggleSaveWord() {
   const id = currentWordRecordId();
   const existing = await idbGet("words", id);
-  const idx = selectedCandidateIdx;
-  const c = idx !== null ? currentCandidates[idx] : null;
+  const c = currentCandidates[0] || null;
   const newGoroText = c ? c.text : "";
 
-  /* 既に保存済みでも、選択中の語呂合わせが保存内容と同じ時だけ「取り消し」扱いにする。
-     語呂合わせを変えて再保存した場合は、既存レコードを上書き更新する */
+  /* 既に保存済みでも、現在表示中の語呂合わせが保存内容と同じ時だけ「取り消し」扱いにする。
+     語呂合わせを作り直して再保存した場合は、既存レコードを上書き更新する */
   if (existing && existing.goro_text === newGoroText) {
     await idbDelete("words", id);
-    toast("保存を取り消しました");
   } else {
     const provider = await kvGet("provider", "openai");
     await idbPut("words", {
@@ -1462,7 +1407,6 @@ async function toggleSaveWord() {
       memorized: existing ? existing.memorized : false,
       created_at: existing ? existing.created_at : Date.now(),
     });
-    toast(existing ? "単語帳の内容を上書きしました" : (c ? "語呂合わせとともに単語を単語帳に保存しました" : "単語を単語帳に保存しました"));
   }
   await refreshSaveWordBtn();
 }
@@ -1491,16 +1435,13 @@ async function submitCustomGoro() {
   const text = addGoroInput.value.trim();
   if (!text) return;
 
-  const idx = currentCandidates.length;
-  currentCandidates.push({ text, highlight: [] });
-  selectedCandidateIdx = idx;
+  currentCandidates = [{ text, highlight: [] }];
   renderGoroList();
   await refreshSaveWordBtn();
 
   addGoroInput.value = "";
   addGoroForm.style.display = "none";
   addGoroBtn.style.display = "block";
-  toast("自分の語呂合わせを選択しました。下の「単語を保存」で単語帳に保存できます。");
 }
 
 document.getElementById("add-goro-submit").addEventListener("click", submitCustomGoro);
