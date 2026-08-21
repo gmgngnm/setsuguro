@@ -840,16 +840,53 @@ async function startDecompose(rawWord) {
 }
 
 /* スペルミスを検出した場合、赤く揺れてから正しい綴りにクロスフェードする */
+/* originalWord→correctedWordの文字単位の差分を取り、correctedWordの各文字が
+   変更箇所かどうかを返す（最長共通部分列に含まれない文字を「変更あり」とする） */
+function diffCorrectedWordChars(originalWord, correctedWord) {
+  const a = originalWord.toLowerCase();
+  const b = correctedWord.toLowerCase();
+  const n = a.length, m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const matched = new Array(m).fill(false);
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      matched[j - 1] = true;
+      i--; j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  return correctedWord.split("").map((char, idx) => ({ char, changed: !matched[idx] }));
+}
+
+/* placeholderはdisplay:flex;flex-direction:columnのため、差分spanを混ぜたHTMLを
+   直接innerHTMLに入れるとテキストの各断片が別々のflexアイテムとして縦積みされてしまう。
+   1つのspanで包んで単一のflexアイテムにし、中は通常のインライン折り返しにする */
+function correctedWordHtml(originalWord, correctedWord) {
+  const inner = diffCorrectedWordChars(originalWord, correctedWord)
+    .map((c) => (c.changed ? `<span class="letter-fix">${escapeHtml(c.char)}</span>` : escapeHtml(c.char)))
+    .join("");
+  return `<span class="word-fix-wrap">${inner}</span>`;
+}
+
 async function playSpellingFix(placeholder, originalWord, correctedWord) {
   if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    placeholder.textContent = correctedWord;
+    placeholder.innerHTML = correctedWordHtml(originalWord, correctedWord);
     toast(`✎ "${originalWord}" → "${correctedWord}" に修正しました`);
     return;
   }
   placeholder.classList.remove("word-pulse");
   placeholder.classList.add("card-flip-out");
   await sleep(250);
-  placeholder.textContent = correctedWord;
+  placeholder.innerHTML = correctedWordHtml(originalWord, correctedWord);
   placeholder.classList.remove("card-flip-out");
   placeholder.classList.add("card-flip-in");
   await sleep(250);
@@ -912,6 +949,10 @@ const DECOMPOSE_ANIM_STYLES = {
       if (reducedMotion()) return;
 
       placeholder.classList.remove("word-pulse");
+      /* word-pulse解除でmax-widthが150pxに縮むと長い単語が2行に折り返り、
+         幅の割合だけで算出する亀裂の位置がずれるため、計測前に1行表示・広めの幅に固定する */
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = "min(90vw, 320px)";
       const rect = placeholder.getBoundingClientRect();
       const svgNS = "http://www.w3.org/2000/svg";
       const svg = document.createElementNS(svgNS, "svg");
