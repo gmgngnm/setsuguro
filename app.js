@@ -1034,6 +1034,88 @@ const DECOMPOSE_ANIM_STYLES = {
       await sleep(620);
     },
   },
+
+  warp: {
+    label: "ワープ",
+    tileClass: "warp-in",
+    tileVars(i) {
+      return { "--from-x": "0px", "--from-y": `${-60 - i * 14}px`, "--from-rot": "0deg" };
+    },
+    /* 単語ブロックが光の帯とともに縦に圧縮されてワープする */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.position = "relative";
+      const beam = document.createElement("div");
+      beam.className = "warp-beam";
+      placeholder.appendChild(beam);
+      placeholder.classList.add("warp-shrink");
+      await sleep(560);
+    },
+  },
+
+  glitch: {
+    label: "グリッチ",
+    tileClass: "glitch-in",
+    tileVars(i) {
+      const jitter = (i % 2 === 0 ? -1 : 1) * (6 + (i % 3) * 4);
+      return { "--from-x": `${jitter}px`, "--from-y": "0px", "--from-rot": "0deg" };
+    },
+    /* 単語ブロックがRGBずれとスキャンラインで乱れて消える */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.position = "relative";
+      const text = placeholder.textContent;
+      const cyan = document.createElement("div");
+      cyan.className = "glitch-ghost cyan";
+      cyan.textContent = text;
+      const magenta = document.createElement("div");
+      magenta.className = "glitch-ghost magenta";
+      magenta.textContent = text;
+      placeholder.appendChild(cyan);
+      placeholder.appendChild(magenta);
+      placeholder.classList.add("glitch-out");
+      await sleep(460);
+    },
+  },
+
+  confetti: {
+    label: "紙吹雪",
+    tileClass: "confetti-in",
+    tileVars(i) {
+      const fromY = i % 2 === 0 ? -36 : 36;
+      const rot = i % 2 === 0 ? -140 : 140;
+      return { "--from-x": "0px", "--from-y": `${fromY}px`, "--from-rot": `${rot}deg` };
+    },
+    /* 単語ブロックが色とりどりの紙吹雪とともに弾ける */
+    async intro(placeholder) {
+      if (reducedMotion()) return;
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.position = "relative";
+      const rect = placeholder.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const colors = ["#FFD166", "#EF476F", "#06D6A0", "#118AB2", "#8B5CF6"];
+      const pieceCount = 16;
+      for (let i = 0; i < pieceCount; i++) {
+        const piece = document.createElement("div");
+        piece.className = "confetti-piece";
+        const angle = (Math.PI * 2 * i) / pieceCount + (Math.random() - 0.5) * 0.6;
+        const dist = 50 + Math.random() * 60;
+        piece.style.left = `${cx}px`;
+        piece.style.top = `${cy}px`;
+        piece.style.background = colors[i % colors.length];
+        piece.style.setProperty("--cx", `${Math.cos(angle) * dist}px`);
+        piece.style.setProperty("--cy", `${Math.sin(angle) * dist + 24}px`);
+        piece.style.setProperty("--crot", `${(Math.random() - 0.5) * 720}deg`);
+        piece.style.animationDelay = `${Math.random() * 0.06}s`;
+        placeholder.appendChild(piece);
+      }
+      placeholder.classList.add("confetti-pop");
+      await sleep(780);
+    },
+  },
 };
 
 /* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */

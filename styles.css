@@ -238,6 +238,90 @@ button{font-family:inherit;cursor:pointer;}
   from{ transform:translateY(var(--from-y,0)) rotate(var(--from-rot,0)) scale(.4); opacity:0; }
   to{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
 }
+.morph.warp-shrink{ animation:warpShrink .55s cubic-bezier(.55,0,.85,.35) forwards; }
+.morph.warp-in{ animation:warpIn .6s cubic-bezier(.22,1,.36,1) both; }
+.warp-beam{
+  position:absolute; left:50%; top:0; bottom:0; width:3px; transform:translateX(-50%);
+  background:linear-gradient(180deg, transparent, var(--brand-blue), #fff, var(--brand-blue), transparent);
+  box-shadow:0 0 14px 3px var(--brand-blue); pointer-events:none; opacity:0;
+  animation:warpBeam .55s ease-in forwards;
+}
+@keyframes warpShrink{
+  0%{ transform:scaleY(1) scaleX(1); filter:brightness(1); opacity:1; }
+  40%{ transform:scaleY(1.25) scaleX(.85); filter:brightness(1.6); opacity:1; }
+  100%{ transform:scaleY(.04) scaleX(.25); filter:brightness(2.4); opacity:0; }
+}
+@keyframes warpBeam{
+  0%{ opacity:0; transform:translateX(-50%) scaleY(0); }
+  50%{ opacity:1; transform:translateX(-50%) scaleY(1); }
+  100%{ opacity:0; transform:translateX(-50%) scaleY(1); }
+}
+@keyframes warpIn{
+  0%{ transform:translateY(var(--from-y,-70px)) scaleY(1.8) scaleX(.6); opacity:0; filter:brightness(1.8); }
+  65%{ transform:translateY(4px) scaleY(.92) scaleX(1.04); opacity:1; filter:brightness(1.15); }
+  100%{ transform:translateY(0) scale(1); opacity:1; filter:brightness(1); }
+}
+
+.morph.glitch-out{ animation:glitchOut .45s steps(6) forwards; }
+.morph.glitch-in{ animation:glitchIn .5s steps(8) both; }
+.glitch-ghost{
+  position:absolute; inset:0; pointer-events:none; mix-blend-mode:screen;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'JetBrains Mono',monospace; font-weight:700; font-size:20px;
+}
+.glitch-ghost.cyan{ color:#4DE9FF; animation:glitchGhostCyan .45s steps(6) forwards; }
+.glitch-ghost.magenta{ color:#FF4DE1; animation:glitchGhostMagenta .45s steps(6) forwards; }
+@keyframes glitchOut{
+  0%{ transform:translate(0,0); opacity:1; clip-path:inset(0 0 0 0); }
+  16%{ transform:translate(-4px,1px); clip-path:inset(10% 0 40% 0); }
+  33%{ transform:translate(3px,-2px); clip-path:inset(50% 0 5% 0); }
+  50%{ transform:translate(-3px,0); clip-path:inset(5% 0 60% 0); opacity:1; }
+  66%{ transform:translate(4px,2px); clip-path:inset(70% 0 0 0); }
+  83%{ transform:translate(-2px,-1px); opacity:1; }
+  100%{ transform:translate(0,0); opacity:0; }
+}
+@keyframes glitchGhostCyan{
+  0%{ opacity:0; transform:translate(0,0); }
+  16%{ opacity:.8; transform:translate(-5px,0); }
+  50%{ opacity:.8; transform:translate(-3px,1px); }
+  83%{ opacity:.6; transform:translate(-4px,0); }
+  100%{ opacity:0; transform:translate(-2px,0); }
+}
+@keyframes glitchGhostMagenta{
+  0%{ opacity:0; transform:translate(0,0); }
+  16%{ opacity:.8; transform:translate(5px,0); }
+  50%{ opacity:.8; transform:translate(3px,-1px); }
+  83%{ opacity:.6; transform:translate(4px,0); }
+  100%{ opacity:0; transform:translate(2px,0); }
+}
+@keyframes glitchIn{
+  0%{ opacity:0; transform:translateX(var(--from-x,0)); clip-path:inset(0 0 88% 0); }
+  25%{ opacity:1; clip-path:inset(0 0 55% 0); transform:translateX(calc(var(--from-x,0) * -1)); }
+  50%{ clip-path:inset(45% 0 15% 0); transform:translateX(var(--from-x,0)); }
+  75%{ clip-path:inset(8% 0 45% 0); transform:translateX(0); }
+  100%{ opacity:1; clip-path:inset(0 0 0 0); transform:translateX(0); }
+}
+
+.morph.confetti-pop{ animation:confettiPop .4s cubic-bezier(.34,1.56,.64,1) forwards; }
+.morph.confetti-in{ animation:confettiIn .6s cubic-bezier(.34,1.56,.64,1) both; }
+.confetti-piece{
+  position:absolute; width:7px; height:10px; pointer-events:none;
+  animation:confettiFly .7s cubic-bezier(.25,.6,.4,1) forwards;
+}
+@keyframes confettiPop{
+  0%{ transform:scale(1); opacity:1; }
+  40%{ transform:scale(1.18); opacity:1; }
+  100%{ transform:scale(0); opacity:0; }
+}
+@keyframes confettiFly{
+  0%{ transform:translate(-50%,-50%) rotate(0deg); opacity:1; }
+  100%{ transform:translate(calc(-50% + var(--cx)), calc(-50% + var(--cy))) rotate(var(--crot)); opacity:0; }
+}
+@keyframes confettiIn{
+  0%{ transform:translateY(var(--from-y,-40px)) rotate(var(--from-rot,0)) scale(.4); opacity:0; }
+  60%{ transform:translateY(6px) rotate(calc(var(--from-rot,0) * -0.15)) scale(1.08); opacity:1; }
+  100%{ transform:translateY(0) rotate(0) scale(1); opacity:1; }
+}
 @keyframes cardFlipOut{
   from{ transform:perspective(600px) rotateY(0deg); }
   to{ transform:perspective(600px) rotateY(90deg); }
@@ -271,7 +355,10 @@ button{font-family:inherit;cursor:pointer;}
   .morph.burst-shake, .morph.burst-in, .morph.spin-wind-up, .morph.spin-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
   .trash-can.show, .crack-line, .burst-flash.ring1, .burst-flash.ring2,
-  .burst-core-flash, .burst-spark, .spinner{animation:none;}
+  .burst-core-flash, .burst-spark, .spinner,
+  .morph.warp-shrink, .morph.warp-in, .warp-beam,
+  .morph.glitch-out, .morph.glitch-in, .glitch-ghost.cyan, .glitch-ghost.magenta,
+  .morph.confetti-pop, .morph.confetti-in, .confetti-piece{animation:none;}
   .morph-meaning{transition:none;}
 }
 
