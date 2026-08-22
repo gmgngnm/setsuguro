@@ -1798,8 +1798,9 @@ async function renderBookList() {
   rows.sort((a, b) => b.created_at - a.created_at);
 
   const memorizedCount = rows.filter((r) => r.memorized).length;
+  const memorizedPct = rows.length ? Math.round((memorizedCount / rows.length) * 100) : 0;
   document.getElementById("book-stats").textContent =
-    `全${rows.length}語 ・ 暗記済み${memorizedCount} ・ 未暗記${rows.length - memorizedCount}`;
+    `全${rows.length}語 ・ 暗記済み${memorizedCount}（${memorizedPct}%） ・ 未暗記${rows.length - memorizedCount}`;
 
   if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
   rows.forEach((r) => {
@@ -2213,12 +2214,14 @@ function renderMemorizeCard() {
   const emptyEl = document.getElementById("memorize-empty");
   const swipeEl = document.getElementById("memorize-swipe");
   const progressEl = document.getElementById("memorize-progress");
+  const hintEl = document.getElementById("memorize-hint");
 
   if (!memorizeQueue.length) {
     clearMemorizeAutoTimer();
     emptyEl.textContent = memorizeEmptyMessage;
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
+    hintEl.style.display = "none";
     progressEl.textContent = "";
     return;
   }
@@ -2232,16 +2235,22 @@ function renderMemorizeCard() {
     finishBtn.type = "button";
     finishBtn.className = "memorize-finish-btn";
     finishBtn.textContent = "終了";
-    finishBtn.addEventListener("click", () => showScreen("screen-book"));
+    finishBtn.addEventListener("click", () => {
+      renderBookList();
+      showScreen("screen-book");
+    });
     emptyEl.appendChild(finishBtn);
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
+    hintEl.style.display = "none";
     progressEl.textContent = "";
     return;
   }
 
   emptyEl.style.display = "none";
   swipeEl.style.display = "block";
+  hintEl.style.display = "block";
+  document.getElementById("memorize-actions").style.display = memorizeAutoPlay ? "none" : "flex";
   progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}${memorizeAutoPlay ? " 🔊" : ""}`;
 
   const record = memorizeQueue[memorizeIndex];
