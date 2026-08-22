@@ -192,9 +192,15 @@
         </div>
       </div>
       <div class="memorize-extra" id="memorize-extra" style="display:none;"></div>
-      <div class="memorize-actions" id="memorize-actions">
-        <button class="memorize-action-btn correct" id="memorize-btn-correct" type="button" aria-label="暗記済みにする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg></button>
-        <button class="memorize-action-btn wrong" id="memorize-btn-wrong" type="button" aria-label="未暗記にする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <div class="memorize-float-dock" id="memorize-float-dock">
+        <div class="memorize-autoplay-bar" id="memorize-autoplay-bar" style="display:none;">
+          <div class="memorize-seek-track"><div class="memorize-seek-fill" id="memorize-seek-fill"></div></div>
+          <button class="memorize-speed-btn" id="memorize-speed-btn" type="button" title="再生速度を変更" aria-label="再生速度を変更">1.0x</button>
+        </div>
+        <div class="memorize-actions" id="memorize-actions">
+          <button class="memorize-action-btn correct" id="memorize-btn-correct" type="button" aria-label="暗記済みにする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg></button>
+          <button class="memorize-action-btn wrong" id="memorize-btn-wrong" type="button" aria-label="未暗記にする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
       </div>
     </div>
   </section>
@@ -255,14 +261,6 @@
       <button class="anim-pill" data-anim="random">ランダム</button>
       <button class="anim-pill on" data-anim="crack">ひび割れ</button>
       <button class="anim-pill" data-anim="burst">爆発</button>
-      <button class="anim-pill" data-anim="spin">回転</button>
-      <button class="anim-pill" data-anim="warp">ワープ</button>
-      <button class="anim-pill" data-anim="glitch">グリッチ</button>
-      <button class="anim-pill" data-anim="confetti">紙吹雪</button>
-      <button class="anim-pill" data-anim="scatter">散乱</button>
-      <button class="anim-pill" data-anim="centrifuge">遠心分離</button>
-      <button class="anim-pill" data-anim="scissors">はさみ</button>
-      <button class="anim-pill" data-anim="box">ボックス投入</button>
     </div>
   </section>
 

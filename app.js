@@ -1159,7 +1159,7 @@ async function startDecompose(rawWord) {
 
     const meaningEl = document.createElement("div");
     meaningEl.className = "morph-meaning";
-    meaningEl.textContent = [m.reading, m.meaning].filter(Boolean).join(" ・ ");
+    meaningEl.textContent = m.meaning || "";
 
     el.appendChild(partEl);
     el.appendChild(meaningEl);
@@ -1874,236 +1874,6 @@ const DECOMPOSE_ANIM_STYLES = {
       await runBurstExplosion(placeholder, word, morphemes, rect);
     },
   },
-
-  spin: {
-    label: "回転",
-    tileClass: "spin-in",
-    tileVars(i) {
-      const fromY = i % 2 === 0 ? -38 : 38;
-      const rot = i % 2 === 0 ? -200 : 200;
-      return { "--from-x": "0px", "--from-y": `${fromY}px`, "--from-rot": `${rot}deg` };
-    },
-    /* 単語ブロックが勢いよく回って消える */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.classList.add("spin-wind-up");
-      await sleep(620);
-    },
-  },
-
-  warp: {
-    label: "ワープ",
-    tileClass: "warp-in",
-    tileVars(i) {
-      return { "--from-x": "0px", "--from-y": `${-60 - i * 14}px`, "--from-rot": "0deg" };
-    },
-    /* 単語ブロックが光の帯とともに縦に圧縮されてワープする */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.position = "relative";
-      const beam = document.createElement("div");
-      beam.className = "warp-beam";
-      placeholder.appendChild(beam);
-      placeholder.classList.add("warp-shrink");
-      await sleep(560);
-    },
-  },
-
-  glitch: {
-    label: "グリッチ",
-    tileClass: "glitch-in",
-    tileVars(i) {
-      const jitter = (i % 2 === 0 ? -1 : 1) * (6 + (i % 3) * 4);
-      return { "--from-x": `${jitter}px`, "--from-y": "0px", "--from-rot": "0deg" };
-    },
-    /* 単語ブロックがRGBずれとスキャンラインで乱れて消える */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.position = "relative";
-      const text = placeholder.textContent;
-      const cyan = document.createElement("div");
-      cyan.className = "glitch-ghost cyan";
-      cyan.textContent = text;
-      const magenta = document.createElement("div");
-      magenta.className = "glitch-ghost magenta";
-      magenta.textContent = text;
-      placeholder.appendChild(cyan);
-      placeholder.appendChild(magenta);
-      placeholder.classList.add("glitch-out");
-      await sleep(460);
-    },
-  },
-
-  confetti: {
-    label: "紙吹雪",
-    tileClass: "confetti-in",
-    tileVars(i) {
-      const fromY = i % 2 === 0 ? -36 : 36;
-      const rot = i % 2 === 0 ? -140 : 140;
-      return { "--from-x": "0px", "--from-y": `${fromY}px`, "--from-rot": `${rot}deg` };
-    },
-    /* 単語ブロックが色とりどりの紙吹雪とともに弾ける */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.position = "relative";
-      const rect = placeholder.getBoundingClientRect();
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      const colors = ["#FFD166", "#EF476F", "#06D6A0", "#118AB2", "#8B5CF6"];
-      const pieceCount = 16;
-      for (let i = 0; i < pieceCount; i++) {
-        const piece = document.createElement("div");
-        piece.className = "confetti-piece";
-        const angle = (Math.PI * 2 * i) / pieceCount + (Math.random() - 0.5) * 0.6;
-        const dist = 50 + Math.random() * 60;
-        piece.style.left = `${cx}px`;
-        piece.style.top = `${cy}px`;
-        piece.style.background = colors[i % colors.length];
-        piece.style.setProperty("--cx", `${Math.cos(angle) * dist}px`);
-        piece.style.setProperty("--cy", `${Math.sin(angle) * dist + 24}px`);
-        piece.style.setProperty("--crot", `${(Math.random() - 0.5) * 720}deg`);
-        piece.style.animationDelay = `${Math.random() * 0.06}s`;
-        placeholder.appendChild(piece);
-      }
-      placeholder.classList.add("confetti-pop");
-      await sleep(780);
-    },
-  },
-
-  scatter: {
-    label: "散乱",
-    tileClass: "scatter-in",
-    tileVars(i) {
-      const angle = (i * 137.5) % 360;
-      const rad = (angle * Math.PI) / 180;
-      const dist = 90 + (i % 3) * 30;
-      return {
-        "--from-x": `${Math.cos(rad) * dist}px`,
-        "--from-y": `${Math.sin(rad) * dist}px`,
-        "--from-rot": `${(i % 2 === 0 ? -1 : 1) * (180 + i * 40)}deg`,
-      };
-    },
-    /* 単語ブロックが細かい欠片となって四方へ散らばり、接辞として再構成される */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.position = "relative";
-      const rect = placeholder.getBoundingClientRect();
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      const shardCount = 14;
-      for (let i = 0; i < shardCount; i++) {
-        const shard = document.createElement("div");
-        shard.className = "scatter-shard";
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 40 + Math.random() * 70;
-        shard.style.left = `${cx}px`;
-        shard.style.top = `${cy}px`;
-        shard.style.setProperty("--sx", `${Math.cos(angle) * dist}px`);
-        shard.style.setProperty("--sy", `${Math.sin(angle) * dist}px`);
-        shard.style.setProperty("--srot", `${(Math.random() - 0.5) * 500}deg`);
-        shard.style.animationDelay = `${Math.random() * 0.05}s`;
-        placeholder.appendChild(shard);
-      }
-      placeholder.classList.add("scatter-out");
-      await sleep(560);
-    },
-  },
-
-  centrifuge: {
-    label: "遠心分離",
-    tileClass: "centrifuge-in",
-    tileVars(i, mid) {
-      const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
-      return {
-        "--from-x": `${Math.sign(dir) * (70 + Math.abs(dir) * 26)}px`,
-        "--from-y": "0px",
-        "--from-rot": `${Math.sign(dir) * 720}deg`,
-      };
-    },
-    /* 単語ブロックの回転がどんどん加速し、勢いよく弾け飛んで接辞が現れる */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.classList.add("centrifuge-spin");
-      await sleep(700);
-    },
-  },
-
-  scissors: {
-    label: "はさみ",
-    tileClass: "scissors-in",
-    tileVars(i, mid) {
-      const dir = i - mid;
-      return { "--from-x": `${-dir * 26}px`, "--from-y": "0px", "--from-rot": `${dir * 3}deg` };
-    },
-    /* 各接辞の境界にハサミが現れ、チョキンと切り分ける */
-    async intro(placeholder, word, morphemes) {
-      if (reducedMotion()) return;
-      await ensureMorphFontLoaded();
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.position = "relative";
-      /* pop アニメーション(transform:scale)再生中の見た目サイズではなく、
-         transformの影響を受けないレイアウト上の実寸を使う */
-      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
-
-      let acc = 0;
-      const boundaries = [];
-      morphemes.slice(0, -1).forEach((m) => {
-        acc += (m.part || "").length;
-        boundaries.push(acc / word.length);
-      });
-
-      boundaries.forEach((frac, i) => {
-        const x = rect.width * frac;
-        const line = document.createElement("div");
-        line.className = "scissors-line";
-        line.style.left = `${x}px`;
-        placeholder.appendChild(line);
-
-        const scissors = document.createElement("div");
-        scissors.className = "scissors-icon";
-        scissors.textContent = "✂️";
-        scissors.style.left = `${x}px`;
-        scissors.style.animationDelay = `${i * 0.16}s`;
-        placeholder.appendChild(scissors);
-      });
-
-      placeholder.classList.add("scissors-cut");
-      await sleep(boundaries.length * 160 + 380);
-    },
-  },
-
-  box: {
-    label: "ボックス投入",
-    tileClass: "box-out-in",
-    tileVars(i, mid) {
-      const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
-      return {
-        "--from-x": `${Math.sign(dir) * (18 + Math.abs(dir) * 10)}px`,
-        "--from-y": "50px",
-        "--from-rot": `${dir * 14}deg`,
-      };
-    },
-    /* 単語ブロックが箱に落ちて消え、箱から接辞がポンポン飛び出してくる */
-    async intro(placeholder) {
-      if (reducedMotion()) return;
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.position = "relative";
-      const box = document.createElement("div");
-      box.className = "drop-box";
-      box.textContent = "📦";
-      placeholder.appendChild(box);
-      placeholder.classList.add("box-drop");
-      await sleep(560);
-      box.classList.add("shake");
-      await sleep(300);
-    },
-  },
 };
 
 /* 設定で「ランダム」が選ばれている場合、実行のたびに実在のスタイルから1つ抽選する */
@@ -2803,6 +2573,48 @@ document.getElementById("memorize-random-toggle").addEventListener("click", asyn
   renderMemorizeRandomToggle();
 });
 
+/* 自動再生モードの再生速度（表面表示→裏返し→次のカードへ進むまでの
+   待ち時間の基準値を、この倍率で割ったものを実際の待ち時間として使う） */
+const MEMORIZE_REVEAL_DELAY = 1800;
+const MEMORIZE_ADVANCE_DELAY = 3800;
+const MEMORIZE_SPEED_STEPS = [1, 1.5, 2, 0.5];
+let memorizeAutoSpeed = 1;
+async function loadMemorizeAutoSpeedSetting() {
+  memorizeAutoSpeed = await kvGet("memorize_auto_speed", 1);
+}
+loadMemorizeAutoSpeedSetting();
+
+function renderMemorizeSpeedBtn() {
+  document.getElementById("memorize-speed-btn").textContent = `${memorizeAutoSpeed}x`;
+}
+document.getElementById("memorize-speed-btn").addEventListener("click", async () => {
+  const idx = MEMORIZE_SPEED_STEPS.indexOf(memorizeAutoSpeed);
+  memorizeAutoSpeed = MEMORIZE_SPEED_STEPS[(idx + 1) % MEMORIZE_SPEED_STEPS.length];
+  await kvSet("memorize_auto_speed", memorizeAutoSpeed);
+  renderMemorizeSpeedBtn();
+});
+
+/* 自動再生モード中、現在のカードの表示サイクル(表→裏→次のカードへ)の
+   進み具合をシークバーとして表示する */
+let memorizeSeekRAF = null;
+let memorizeCardCycleStart = 0;
+function startMemorizeSeekBar() {
+  cancelMemorizeSeekBar();
+  memorizeCardCycleStart = performance.now();
+  const totalMs = (MEMORIZE_REVEAL_DELAY + MEMORIZE_ADVANCE_DELAY) / memorizeAutoSpeed;
+  const fillEl = document.getElementById("memorize-seek-fill");
+  function tick() {
+    const elapsed = performance.now() - memorizeCardCycleStart;
+    const pct = Math.max(0, Math.min(100, (elapsed / totalMs) * 100));
+    fillEl.style.width = `${pct}%`;
+    if (pct < 100 && memorizeAutoPlay) memorizeSeekRAF = requestAnimationFrame(tick);
+  }
+  memorizeSeekRAF = requestAnimationFrame(tick);
+}
+function cancelMemorizeSeekBar() {
+  if (memorizeSeekRAF) { cancelAnimationFrame(memorizeSeekRAF); memorizeSeekRAF = null; }
+}
+
 const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
 document.getElementById("memorize-entry-btn").addEventListener("click", () => {
   renderMemorizeRandomToggle();
@@ -2851,6 +2663,7 @@ function renderMemorizeCard() {
 
   if (!memorizeQueue.length) {
     clearMemorizeAutoTimer();
+    cancelMemorizeSeekBar();
     emptyEl.textContent = memorizeEmptyMessage;
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
@@ -2860,6 +2673,7 @@ function renderMemorizeCard() {
   }
   if (memorizeIndex >= memorizeQueue.length) {
     clearMemorizeAutoTimer();
+    cancelMemorizeSeekBar();
     emptyEl.innerHTML = "";
     const msgEl = document.createElement("div");
     msgEl.textContent = "お疲れさまでした！全カードをチェックしました。";
@@ -2883,8 +2697,7 @@ function renderMemorizeCard() {
   emptyEl.style.display = "none";
   swipeEl.style.display = "block";
   hintEl.style.display = "block";
-  document.getElementById("memorize-actions").style.display = memorizeAutoPlay ? "none" : "flex";
-  progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}${memorizeAutoPlay ? " 🔊" : ""}`;
+  progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}`;
 
   const record = memorizeQueue[memorizeIndex];
   memorizeRevealed = false;
@@ -2921,6 +2734,16 @@ function renderMemorizeCard() {
 
   if (memorizeSpeechOn) speak(record.word, null, "en-US");
 
+  const autoplayBar = document.getElementById("memorize-autoplay-bar");
+  if (memorizeAutoPlay) {
+    renderMemorizeSpeedBtn();
+    autoplayBar.style.display = "flex";
+    startMemorizeSeekBar();
+  } else {
+    autoplayBar.style.display = "none";
+    cancelMemorizeSeekBar();
+  }
+
   scheduleMemorizeAutoPlay();
 }
 
@@ -2936,7 +2759,7 @@ function scheduleMemorizeAutoPlay() {
   clearMemorizeAutoTimer();
   if (!memorizeAutoPlay) return;
   if (!memorizeQueue.length || memorizeIndex >= memorizeQueue.length) return;
-  memorizeAutoTimer = setTimeout(revealMemorizeDetail, 1800);
+  memorizeAutoTimer = setTimeout(revealMemorizeDetail, MEMORIZE_REVEAL_DELAY / memorizeAutoSpeed);
 }
 
 function advanceMemorizeAutoPlay() {
@@ -2966,7 +2789,7 @@ function revealMemorizeDetail() {
     const tile = document.createElement("div");
     tile.className = "morph shatter-in";
     tile.style.animationDelay = `${i * 0.08}s`;
-    tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml([m.reading, m.meaning].filter(Boolean).join(" ・ "))}</div>`;
+    tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml(m.meaning || "")}</div>`;
     splitEl.appendChild(tile);
   });
   detailEl.appendChild(splitEl);
@@ -3004,7 +2827,7 @@ function revealMemorizeDetail() {
   }
   if (memorizeAutoPlay) {
     clearMemorizeAutoTimer();
-    memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, 3800);
+    memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, MEMORIZE_ADVANCE_DELAY / memorizeAutoSpeed);
   }
 }
 
