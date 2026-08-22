@@ -318,10 +318,11 @@ button{font-family:inherit;cursor:pointer;}
 }
 .bottom-back-btn:active{transform:scale(.94);}
 .save-word-btn{
-  flex:1;min-width:0;
+  flex:1;min-width:0;height:52px;
   background:var(--accent);color:#fff;border:none;border-radius:16px;
-  padding:16px 20px;font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;
+  padding:0 20px;font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;
   box-shadow:var(--shadow);
+  display:flex;align-items:center;justify-content:center;
 }
 .save-word-btn.on{background:var(--surface);color:var(--accent-ink);border:1.5px solid var(--accent);}
 #screen-result{padding-bottom:96px;}
@@ -397,7 +398,7 @@ button{font-family:inherit;cursor:pointer;}
   font-size:12px;font-family:'JetBrains Mono',monospace;padding:6px 8px;text-align:center;
 }
 /* Memorize mode */
-#screen-memorize{justify-content:flex-start;align-items:stretch;padding-bottom:170px;}
+#screen-memorize{justify-content:flex-start;align-items:stretch;padding-bottom:112px;}
 .memorize-progress{font-size:12px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;align-self:center;}
 .memorize-hint{font-size:11.5px;color:var(--ink-faint);text-align:center;font-family:'JetBrains Mono',monospace;}
 .memorize-empty{
@@ -461,11 +462,10 @@ button{font-family:inherit;cursor:pointer;}
 }
 .memorize-extra.show{opacity:1;transform:translateY(0);}
 @media (prefers-reduced-motion: reduce){ .memorize-extra{transition:none;} }
-.memorize-float-dock{
+.memorize-actions{
   position:fixed;left:50%;bottom:34px;transform:translateX(-50%);
-  display:flex;flex-direction:column;align-items:center;gap:14px;z-index:30;
+  display:flex;gap:24px;z-index:30;
 }
-.memorize-actions{display:flex;gap:24px;}
 .memorize-action-btn{
   width:60px;height:60px;border-radius:50%;border:none;box-shadow:var(--shadow);
   display:flex;align-items:center;justify-content:center;
@@ -473,10 +473,12 @@ button{font-family:inherit;cursor:pointer;}
 .memorize-action-btn:active{transform:scale(.92);}
 .memorize-action-btn.correct{background:var(--accent);color:#fff;}
 .memorize-action-btn.wrong{background:var(--danger);color:#fff;}
+/* 自動再生のシークバー・速度ボタンはフロートさせず、暗記カードの上に
+   通常のレイアウトの一部として表示する */
 .memorize-autoplay-bar{
   display:flex;align-items:center;gap:10px;
   background:var(--surface);border:1px solid var(--line);border-radius:999px;
-  padding:8px 8px 8px 16px;box-shadow:var(--shadow);width:min(84vw, 320px);
+  padding:8px 8px 8px 16px;margin-bottom:14px;width:100%;box-sizing:border-box;
 }
 .memorize-seek-track{flex:1;height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
 .memorize-seek-fill{height:100%;width:0%;background:var(--accent);border-radius:999px;}
@@ -563,7 +565,7 @@ button{font-family:inherit;cursor:pointer;}
   .memorize-mode-sheet{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
   #screen-result{position:relative;}
   #screen-memorize{position:relative;}
-  .memorize-float-dock{position:absolute;}
+  .memorize-actions{position:absolute;}
 
   /* 分解アニメーション画面は#appのmin-height:0の影響を受けず、常に
      ビューポート全体を使って中央に、かつ画面の広さを活かして大きく
