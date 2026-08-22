@@ -2673,6 +2673,7 @@ function renderMemorizeCard() {
   const swipeEl = document.getElementById("memorize-swipe");
   const progressEl = document.getElementById("memorize-progress");
   const hintEl = document.getElementById("memorize-hint");
+  const actionsEl = document.getElementById("memorize-actions");
 
   if (!memorizeQueue.length) {
     clearMemorizeAutoTimer();
@@ -2681,6 +2682,7 @@ function renderMemorizeCard() {
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
     hintEl.style.display = "none";
+    actionsEl.style.display = "none";
     progressEl.textContent = "";
     return;
   }
@@ -2703,6 +2705,7 @@ function renderMemorizeCard() {
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
     hintEl.style.display = "none";
+    actionsEl.style.display = "none";
     progressEl.textContent = "";
     return;
   }
@@ -2711,6 +2714,8 @@ function renderMemorizeCard() {
   swipeEl.style.display = "block";
   /* 自動再生中はタップ/スワイプ操作の説明文は不要なので表示しない */
   hintEl.style.display = memorizeAutoPlay ? "none" : "block";
+  /* 自動再生中はマルバツボタンも表示しない */
+  actionsEl.style.display = memorizeAutoPlay ? "none" : "flex";
   progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}`;
 
   const record = memorizeQueue[memorizeIndex];

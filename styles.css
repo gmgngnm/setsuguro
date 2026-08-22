@@ -564,8 +564,6 @@ button{font-family:inherit;cursor:pointer;}
   }
   .memorize-mode-sheet{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
   #screen-result{position:relative;}
-  #screen-memorize{position:relative;}
-  .memorize-actions{position:absolute;}
 
   /* 分解アニメーション画面は#appのmin-height:0の影響を受けず、常に
      ビューポート全体を使って中央に、かつ画面の広さを活かして大きく
