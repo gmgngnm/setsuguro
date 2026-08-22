@@ -160,8 +160,8 @@ button{font-family:inherit;cursor:pointer;}
 .morph.spin-in{
   animation:spinIn .85s cubic-bezier(.34,1.56,.64,1) both;
 }
-.morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
-.morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
+.morph.card-flip-out{ animation:pop .5s ease both, cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
+.morph.card-flip-in{ animation:pop .5s ease both, cardFlipIn .25s ease-out forwards; }
 .letter-fix{ color:var(--letter-fix-red); animation:letterFixBlink .34s ease-in-out 3; }
 .morph.trash-shake{ animation:trashShake .4s ease; border-color:var(--danger); }
 .morph.trash-toss{ animation:trashToss .6s cubic-bezier(.55,0,.85,.35) forwards; border-color:var(--danger); }
