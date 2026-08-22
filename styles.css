@@ -504,16 +504,11 @@ button{font-family:inherit;cursor:pointer;}
 .affix-card.tappable{cursor:pointer;}
 .affix-words-appbar{justify-content:flex-end;}
 .related-word-btn{
-  display:flex;justify-content:space-between;align-items:center;gap:10px;
   background:var(--surface);border:1px solid var(--line);border-radius:14px;
   padding:12px 14px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;
-  width:100%;text-align:left;
+  width:100%;text-align:left;display:block;
 }
 .related-word-btn:active{transform:scale(.98);}
-.related-word-tag{
-  font-family:'JetBrains Mono',monospace;font-weight:600;font-size:10px;color:var(--ink-faint);
-  flex-shrink:0;letter-spacing:.03em;
-}
 .affix-card .m{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:15px;}
 .affix-card .m .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;color:var(--ink-faint);font-size:12px;margin-left:6px;}
 .affix-card .mean{font-size:13px;color:var(--ink-soft);margin-top:3px;}

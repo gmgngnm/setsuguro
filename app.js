@@ -2034,13 +2034,11 @@ async function findRelatedWordsViaAI(morpheme, excludeWords, count, provider, ap
   }
 }
 
-function buildRelatedWordButton(word, tag) {
+function buildRelatedWordButton(word) {
   const btn = document.createElement("button");
   btn.className = "related-word-btn";
   btn.type = "button";
-  btn.innerHTML = tag
-    ? `<span>${escapeHtml(word)}</span><span class="related-word-tag">${escapeHtml(tag)}</span>`
-    : escapeHtml(word);
+  btn.textContent = word;
   btn.addEventListener("click", () => startDecompose(word));
   return btn;
 }
@@ -2069,7 +2067,7 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
 
   const listEl = document.getElementById("affix-words-list");
   listEl.innerHTML = "";
-  localMatches.forEach((w) => listEl.appendChild(buildRelatedWordButton(w, "マイ単語")));
+  localMatches.forEach((w) => listEl.appendChild(buildRelatedWordButton(w)));
 
   showScreen("screen-affix-words");
 
@@ -2096,7 +2094,7 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
   if (requestId !== affixWordsRequestId) return;
   loadingEl.remove();
 
-  aiWords.forEach((w) => listEl.appendChild(buildRelatedWordButton(w, "AI")));
+  aiWords.forEach((w) => listEl.appendChild(buildRelatedWordButton(w)));
 
   if (!localMatches.length && !aiWords.length) {
     listEl.innerHTML = `<div class="empty-note">この接辞を含む単語は見つかりませんでした</div>`;
