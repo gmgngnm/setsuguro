@@ -117,8 +117,7 @@
 
   <!-- ============ SCREEN 05: 単語帳の詳細 ============ -->
   <section id="screen-word-detail" class="screen">
-    <div class="appbar">
-      <span class="logo">単語の詳細</span>
+    <div class="appbar affix-words-appbar">
       <div class="nav-icons">
         <button class="icon-btn" data-nav="book" title="単語帳へ戻る" aria-label="単語帳へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
       </div>
@@ -127,7 +126,9 @@
     <div class="section-label">接辞</div>
     <div class="affix-list" id="word-detail-affixes"></div>
     <div class="memory-tip" id="word-detail-memory-tip" style="display:none;"></div>
-    <div class="section-label" style="margin-top:6px;">選択した語呂合わせ</div>
+    <div class="section-label" style="margin-top:6px;">
+      <span class="goro-label-group">語呂合わせ<button class="regen-btn" id="word-detail-regen-btn">再生成</button></span>
+    </div>
     <div class="goro-list" id="word-detail-goro"></div>
   </section>
 

@@ -1954,7 +1954,29 @@ csvImportInput.addEventListener("change", async (e) => {
 });
 
 /* 単語帳の1件をタップした際に、単語・意味・接辞・接辞の意味・語呂合わせをまとめて表示する */
+function renderWordDetailGoro(record) {
+  const goroList = document.getElementById("word-detail-goro");
+  goroList.innerHTML = "";
+  if (record.goro_text) {
+    const card = document.createElement("div");
+    card.className = "goro-card";
+    card.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
+    const tap = card.querySelector(".goro-tap");
+    tap.addEventListener("click", () => {
+      tap.classList.add("speaking");
+      speak(record.goro_text, () => tap.classList.remove("speaking"));
+    });
+    goroList.appendChild(card);
+  } else {
+    goroList.innerHTML = `<div class="empty-note">語呂合わせは登録されていません</div>`;
+  }
+}
+
+let currentWordDetailRecord = null;
+
 function openWordDetail(record) {
+  currentWordDetailRecord = record;
+
   const meaningEl = document.getElementById("word-detail-meaning");
   const phoneticHtml = record.word_phonetic ? `<span class="phonetic">[${escapeHtml(record.word_phonetic)}]</span>` : "";
   const meaningTextHtml = record.word_meaning ? `<div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>` : "";
@@ -1978,27 +2000,45 @@ function openWordDetail(record) {
   memoryTipEl.textContent = record.word_memory_tip || "";
   memoryTipEl.style.display = record.word_memory_tip ? "block" : "none";
 
-  const goroList = document.getElementById("word-detail-goro");
-  goroList.innerHTML = "";
-  if (record.goro_text) {
-    const card = document.createElement("div");
-    card.className = "goro-card";
-    card.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
-    const tap = card.querySelector(".goro-tap");
-    tap.addEventListener("click", () => {
-      tap.classList.add("speaking");
-      speak(record.goro_text, () => tap.classList.remove("speaking"));
-    });
-    goroList.appendChild(card);
-  } else {
-    goroList.innerHTML = `<div class="empty-note">語呂合わせは登録されていません</div>`;
-  }
+  renderWordDetailGoro(record);
 
   showScreen("screen-word-detail");
 }
 
+document.getElementById("word-detail-regen-btn").addEventListener("click", async () => {
+  const record = currentWordDetailRecord;
+  if (!record) return;
+
+  const provider = await kvGet("provider", "groq");
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) {
+    homeError.textContent = "設定画面でAPIキーを登録してください";
+    showScreen("screen-settings");
+    refreshUsageDisplay();
+    return;
+  }
+
+  const btn = document.getElementById("word-detail-regen-btn");
+  btn.disabled = true;
+  document.getElementById("word-detail-goro").innerHTML = `<div class="empty-note">作り直しています…</div>`;
+
+  try {
+    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning);
+    const c = candidates[0];
+    record.goro_text = c.text;
+    record.goro_highlight = c.highlight || [];
+    await idbPut("words", record);
+    renderWordDetailGoro(record);
+  } catch (err) {
+    document.getElementById("word-detail-goro").innerHTML =
+      `<div class="empty-note">語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。</div>`;
+    console.error(err);
+  }
+  btn.disabled = false;
+});
+
 /* ---- 接辞タップ → 同じ接辞を含む単語一覧（マイ単語→AI検索の順） ---- */
-const RELATED_WORDS_TARGET = 10;
+const RELATED_WORDS_TARGET = 20;
 
 function relatedWordsPrompt(morpheme, excludeWords, count) {
   return [
