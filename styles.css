@@ -134,6 +134,7 @@ button{font-family:inherit;cursor:pointer;}
   box-shadow:var(--shadow); animation:pop .5s ease both;
   display:flex; flex-direction:column; align-items:center; gap:4px; max-width:150px;
   overflow-wrap:break-word; word-break:break-word;
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
 }
 .morph:nth-child(2n){border-color:var(--accent-2);}
 .morph:nth-child(2n) .morph-part{color:var(--accent-2);}
@@ -144,7 +145,6 @@ button{font-family:inherit;cursor:pointer;}
 }
 .morph-meaning.show{opacity:1;transform:translateY(0);}
 .morph.word-pulse{
-  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
   animation:pop .5s ease both, wordPulse 1.2s ease-in-out .5s infinite;
   max-width:min(90vw, 320px);
 }
@@ -710,6 +710,10 @@ button{font-family:inherit;cursor:pointer;}
   .affix-list, .goro-list{
     display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:14px;
   }
+  /* 共通接辞画面の接辞カードは、他の一覧のようにグリッドで幅いっぱいに
+     広げず、画面上部中央に単体でバランス良く配置する */
+  #affix-words-card{display:flex;flex-direction:row;justify-content:center;}
+  #affix-words-card .affix-card{width:100%;max-width:420px;}
   .book-list{
     display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;
   }
@@ -724,10 +728,10 @@ button{font-family:inherit;cursor:pointer;}
      表示されるようにする */
   #screen-decompose{min-height:100vh;}
   .word-split{gap:22px;max-width:1040px;}
-  .morph{max-width:300px;padding:28px 30px;gap:8px;}
+  .morph{max-width:300px;padding:28px 30px;gap:8px;font-size:36px;}
   .morph-part{font-size:36px;}
   .morph-meaning{font-size:16px;}
-  .morph.word-pulse{font-size:36px;max-width:min(60vw, 620px);}
+  .morph.word-pulse{max-width:min(60vw, 620px);}
   #decompose-word-meaning{max-width:min(70vw, 620px);}
   #decompose-word-meaning .word-meaning-word{font-size:24px;}
   #decompose-word-meaning .word-meaning-text{font-size:20px;}
