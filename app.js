@@ -1495,6 +1495,276 @@ async function runCrackShatter(placeholder, word, morphemes, rect) {
   });
 }
 
+/* 単語カードをそのままCanvas上に再現し、各接辞の境界で破片として切り分けて
+   火球・衝撃波・火の粉・煙とともに爆発的に吹き飛ばす。placeholder自体は
+   visibility:hiddenにして隠し、その上に重ねたcanvasだけを見せる（亀裂演出と同じ手法） */
+async function runBurstExplosion(placeholder, word, morphemes, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = rect.width * 1.3;
+  const padTop = rect.height * 1.7;
+  const padBottom = rect.height * 2.1;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "burst-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  /* 元絵(無傷のカード)を一度だけオフスクリーンに描き、破片を切り抜く元画像にする */
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+
+  /* 各接辞の文字数比率の位置で、破片に切り分ける境界線(わずかにギザギザ) */
+  let acc = 0;
+  const boundaryFracs = [];
+  morphemes.slice(0, -1).forEach((m) => {
+    acc += (m.part || "").length;
+    boundaryFracs.push(acc / word.length);
+  });
+
+  const JAG_STEPS = 5;
+  const jagPaths = boundaryFracs.map((frac) => {
+    const baseX = rect.width * frac;
+    const pts = [];
+    for (let j = 0; j <= JAG_STEPS; j++) {
+      const y = (rect.height / JAG_STEPS) * j;
+      const jitter = j === 0 || j === JAG_STEPS ? 0 : (Math.random() - 0.5) * Math.min(rect.width * 0.12, 16);
+      pts.push({ x: baseX + jitter, y });
+    }
+    return pts;
+  });
+  const leftEdge = [{ x: 0, y: 0 }, { x: 0, y: rect.height }];
+  const rightEdge = [{ x: rect.width, y: 0 }, { x: rect.width, y: rect.height }];
+  const allBoundaries = [leftEdge, ...jagPaths, rightEdge];
+
+  const shardCount = morphemes.length;
+  const cx = rect.width / 2, cy = rect.height / 2;
+  const shards = allBoundaries.slice(0, -1).map((leftPath, i) => {
+    const rightPath = allBoundaries[i + 1];
+    const xs = [...leftPath, ...rightPath].map((p) => p.x);
+    const pivotX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const pivotY = rect.height / 2;
+    const dir = shardCount > 1 ? (i - (shardCount - 1) / 2) / ((shardCount - 1) / 2) : 0;
+    /* 上向き中心に左右へ広がる扇状に、接辞の並び順を反映した角度で吹き飛ばす */
+    const angle = -Math.PI / 2 + dir * (Math.PI * 0.4) + (Math.random() - 0.5) * 0.4;
+    const speed = 330 + Math.random() * 230;
+    return {
+      leftPath, rightPath, pivotX, pivotY,
+      x: 0, y: 0,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      rot: 0,
+      vrot: (Math.random() < 0.5 ? -1 : 1) * (240 + Math.random() * 280) * (Math.PI / 180),
+      opacity: 1,
+    };
+  });
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const accentColor = rootStyle.getPropertyValue("--accent-2").trim() || "#E2622F";
+  const smokeColor = rootStyle.getPropertyValue("--ink-faint").trim() || "#8A8A8A";
+
+  /* 火の粉 */
+  const embers = Array.from({ length: 28 }, () => {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 150 + Math.random() * 340;
+    return {
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 60,
+      r: 1.3 + Math.random() * 2.4,
+      lifeMs: 420 + Math.random() * 340,
+      hot: Math.random(),
+    };
+  });
+
+  /* 煙: 重なって塊状の灰色ブロブにならないよう、控えめな数・薄さ・広がりに抑える */
+  const smokes = Array.from({ length: 4 }, () => {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = rect.height * 0.18 + Math.random() * rect.height * 0.22;
+    return {
+      x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist,
+      vx: Math.cos(angle) * (14 + Math.random() * 18),
+      vy: -(22 + Math.random() * 30),
+      r0: 5 + Math.random() * 6,
+      grow: 20 + Math.random() * 22,
+      delayMs: 90 + Math.random() * 160,
+    };
+  });
+
+  const SHAKE_MS = 130;
+  const FLASH_PEAK_MS = 110;
+  const BURST_MS = 700;
+  const FADE_FROM = BURST_MS * 0.4;
+  const gravity = 640;
+  const dt = 1 / 60;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      /* rAFの最初のコールバックのtimestampがperformance.now()より
+         わずかに前になることがあるため、経過時間は0未満にならないようクランプする */
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+
+      ctx.save();
+      const shakeP = Math.max(0, 1 - t / SHAKE_MS);
+      const shakeMag = shakeP * shakeP * 7;
+      ctx.translate(
+        padX + (Math.random() - 0.5) * shakeMag,
+        padTop + (Math.random() - 0.5) * shakeMag
+      );
+
+      /* 衝撃波リング */
+      const ringP = Math.min(1, t / (BURST_MS * 0.75));
+      if (ringP < 1) {
+        const ringR = ringP * Math.max(rect.width, rect.height) * 1.35;
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = (1 - ringP) * 0.85;
+        ctx.strokeStyle = "#fff8e6";
+        ctx.lineWidth = Math.max(1, 9 * (1 - ringP));
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      /* 火球: 中心から白熱→黄→橙→赤へグラデーションする光の玉 */
+      const fireGrow = Math.min(1, t / FLASH_PEAK_MS);
+      const fireFadeEnd = FLASH_PEAK_MS + BURST_MS * 0.55;
+      const fireAlpha = t < FLASH_PEAK_MS ? 1 : Math.max(0, 1 - (t - FLASH_PEAK_MS) / (fireFadeEnd - FLASH_PEAK_MS));
+      if (fireAlpha > 0) {
+        const fireR = rect.height * (0.5 + fireGrow * 0.85) * (1 + (Math.max(0, t - FLASH_PEAK_MS) / BURST_MS) * 0.7);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = fireAlpha;
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, fireR);
+        grad.addColorStop(0, "#ffffff");
+        grad.addColorStop(0.16, "#fff6c9");
+        grad.addColorStop(0.38, "#ffd25f");
+        grad.addColorStop(0.62, accentColor);
+        grad.addColorStop(1, "rgba(200,60,20,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, fireR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      /* 破片: 接辞ごとに切り分けたカードの断片が吹き飛ぶ */
+      shards.forEach((s) => {
+        if (s.opacity <= 0) return;
+        s.vy += gravity * dt;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.rot += s.vrot * dt;
+        if (t > FADE_FROM) s.opacity = Math.max(0, 1 - (t - FADE_FROM) / (BURST_MS - FADE_FROM));
+
+        ctx.save();
+        ctx.globalAlpha = s.opacity;
+        ctx.translate(s.pivotX + s.x, s.pivotY + s.y);
+        ctx.rotate(s.rot);
+        ctx.translate(-s.pivotX, -s.pivotY);
+        shardClipPath(ctx, s.leftPath, s.rightPath);
+        ctx.clip();
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        if (t < 220) {
+          /* 爆発直後は火球の光を浴びて一瞬白飛びする */
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = s.opacity * Math.max(0, 1 - t / 220) * 0.6;
+          ctx.fillStyle = "#fff3c4";
+          ctx.fillRect(0, 0, rect.width, rect.height);
+        }
+        ctx.restore();
+      });
+
+      /* 火の粉 */
+      embers.forEach((e) => {
+        if (t > e.lifeMs) return;
+        e.vy += gravity * 0.35 * dt;
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        const lifeP = t / e.lifeMs;
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = Math.max(0, 1 - lifeP);
+        const col = e.hot < 0.5 ? "#ffe58a" : "#ff7a3c";
+        const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
+        g.addColorStop(0, col);
+        g.addColorStop(1, "rgba(255,120,50,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r * 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      /* 煙: 火球が収まった後、輪郭をぼかして薄く漂わせる(fill+strokeの二重塗りを避け
+         隣接する煙同士が重なっても濃い塊にならないよう、ごく低いピーク濃度に抑える) */
+      smokes.forEach((sm) => {
+        const lt = t - sm.delayMs;
+        if (lt < 0) return;
+        const p = Math.min(1, lt / (BURST_MS - sm.delayMs));
+        sm.x += sm.vx * dt;
+        sm.y += sm.vy * dt;
+        const r = sm.r0 + sm.grow * p;
+        const fadeIn = Math.min(1, lt / 120);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 0.12 * fadeIn * (1 - p));
+        const g = ctx.createRadialGradient(sm.x, sm.y, 0, sm.x, sm.y, r);
+        g.addColorStop(0, smokeColor);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(sm.x, sm.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      ctx.restore();
+
+      if (t >= BURST_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -1535,50 +1805,19 @@ const DECOMPOSE_ANIM_STYLES = {
         "--from-rot": `${dir * 36}deg`,
       };
     },
-    /* 単語ブロックが閃光と火花を伴って本格的に爆発する */
-    async intro(placeholder) {
+    /* 単語ブロックが接辞ごとの破片になり、火球・衝撃波・火の粉とともに爆発する */
+    async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
 
       placeholder.classList.remove("word-pulse");
-      const rect = placeholder.getBoundingClientRect();
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
+      /* word-pulse解除でmax-widthが150pxに縮むと長い単語が2行に折り返り、
+         幅の割合だけで算出する破片境界の位置がずれるため、計測前に1行表示・広めの幅に固定する */
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
-
-      const core = document.createElement("div");
-      core.className = "burst-core-flash";
-      core.style.left = `${cx}px`;
-      core.style.top = `${cy}px`;
-      placeholder.appendChild(core);
-
-      const ring1 = document.createElement("div");
-      ring1.className = "burst-flash ring1";
-      ring1.style.left = `${cx}px`;
-      ring1.style.top = `${cy}px`;
-      placeholder.appendChild(ring1);
-
-      const ring2 = document.createElement("div");
-      ring2.className = "burst-flash ring2";
-      ring2.style.left = `${cx}px`;
-      ring2.style.top = `${cy}px`;
-      placeholder.appendChild(ring2);
-
-      const sparkCount = 12;
-      for (let i = 0; i < sparkCount; i++) {
-        const spark = document.createElement("div");
-        spark.className = "burst-spark";
-        const angle = (Math.PI * 2 * i) / sparkCount + (Math.random() - 0.5) * 0.5;
-        const dist = 40 + Math.random() * 60;
-        spark.style.left = `${cx}px`;
-        spark.style.top = `${cy}px`;
-        spark.style.setProperty("--spark-x", `${Math.cos(angle) * dist}px`);
-        spark.style.setProperty("--spark-y", `${Math.sin(angle) * dist}px`);
-        spark.style.animationDelay = `${Math.random() * 0.08}s`;
-        placeholder.appendChild(spark);
-      }
-
-      placeholder.classList.add("burst-shake");
-      await sleep(900);
+      await runBurstExplosion(placeholder, word, morphemes, rect);
     },
   },
 
