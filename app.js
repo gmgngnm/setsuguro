@@ -1114,6 +1114,8 @@ async function startDecompose(rawWord) {
       if (decomposed.wasCorrected) {
         await playSpellingFix(placeholder, word, decomposed.correctedWord);
         currentWord = decomposed.correctedWord;
+        /* 修正後の綴りを確認する間を置いてから、亀裂などの分割アニメーションに入る */
+        await sleep(1500);
       }
     } catch (err) {
       placeholder.remove();
