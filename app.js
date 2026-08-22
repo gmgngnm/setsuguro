@@ -197,22 +197,27 @@ const DECOMPOSE_SYS = [
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
-function goroSystemPrompt(word, morphemes) {
+function goroSystemPrompt(word, morphemes, wordMeaning) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   return [
     "あなたは日本語の語呂合わせ作家です。",
     `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
+    wordMeaning ? `この単語全体の意味は「${wordMeaning}」です。` : "",
     "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にして、音が似た日本語表現を組み合わせ、意味の通る一文の語呂合わせを作ってください。",
-    "例: dict(ジクト)/ion(イオン)/ary(アリー) → 「軸と(dict)イオン(ion)がガチャン!とぶつかって起電力あり(ary)、なんて愉快な実験だ」",
+    "例: dict(ジクト)/ion(イオン)/ary(アリー) → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)」",
+    wordMeaning
+      ? "重要な条件として、一文が描く情景・オチは、単語全体の意味（上記）を連想できる内容にしてください。読みの音を成立させるためだけのこじつけの情景ではなく、音と意味の両方を一度に思い出せる一文にしてください。"
+      : "",
     "最優先事項として、生成する一文は日本語として文法的に自然で、一つの筋が通った情景・出来事を描写する文にしてください。読みを詰め込むために言葉を無理やり羅列しただけの、意味のつながらない不自然な文は不可とします。誰が読んでも情景がすっと思い浮かぶ、破綻のない一文にしてください。",
+    "読み以外の部分を、音を似せるためだけの不自然なカタカナ語（外来語）で無理やり埋めるのは禁止します。読み自体以外はできるだけふつうの日本語（和語・漢語）で自然に構成してください。",
     "各接辞の読みは一音も欠かさず文中のどこかに反映してください。ただし、読みをそのまま人名として使うこと（「〜という名の…」「〜さん」「〜くん」など、実在・架空を問わず人物の名前として読みを当てはめること）は禁止します。人物を登場させる場合は、名前ではなく役割や属性（店員、少年、隣人、先生 など）で表現してください。下品・差別的な表現も避けてください。",
-    "各文は簡潔にしてください。目安として40〜60文字程度に収め、冗長な修飾語や説明は削ってください。",
+    "各文はできるだけ短くしてください。目安として20〜35文字程度、長くても40文字までに収め、冗長な修飾語や説明は削ってください。",
     "文法的な自然さを保った上で、思わずクスッと笑えるようなユーモアのある内容にしてください。意外な組み合わせ、ズッコケるようなオチ、大げさな展開などを取り入れつつも、あくまで一つの筋の通った話として成立させてください。",
     "擬音語・擬態語（例: ドカン、ズキューン、ガタガタ、ワクワク、ニヤリ、ドキドキ など）も、文脈上自然に使える場合に限り取り入れ、コミカルで記憶に残りやすい一文にしてください。無理に押し込む必要はありません。",
     "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
     "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
-    '{"candidates":[{"text":"軸とイオンがガチャン!とぶつかって起電力発生、なんとも愉快な実験だ","highlight":[{"part":"dict","in_text":"軸と"}]}]}',
-  ].join("\n");
+    '{"candidates":[{"text":"軸にイオンがぶつかり電気あり、なんとも愉快な実験だ","highlight":[{"part":"dict","in_text":"軸に"}]}]}',
+  ].filter(Boolean).join("\n");
 }
 
 function extractJson(text) {
@@ -524,26 +529,28 @@ async function validateDecomposition(word, morphemes, provider, apiKey) {
   }
 }
 
-function goroValidationPrompt(word, morphemes, candidates) {
+function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   const candList = candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n");
   return [
     "あなたは日本語の語呂合わせの校閲者です。",
     `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
-    "以下は語呂合わせ候補の一文です。各文について、次の3点をすべて満たしているか厳しく確認してください。",
+    wordMeaning ? `単語全体の意味は「${wordMeaning}」です。` : "",
+    "以下は語呂合わせ候補の一文です。各文について、次の点をすべて満たしているか厳しく確認してください。",
     "①読みを人名として扱っていないこと（「〜という名の…」「〜さん」「〜くん」など、実在・架空を問わず人物の名前として読みを当てはめていないこと）。",
-    "②日本語として文法的に自然で、一つの筋が通った意味のある文になっていること（読みを詰め込むための不自然な言い回しがないこと）。",
-    "③簡潔であること（40〜60文字程度が目安。冗長な修飾語や説明がないこと）。",
-    "いずれかを満たしていない候補は、対象接辞の読みをすべて維持したまま書き直してください。3点をすべて満たしている候補はそのまま使ってください。",
+    "②日本語として文法的に自然で、一つの筋が通った意味のある文になっていること（読みを詰め込むための不自然な言い回しがないこと）。読み以外の部分を、音を似せるためだけの不自然なカタカナ語（外来語）で無理やり埋めていないこと。",
+    "③簡潔であること（20〜35文字程度、長くても40文字までが目安。冗長な修飾語や説明がないこと）。",
+    wordMeaning ? "④一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
+    "いずれかを満たしていない候補は、対象接辞の読みをすべて維持したまま書き直してください。すべて満たしている候補はそのまま使ってください。",
     candList,
     "書き直した場合も含め、必ず1件を出力してください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
     '{"candidates":[{"text":"（最終テキスト）"}]}',
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
-async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey) {
+async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning) {
   try {
-    const sys = goroValidationPrompt(word, morphemes, candidates);
+    const sys = goroValidationPrompt(word, morphemes, candidates, wordMeaning);
     const json = await callAI(provider, apiKey, sys, "候補を精査し、必要なら書き直して、1件をJSON形式で出力してください。", 0.4);
     const revised = (json.candidates || []).map((c, i) => ({
       text: (c && c.text) || candidates[i]?.text || "",
@@ -559,13 +566,13 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
   }
 }
 
-async function generateGoro(word, morphemes, provider, apiKey) {
-  const sys = goroSystemPrompt(word, morphemes);
+async function generateGoro(word, morphemes, provider, apiKey, wordMeaning) {
+  const sys = goroSystemPrompt(word, morphemes, wordMeaning);
   const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
   let candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
   if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
 
-  candidates = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey);
+  candidates = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
 
   return candidates;
 }
@@ -1707,7 +1714,7 @@ async function renderResultScreen() {
 /* ---- 語呂合わせ候補（タップ=読み上げ / 保存） ---- */
 async function loadGoroCandidates(provider, apiKey) {
   try {
-    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey);
+    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning);
   } catch (err) {
     const list = document.getElementById("goro-list");
     list.innerHTML = "";
