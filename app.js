@@ -181,8 +181,9 @@ const KNOWN_AFFIXES = Object.keys(LOCAL_AFFIX_DICT).join(", ");
 
 const DECOMPOSE_SYS = [
   "あなたは英語の語源・形態素解析の専門家です。",
-  "まず、入力が実在の英単語かどうかを判定してください。単純なスペルミスとして妥当な範囲であれば、最も可能性の高い正しい英単語に修正し、word_existsをtrue、corrected_wordにその修正後の単語、was_correctedをtrueにしてください。誤りがなければword_existsをtrue、corrected_wordに入力そのもの、was_correctedをfalseにしてください。",
-  "一方、意味のない文字列や、どの英単語のスペルミスとも考えにくいもの（実在するどの英単語からも大きくかけ離れている場合）は、word_existsをfalseにしてください。この場合、corrected_wordには入力そのものを入れ、word_meaning・memory_tipは空文字、morphemesは空配列で構いません（それ以上分析しないでください）。",
+  "まず、入力が実在の英単語かどうかを判定してください。この判定はできるだけ寛容に行い、少しでも実在の英単語のタイプミスである可能性があれば、word_existsをfalseにせず積極的に修正候補を採用してください。",
+  "具体的には、1〜2文字程度の入れ替え・欠落・余分・置き換え（例: teh→the, recieve→receive, seperate→separate, langage→language, adress→address, occured→occurred, definately→definitely）や、キーボード上で隣接するキーの打ち間違い、二重母音・子音の重複ミスなど、よくあるタイプミスのパターンは、単語がある程度長ければ2〜3文字程度異なっていても、最も綴りが近く一般的な実在の英単語に積極的に修正し、word_existsをtrue、corrected_wordにその修正後の単語、was_correctedをtrueにしてください。迷った場合も、実在する単語である可能性が少しである方に倒してください。誤りがなければword_existsをtrue、corrected_wordに入力そのもの、was_correctedをfalseにしてください。",
+  "word_existsをfalseにしてよいのは、ランダムな文字の羅列など、どう読んでも英単語のタイプミスとは考えられず、綴りの近い実在の英単語も思い当たらない場合に限ります。この場合、corrected_wordには入力そのものを入れ、word_meaning・memory_tipは空文字、morphemesは空配列で構いません（それ以上分析しないでください）。",
   "word_existsがtrueの場合のみ、以降の分割・分析を、修正後の単語（corrected_word）に対して行ってください。",
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
   `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${KNOWN_AFFIXES}`,
@@ -529,6 +530,15 @@ function showScreen(id) {
   if (id !== "screen-memorize" && memorizeAutoPlay) {
     memorizeAutoPlay = false;
     clearMemorizeAutoTimer();
+  }
+  if (id === "screen-home") {
+    /* CSV出力/読み込みの選択シートや学習モードの選択シートを開いたままホームに
+       戻った場合、次に単語帳を開いた時などに開きっぱなしで残ってしまうため、
+       ホームに戻るタイミングで内部的に必ず閉じておく */
+    const csvSheet = document.getElementById("csv-choice-sheet");
+    if (csvSheet) csvSheet.style.display = "none";
+    const memorizeSheet = document.getElementById("memorize-mode-sheet");
+    if (memorizeSheet) memorizeSheet.style.display = "none";
   }
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
@@ -952,13 +962,17 @@ const DEMO_WORD_DATA = {
 
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
-  const words = recent.length < 6 ? [...recent, ...pickSampleWords(6 - recent.length, recent)] : recent;
+  /* PC版は画面が広いので履歴を最大20個まで表示する */
+  const limit = window.innerWidth >= 860 ? 20 : 6;
+  const words = recent.length < limit ? [...recent, ...pickSampleWords(limit - recent.length, recent)] : recent.slice(0, limit);
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
-  words.forEach((w) => {
+  const savedFlags = await Promise.all(words.map((w) => idbGet("words", w.toLowerCase())));
+  words.forEach((w, i) => {
     const chip = document.createElement("button");
     chip.className = "chip";
-    chip.textContent = w;
+    const savedIconHtml = savedFlags[i] ? '<span class="chip-saved" title="保存済み">💾</span>' : "";
+    chip.innerHTML = `${escapeHtml(w)}${savedIconHtml}`;
     chip.addEventListener("click", () => startDecompose(w));
     wrap.appendChild(chip);
   });
@@ -966,7 +980,7 @@ async function renderRecentChips() {
 
 async function pushRecentWord(word) {
   let recent = await kvGet("recent_words", []);
-  recent = [word, ...recent.filter((w) => w.toLowerCase() !== word.toLowerCase())].slice(0, 6);
+  recent = [word, ...recent.filter((w) => w.toLowerCase() !== word.toLowerCase())].slice(0, 20);
   await kvSet("recent_words", recent);
   renderRecentChips();
 }
@@ -1079,7 +1093,11 @@ async function startDecompose(rawWord) {
   }
 
   const animStyle = DECOMPOSE_ANIM_STYLES[await kvGet("decompose_anim", "crack")] || DECOMPOSE_ANIM_STYLES.crack;
-  await animStyle.intro(placeholder, currentWord, morphemes);
+  /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
+     分割演出そのものが意味を持たないため省略する */
+  if (morphemes.length > 1) {
+    await animStyle.intro(placeholder, currentWord, morphemes);
+  }
   placeholder.remove();
 
   if (currentWordMeaning) {
@@ -2497,8 +2515,9 @@ function relatedWordsPrompt(morpheme, excludeWords, count) {
     `次の単語は候補から除外してください（既出のため）: ${excludeWords.length ? excludeWords.join(", ") : "なし"}`,
     `実在する一般的な英単語を、見つかる限り多く、最大${count}件挙げてください。${count}件に満たない場合は見つかった分だけで構いません。`,
     "各単語は小文字の英字のみで構成される、実在の一般的な英単語にしてください（固有名詞・造語・除外リストの単語は不可）。",
+    "各単語について、国際音声記号による発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）と、日本語での簡潔な意味（meaning）も必ず付けてください。",
     "出力は次のJSON形式のみを返してください。それ以外の文章は一切書かないでください。",
-    '{"words":["word1","word2"]}',
+    '{"words":[{"word":"portable","phonetic":"ˈpɔːrtəbl","meaning":"持ち運びできる"}]}',
   ].join("\n");
 }
 
@@ -2510,10 +2529,15 @@ async function findRelatedWordsViaAI(morpheme, excludeWords, count, provider, ap
     const excludeLower = new Set(excludeWords.map((w) => w.toLowerCase()));
     const seen = new Set();
     return words
-      .map((w) => (typeof w === "string" ? w.trim() : ""))
-      .filter((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w))
+      .map((w) => (w && typeof w === "object" ? w : { word: w }))
+      .map((w) => ({
+        word: typeof w.word === "string" ? w.word.trim() : "",
+        phonetic: typeof w.phonetic === "string" ? w.phonetic.trim() : "",
+        meaning: typeof w.meaning === "string" ? w.meaning.trim() : "",
+      }))
+      .filter((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w.word))
       .filter((w) => {
-        const lower = w.toLowerCase();
+        const lower = w.word.toLowerCase();
         if (excludeLower.has(lower) || seen.has(lower)) return false;
         seen.add(lower);
         return true;
@@ -2525,11 +2549,14 @@ async function findRelatedWordsViaAI(morpheme, excludeWords, count, provider, ap
   }
 }
 
-function buildRelatedWordButton(word) {
+function buildRelatedWordButton(entry) {
+  const { word, phonetic, meaning } = entry;
   const btn = document.createElement("button");
   btn.className = "related-word-btn";
   btn.type = "button";
-  btn.textContent = word;
+  const phoneticHtml = phonetic ? `<span class="phonetic">[${escapeHtml(phonetic)}]</span>` : "";
+  const meaningHtml = meaning ? `<div class="rw-mean">${escapeHtml(meaning)}</div>` : "";
+  btn.innerHTML = `<div class="rw-word">${escapeHtml(word)}${phoneticHtml}</div>${meaningHtml}`;
   btn.addEventListener("click", () => startDecompose(word));
   return btn;
 }
@@ -2550,15 +2577,16 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
 
   const part = (morpheme.part || "").toLowerCase();
   const allWords = await idbGetAll("words");
-  const localMatches = allWords
+  const localRecords = allWords
     .filter((r) => (r.morphemes || []).some((m) => (m.part || "").toLowerCase() === part))
     .filter((r) => !sourceWord || r.word.toLowerCase() !== sourceWord.toLowerCase())
-    .sort((a, b) => b.created_at - a.created_at)
-    .map((r) => r.word);
+    .sort((a, b) => b.created_at - a.created_at);
+  const localMatches = localRecords.map((r) => ({ word: r.word, phonetic: r.word_phonetic || "", meaning: r.word_meaning || "" }));
+  const localWords = localRecords.map((r) => r.word);
 
   const listEl = document.getElementById("affix-words-list");
   listEl.innerHTML = "";
-  localMatches.forEach((w) => listEl.appendChild(buildRelatedWordButton(w)));
+  localMatches.forEach((entry) => listEl.appendChild(buildRelatedWordButton(entry)));
 
   showScreen("screen-affix-words");
 
@@ -2580,12 +2608,12 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
   loadingEl.textContent = "他の単語をAIで検索中…";
   listEl.appendChild(loadingEl);
 
-  const exclude = [sourceWord, ...localMatches].filter(Boolean);
+  const exclude = [sourceWord, ...localWords].filter(Boolean);
   const aiWords = await findRelatedWordsViaAI(morpheme, exclude, remaining, provider, apiKey);
   if (requestId !== affixWordsRequestId) return;
   loadingEl.remove();
 
-  aiWords.forEach((w) => listEl.appendChild(buildRelatedWordButton(w)));
+  aiWords.forEach((entry) => listEl.appendChild(buildRelatedWordButton(entry)));
 
   if (!localMatches.length && !aiWords.length) {
     listEl.innerHTML = `<div class="empty-note">この接辞を含む単語は見つかりませんでした</div>`;
