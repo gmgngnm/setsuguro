@@ -174,6 +174,10 @@
     <div class="memorize-hint" id="memorize-hint">タップで意味を表示 / 左スワイプで暗記済み・右スワイプで未暗記</div>
     <div class="memorize-empty" id="memorize-empty" style="display:none;"></div>
     <div class="memorize-swipe" id="memorize-swipe" style="display:none;">
+      <div class="memorize-autoplay-bar" id="memorize-autoplay-bar" style="display:none;">
+        <div class="memorize-seek-track"><div class="memorize-seek-fill" id="memorize-seek-fill"></div></div>
+        <button class="memorize-speed-btn" id="memorize-speed-btn" type="button" title="再生速度を変更" aria-label="再生速度を変更">1.0x</button>
+      </div>
       <div class="memorize-card-wrap">
         <div class="memorize-reveal" id="memorize-reveal"></div>
         <div class="memorize-card" id="memorize-card">
@@ -192,15 +196,9 @@
         </div>
       </div>
       <div class="memorize-extra" id="memorize-extra" style="display:none;"></div>
-      <div class="memorize-float-dock" id="memorize-float-dock">
-        <div class="memorize-autoplay-bar" id="memorize-autoplay-bar" style="display:none;">
-          <div class="memorize-seek-track"><div class="memorize-seek-fill" id="memorize-seek-fill"></div></div>
-          <button class="memorize-speed-btn" id="memorize-speed-btn" type="button" title="再生速度を変更" aria-label="再生速度を変更">1.0x</button>
-        </div>
-        <div class="memorize-actions" id="memorize-actions">
-          <button class="memorize-action-btn correct" id="memorize-btn-correct" type="button" aria-label="暗記済みにする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg></button>
-          <button class="memorize-action-btn wrong" id="memorize-btn-wrong" type="button" aria-label="未暗記にする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
+      <div class="memorize-actions" id="memorize-actions">
+        <button class="memorize-action-btn correct" id="memorize-btn-correct" type="button" aria-label="暗記済みにする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg></button>
+        <button class="memorize-action-btn wrong" id="memorize-btn-wrong" type="button" aria-label="未暗記にする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
     </div>
   </section>

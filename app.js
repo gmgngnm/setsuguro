@@ -188,7 +188,9 @@ const DECOMPOSE_SYS = [
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
   `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${KNOWN_AFFIXES}`,
   "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
-  "残った中間部分は語根として一つの要素にまとめ、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
+  "接頭辞・接尾辞を取り除いた後に残る中間部分（語根候補）についても、その先頭や末尾がさらに一覧の接頭辞・接尾辞（教科書的に広く認められている接辞を含む）と完全に一致する場合は、それ以上一致する接辞がなくなるまで再帰的に切り出しを続けてください。例えば competition は com(接頭辞) / pet(語根) / ition(接尾辞) のように、中間部分 compet の先頭にある com も一覧にあるため接頭辞として分離してください。単に語根が長い・見慣れないという理由だけで分割を諦めず、既知の接辞パターンに一致する部分がないか必ず確認してください。",
+  "ただし、分割しすぎて1〜2文字だけの無意味な断片や、教育的に不自然な分割にはしないでください。それ以上分解すると学習上の意味を持たない断片になる場合は、そこで分割を止めて語根としてください。",
+  "最終的に残った、それ以上分解できない中心部分だけを語根とし、接尾辞の一部（活用語尾や連結母音など）を語根に含めないでください。",
   "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
@@ -197,6 +199,7 @@ const DECOMPOSE_SYS = [
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
   '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
+  "例: competition → com(接頭辞、共に) / pet(語根、求める) / ition(接尾辞、〜すること) のように、接尾辞を除いた語根候補 compet がさらに一覧の接頭辞 com で始まっている場合は、com も分離して3つ以上の要素に分割してください。",
 ].join("\n");
 
 function goroSystemPrompt(word, morphemes, wordMeaning) {
@@ -987,7 +990,7 @@ const DEMO_WORD_DATA = {
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
   /* PC版は画面が広いので履歴を最大20個まで表示する */
-  const limit = window.innerWidth >= 860 ? 20 : 10;
+  const limit = window.innerWidth >= 860 ? 20 : 6;
   const words = recent.length < limit ? [...recent, ...pickSampleWords(limit - recent.length, recent)] : recent.slice(0, limit);
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
