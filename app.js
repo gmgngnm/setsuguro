@@ -193,9 +193,9 @@ const DECOMPOSE_SYS = [
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
-  "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、関連語（related_words、同じ語根からの派生語や意味的に近い実在する一般的な英単語。corrected_word自体は含めない）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
+  "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、対義語（antonyms、意味が反対・対照的な実在する一般的な英単語）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"related_words":["investigate","investigator","investigative"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -399,7 +399,7 @@ async function decomposeWord(word, provider, apiKey) {
   try {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     if (json.word_exists === false) {
-      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], relatedWords: [], morphemes: [] };
+      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: [] };
     }
     let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
@@ -425,14 +425,14 @@ async function decomposeWord(word, provider, apiKey) {
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
     const synonyms = sanitizeWordList(json.synonyms, correctedWord);
-    const relatedWords = sanitizeWordList(json.related_words, correctedWord).filter((w) => !synonyms.some((s) => s.toLowerCase() === w.toLowerCase()));
+    const antonyms = sanitizeWordList(json.antonyms, correctedWord).filter((w) => !synonyms.some((s) => s.toLowerCase() === w.toLowerCase()));
 
     morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey);
 
-    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, relatedWords, morphemes };
+    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], relatedWords: [], morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -1017,7 +1017,7 @@ let currentWordMeaning = "";
 let currentWordPhonetic = "";
 let currentMemoryTip = "";
 let currentSynonyms = [];
-let currentRelatedWords = [];
+let currentAntonyms = [];
 let currentMorphemes = [];
 let currentCandidates = [];
 
@@ -1073,7 +1073,7 @@ async function startDecompose(rawWord) {
     currentWordPhonetic = demo.phonetic;
     currentMemoryTip = demo.memoryTip;
     currentSynonyms = [];
-    currentRelatedWords = [];
+    currentAntonyms = [];
   } else {
     try {
       const decomposed = await decomposeWord(word, provider, apiKey);
@@ -1086,7 +1086,7 @@ async function startDecompose(rawWord) {
       currentWordPhonetic = decomposed.phonetic;
       currentMemoryTip = decomposed.memoryTip;
       currentSynonyms = decomposed.synonyms || [];
-      currentRelatedWords = decomposed.relatedWords || [];
+      currentAntonyms = decomposed.antonyms || [];
       if (decomposed.wasCorrected) {
         await playSpellingFix(placeholder, word, decomposed.correctedWord);
         currentWord = decomposed.correctedWord;
@@ -2117,10 +2117,10 @@ function resolveAnimStyle(key) {
 
 function affixCardHtml(m) {
   return `<div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
-      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
+      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.origin)}）</div>`;
 }
 
-/* 単語の意味カードの下に、同義語・関連語をタップ可能なチップとして表示する */
+/* 単語の意味カードの下に、同義語・対義語をタップ可能なチップとして表示する */
 function buildWordRelatedChip(word) {
   const chip = document.createElement("button");
   chip.className = "word-related-chip";
@@ -2130,22 +2130,43 @@ function buildWordRelatedChip(word) {
   return chip;
 }
 
-function renderWordRelatedCard(synonyms, relatedWords) {
+/* コンテナの横幅に収まる分のチップだけを残し、その行に入りきらない
+   チップは削除する（折り返して次の行に侵食しないようにするため）。
+   呼び出し時点でまだ画面が非表示で幅が測れないことがあるため、
+   実際に幅が測れるようになるまで数フレームだけ再試行する */
+function fitRowChips(container, attemptsLeft = 10) {
+  const available = container.clientWidth;
+  if (!available) {
+    if (attemptsLeft > 0) requestAnimationFrame(() => fitRowChips(container, attemptsLeft - 1));
+    return;
+  }
+  const gap = 6;
+  let used = -gap;
+  [...container.children].forEach((chip) => {
+    used += gap + chip.offsetWidth;
+    if (used > available) chip.remove();
+  });
+}
+
+function renderWordRelatedCard(synonyms, antonyms) {
   const cardEl = document.getElementById("word-related-card");
   const synonymsRow = document.getElementById("word-synonyms-row");
   const synonymsChips = document.getElementById("word-synonyms-chips");
-  const relatedRow = document.getElementById("word-related-words-row");
-  const relatedChips = document.getElementById("word-related-words-chips");
+  const antonymsRow = document.getElementById("word-antonyms-row");
+  const antonymsChips = document.getElementById("word-antonyms-chips");
 
   synonymsChips.innerHTML = "";
   (synonyms || []).forEach((w) => synonymsChips.appendChild(buildWordRelatedChip(w)));
   synonymsRow.style.display = synonyms && synonyms.length ? "flex" : "none";
 
-  relatedChips.innerHTML = "";
-  (relatedWords || []).forEach((w) => relatedChips.appendChild(buildWordRelatedChip(w)));
-  relatedRow.style.display = relatedWords && relatedWords.length ? "flex" : "none";
+  antonymsChips.innerHTML = "";
+  (antonyms || []).forEach((w) => antonymsChips.appendChild(buildWordRelatedChip(w)));
+  antonymsRow.style.display = antonyms && antonyms.length ? "flex" : "none";
 
-  cardEl.style.display = (synonyms && synonyms.length) || (relatedWords && relatedWords.length) ? "flex" : "none";
+  cardEl.style.display = (synonyms && synonyms.length) || (antonyms && antonyms.length) ? "flex" : "none";
+
+  fitRowChips(synonymsChips);
+  fitRowChips(antonymsChips);
 }
 
 /* ---- 接辞カード（タップで同じ接辞を含む単語一覧へ） ---- */
@@ -2169,7 +2190,7 @@ async function renderResultScreen() {
     wordMeaningEl.innerHTML = "";
     wordMeaningEl.style.display = "none";
   }
-  renderWordRelatedCard(currentSynonyms, currentRelatedWords);
+  renderWordRelatedCard(currentSynonyms, currentAntonyms);
 
   const memoryTipEl = document.getElementById("memory-tip");
   memoryTipEl.textContent = currentMemoryTip || "";
