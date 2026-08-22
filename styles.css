@@ -723,4 +723,18 @@ button{font-family:inherit;cursor:pointer;}
   .save-word-btn{position:absolute;}
   #screen-memorize{position:relative;}
   .memorize-actions{position:absolute;}
+
+  /* 分解アニメーション画面は#appのmin-height:0の影響を受けず、常に
+     ビューポート全体を使って中央に、かつ画面の広さを活かして大きく
+     表示されるようにする */
+  #screen-decompose{min-height:100vh;}
+  .word-split{gap:22px;max-width:1040px;}
+  .morph{max-width:300px;padding:28px 30px;gap:8px;}
+  .morph-part{font-size:36px;}
+  .morph-meaning{font-size:16px;}
+  .morph.word-pulse{font-size:36px;max-width:min(60vw, 620px);}
+  #decompose-word-meaning{max-width:min(70vw, 620px);}
+  #decompose-word-meaning .word-meaning-word{font-size:24px;}
+  #decompose-word-meaning .word-meaning-text{font-size:20px;}
+  #decompose-memory-tip{font-size:16px;max-width:640px;}
 }
