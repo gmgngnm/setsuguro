@@ -469,6 +469,9 @@ button{font-family:inherit;cursor:pointer;}
 @media (prefers-reduced-motion: reduce){ #decompose-word-meaning{transition:none;} }
 .word-meaning-word{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:17px;color:var(--accent-ink);}
 .word-meaning-word .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;font-size:12px;color:var(--ink-faint);margin-left:6px;}
+.word-meaning-word-row{display:flex;align-items:center;gap:8px;}
+.word-speak-btn{background:none;border:none;color:var(--accent);display:inline-flex;align-items:center;flex-shrink:0;}
+.word-speak-btn.speaking{animation:pulse .6s ease-in-out infinite;}
 .word-meaning-text{margin-top:4px;font-weight:700;font-size:16px;color:var(--ink);}
 .memory-tip{
   border-left:3px solid var(--accent-2);padding:8px 12px;
@@ -498,6 +501,15 @@ button{font-family:inherit;cursor:pointer;}
   position:relative;background:var(--surface);border:1px solid var(--line);border-radius:14px;
   padding:14px 16px;
 }
+.affix-card.tappable{cursor:pointer;}
+.affix-words-appbar{justify-content:flex-end;}
+.related-word-btn{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:12px 14px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;
+  width:100%;text-align:left;
+}
+.related-word-btn:active{transform:scale(.98);}
 .affix-card .m{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:15px;}
 .affix-card .m .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;color:var(--ink-faint);font-size:12px;margin-left:6px;}
 .affix-card .mean{font-size:13px;color:var(--ink-soft);margin-top:3px;}
