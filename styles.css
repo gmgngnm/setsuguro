@@ -714,6 +714,9 @@ button{font-family:inherit;cursor:pointer;}
      広げず、画面上部中央に単体でバランス良く配置する */
   #affix-words-card{display:flex;flex-direction:row;justify-content:center;}
   #affix-words-card .affix-card{width:100%;max-width:420px;}
+  /* 単語詳細画面の語呂合わせは1件だけなので、グリッドで幅を分割せず
+     通常のブロックとして他の一覧と左右そろえて表示する */
+  #word-detail-goro{display:block;}
   .book-list{
     display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;
   }
