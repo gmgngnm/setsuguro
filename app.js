@@ -687,11 +687,32 @@ if (!SpeechRecognitionCtor) {
   micOverlayBtn.addEventListener("pointercancel", stopListening);
 }
 
+/* まだ単語履歴がない(初回起動時など)に表示する、接辞分解しがいのある長め単語のサンプル */
+const SAMPLE_WORDS = [
+  "presentation", "reincarnation", "visualization", "immortality", "reconstruction",
+  "architecture", "transformation", "disqualification", "misunderstanding", "unbelievable",
+  "extraordinary", "international", "responsibility", "communication", "appreciation",
+  "imagination", "popularity", "opportunity", "personality", "information",
+  "application", "organization", "illustration", "examination", "celebration",
+  "inspiration", "exploration", "observation", "publication", "graduation",
+];
+
+function pickSampleWords(count) {
+  const pool = [...SAMPLE_WORDS];
+  const picked = [];
+  while (picked.length < count && pool.length) {
+    const idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  return picked;
+}
+
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
+  const words = recent.length ? recent : pickSampleWords(6);
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
-  recent.forEach((w) => {
+  words.forEach((w) => {
     const chip = document.createElement("button");
     chip.className = "chip";
     chip.textContent = w;
