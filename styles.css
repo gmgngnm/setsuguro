@@ -82,9 +82,8 @@ button{font-family:inherit;cursor:pointer;}
 .icon-svg-back{color:var(--ink-soft);}
 .icon-svg-csv{color:var(--accent-2);}
 
-#screen-result .appbar{padding:10px 18px 6px; opacity:.5; transition:opacity .2s ease;}
+#screen-result .appbar{opacity:.5; transition:opacity .2s ease;}
 #screen-result .appbar:active, #screen-result .appbar:focus-within{opacity:1;}
-#screen-result .appbar .icon-btn{width:24px;height:24px;font-size:11px;border-radius:7px;}
 
 /* ---------- Screens ---------- */
 .screen{display:none;flex:1;flex-direction:column;padding:0 18px 32px;gap:16px;}
@@ -416,6 +415,18 @@ button{font-family:inherit;cursor:pointer;}
   background:color-mix(in srgb, var(--accent) 8%, var(--surface));border:1px solid var(--line);
   border-radius:12px;padding:12px 14px;font-size:16px;font-weight:700;color:var(--ink);line-height:1.5;
 }
+.word-related-card{display:flex;flex-direction:column;gap:8px;margin-top:-4px;}
+.word-related-row{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;}
+.word-related-label{
+  flex-shrink:0;font-size:11.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-weight:700;
+  padding:4px 0;
+}
+.word-related-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.word-related-chip{
+  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px 11px;
+  font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);
+}
+.word-related-chip:active{transform:scale(.96);}
 #decompose-word-meaning{
   opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity .4s ease, transform .4s ease;
   margin-bottom:4px; max-width:min(90vw, 320px);
@@ -481,12 +492,22 @@ button{font-family:inherit;cursor:pointer;}
 .goro-tap .txt{font-size:15px;line-height:1.6;color:var(--ink);}
 .goro-tap.speaking .spk{animation:pulse .6s ease-in-out infinite;}
 @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.25);}}
-.save-word-btn{
+.bottom-actions{
   position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
   width:calc(100% - 36px);max-width:444px;
+  display:flex;gap:10px;z-index:30;
+}
+.bottom-back-btn{
+  flex-shrink:0;width:52px;height:52px;border-radius:16px;
+  background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow);
+}
+.bottom-back-btn:active{transform:scale(.94);}
+.save-word-btn{
+  flex:1;min-width:0;
   background:var(--accent);color:#fff;border:none;border-radius:16px;
   padding:16px 20px;font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;
-  box-shadow:var(--shadow);z-index:30;
+  box-shadow:var(--shadow);
 }
 .save-word-btn.on{background:var(--surface);color:var(--accent-ink);border:1.5px solid var(--accent);}
 #screen-result{padding-bottom:96px;}
@@ -585,8 +606,7 @@ button{font-family:inherit;cursor:pointer;}
 .memorize-reveal.reveal-left{background:var(--accent);opacity:1;}
 .memorize-reveal.reveal-right{background:var(--danger);opacity:1;}
 .memorize-card{
-  position:relative;min-height:320px;background:var(--surface);border:1.5px solid var(--line);
-  border-radius:18px;box-shadow:var(--shadow);overflow:hidden;
+  position:relative;min-height:320px;box-shadow:var(--shadow);overflow:hidden;border-radius:18px;
   touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   perspective:1200px;transition:height .32s cubic-bezier(.22,1,.36,1);
 }
@@ -595,9 +615,12 @@ button{font-family:inherit;cursor:pointer;}
   transform-style:preserve-3d;transition:transform .5s cubic-bezier(.34,1.2,.64,1);
 }
 .memorize-card.flipped .memorize-card-inner{transform:rotateY(180deg);}
+/* 表裏それぞれの面自体に背景・枠線を持たせ、内側のコンテンツだけでなく
+   カードの見た目(枠・背景)ごと1枚の物として回転して裏返るようにする */
 .memorize-face{
   position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
   display:flex;align-items:center;justify-content:center;
+  background:var(--surface);border:1.5px solid var(--line);border-radius:18px;box-sizing:border-box;
 }
 .memorize-face-back{transform:rotateY(180deg);}
 .memorize-face-content{
@@ -712,7 +735,7 @@ button{font-family:inherit;cursor:pointer;}
   }
   .memorize-mode-sheet{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:900px;}
   #screen-result{position:relative;}
-  .save-word-btn{position:absolute;}
+  .bottom-actions{position:absolute;}
   #screen-memorize{position:relative;}
   .memorize-actions{position:absolute;}
 
