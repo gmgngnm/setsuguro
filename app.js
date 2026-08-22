@@ -202,7 +202,7 @@ const DECOMPOSE_SYS = [
   "例: competition → com(接頭辞、共に) / pet(語根、求める) / ition(接尾辞、〜すること) のように、接尾辞を除いた語根候補 compet がさらに一覧の接頭辞 com で始まっている場合は、com も分離して3つ以上の要素に分割してください。",
 ].join("\n");
 
-function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts) {
+function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   return [
     "あなたは日本語の語呂合わせ作家です。",
@@ -224,6 +224,9 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts) {
     "各文はできるだけ短くしてください。目安として20〜35文字程度、長くても40文字までに収め、冗長な修飾語や説明は削ってください。",
     "文法的な自然さを保った上で、思わずクスッと笑えるようなユーモアのある内容にしてください。意外な組み合わせ、ズッコケるようなオチ、大げさな展開などを取り入れつつも、あくまで一つの筋の通った話として成立させてください。",
     "擬音語・擬態語（例: ドカン、ズキューン、ガタガタ、ワクワク、ニヤリ、ドキドキ など）も、文脈上自然に使える場合に限り取り入れ、コミカルで記憶に残りやすい一文にしてください。無理に押し込む必要はありません。",
+    (rejectedNotes && rejectedNotes.length)
+      ? `【重要】直前の試行で作った次の候補は、機械的なチェックで不合格になりました。指摘された点を必ず直し、同じ失敗を繰り返さないでください:\n${rejectedNotes.map((n, i) => `${i + 1}. 「${n.text}」\n   → 不合格の理由: ${n.reasons.join(" / ")}`).join("\n")}`
+      : "",
     "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
     "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
     '{"candidates":[{"text":"軸にイオンがぶつかり電気あり、なんとも愉快な実験だ","highlight":[{"part":"dict","in_text":"軸に"}]}]}',
@@ -249,23 +252,34 @@ async function extractErrorDetail(res) {
 const AI_ADAPTERS = {
   groq: {
     label: "Groq",
+    /* 語呂合わせは「読みの音を含む実在の日本語を探す」制約充足タスクで、
+       推論を有効にした方が不自然な造語が出にくい。ただしモデルによっては
+       reasoning_effort を受け付けず400を返すため、その場合はパラメータを
+       外して一度だけ再試行し、機能自体が止まらないようにする */
+    reasoningEffort: "default",
     async chat(apiKey, systemPrompt, userPrompt, temperature) {
+      const body = {
+        model: "qwen/qwen3.6-27b",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: { type: "json_object" },
+        temperature,
+      };
+      if (this.reasoningEffort) body.reasoning_effort = this.reasoningEffort;
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: "qwen/qwen3.6-27b",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-          reasoning_effort: "none",
-          temperature,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const detail = await extractErrorDetail(res);
+        if (res.status === 400 && this.reasoningEffort && /reasoning/i.test(detail)) {
+          console.warn("Groq rejected reasoning_effort, retrying without it:", detail);
+          this.reasoningEffort = null;
+          return this.chat(apiKey, systemPrompt, userPrompt, temperature);
+        }
         throw new Error(`Groq API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
       }
       const json = await res.json();
@@ -478,6 +492,71 @@ async function validateDecomposition(word, morphemes, provider, apiKey) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 4.5 語呂合わせの機械的な品質チェック
+ *   プロンプトに禁止事項として書くだけではAIが守りきれない不良パターンの
+ *   うち、コード側で確定的に判定できるものをここで検出する。検出された
+ *   候補はそのまま採用せず、不合格の理由をAIに伝えて作り直させる
+ *   （goroSystemPrompt の rejectedNotes / generateGoro の再生成ループ）。
+ * ------------------------------------------------------------------ */
+
+/* 接辞の読みと一致しうるカタカナ語のうち、日本語として実在し、そのまま
+   一単語として文中で使っても自然なもの。これらは造語判定の対象外とする。
+   （例: tax(タックス) を「タックスを払う」と使うのは正しい語呂合わせ） */
+const GORO_REAL_KATAKANA_WORDS = new Set([
+  "イオン", "タックス", "ビール", "ポスト", "トランス", "ポート", "サブ", "インター",
+  "テスト", "ミット", "アウト", "セット", "カード", "コース", "ライト", "レース",
+  "ボール", "ドア", "ガス", "パス", "ペース", "メーター", "モーター", "センター",
+  "オーバー", "ケース", "コート", "サイン", "スープ", "チーム", "データ", "ネット",
+  "パート", "ページ", "ベース", "ホール", "マーク", "ルート", "レベル", "ワイン",
+]);
+
+const GORO_PARTICLE_CLASS = "[はがをのなにへでともや]";
+
+/* 語呂合わせ一文を機械的に検査し、不良箇所を返す。
+   戻り値は {code, reason} の配列（空配列なら合格）。
+   reason はそのまま再生成時のフィードバックとしてAIに渡す */
+function goroViolations(text, morphemes) {
+  const violations = [];
+  if (!text) return violations;
+  const readings = (morphemes || []).map((m) => (m.reading || "").trim()).filter(Boolean);
+
+  /* ①意味のカッコ書き併記（例:「エーター（刑務所）へ」） */
+  const paren = /[（(]([^）)]{0,20})[）)]/.exec(text);
+  if (paren) {
+    violations.push({
+      code: "gloss-in-parens",
+      reason: `「（${paren[1]}）」のように、カッコ書きで意味の注釈を文中に書き込んでいます。カッコとその中身は一切使わず、意味は情景そのもので伝えてください。`,
+    });
+  }
+
+  /* ②隣り合う接辞の読みをそのまま連結（例: リーヴ+メント →「リーヴメント」）。
+       対象単語自体をカタカナでなぞるだけの手抜きになる */
+  for (let i = 0; i < readings.length - 1; i++) {
+    const joined = readings[i] + readings[i + 1];
+    if (joined.length >= 3 && text.includes(joined)) {
+      violations.push({
+        code: "adjacent-readings",
+        reason: `「${readings[i]}」と「${readings[i + 1]}」を隣接させて「${joined}」という実在しないカタカナ語を作っています。各接辞の読みは文中の離れた位置に、それぞれ別の実在する日本語の一部として組み込んでください。`,
+      });
+    }
+  }
+
+  /* ③読みをそのまま独立した一単語として使用（例:「オノミが」「オクシールは」）。
+       カタカナの連続が読みとぴったり一致する場合、実在の外来語でない限り造語とみなす */
+  for (const run of text.match(/[ァ-ヶー]+/g) || []) {
+    if (run.length < 3 || GORO_REAL_KATAKANA_WORDS.has(run)) continue;
+    if (!readings.includes(run)) continue;
+    const withParticle = new RegExp(run + GORO_PARTICLE_CLASS).test(text);
+    violations.push({
+      code: withParticle ? "bare-reading-particle" : "bare-reading-word",
+      reason: `「${run}」という読みを、そのまま実在しない一単語として文中に置いています${withParticle ? "（助詞を付けて主語や修飾語のように使っています）" : ""}。読みの音は、実在する日本語の言葉の一部分の音として溶け込ませてください。`,
+    });
+  }
+
+  return violations;
+}
+
 function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   const candList = candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n");
@@ -518,15 +597,41 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
   }
 }
 
+/* 機械チェックに通らなかった場合に作り直す最大回数。
+   1回目で合格すれば追加のAPI呼び出しは発生しない */
+const GORO_MAX_ATTEMPTS = 3;
+
 async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts) {
-  const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts);
-  const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
-  let candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
-  if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
+  /* 機械チェックで弾いた候補と、その不合格理由。次の試行でAIに具体的に
+     伝えることで、同じ失敗の繰り返しを防ぐ */
+  const rejectedNotes = [];
+  /* 全試行が不合格でも語呂合わせ自体は出せるよう、違反の最も少ない候補を
+     保険として持っておく（チェックの厳しさでユーザーの操作を失敗させない） */
+  let fallback = null;
 
-  candidates = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
+  for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
+    const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes);
+    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
+    const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
+    if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
 
-  return candidates;
+    const violations = goroViolations(candidates[0].text, morphemes);
+    if (violations.length) {
+      if (!fallback || violations.length < fallback.violations.length) {
+        fallback = { candidates, violations };
+      }
+      rejectedNotes.push({ text: candidates[0].text, reasons: violations.map((v) => v.reason) });
+      continue;
+    }
+
+    /* 機械チェックを通った候補だけ、AIによる自然さ・面白さの校閲にかける。
+       校閲で新たな違反が入り込む場合は、校閲前の合格版をそのまま使う */
+    const revised = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
+    return goroViolations(revised[0]?.text, morphemes).length ? candidates : revised;
+  }
+
+  console.warn("Goro deterministic check failed on all attempts, using best candidate:", fallback.violations);
+  return fallback.candidates;
 }
 
 async function bumpUsage(tokens) {
