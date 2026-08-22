@@ -2836,7 +2836,7 @@ function renderMemorizeCard() {
   extraEl.classList.remove("show");
   extraEl.style.display = "none";
 
-  resizeMemorizeCard(document.getElementById("memorize-face-front"));
+  resizeMemorizeCard(document.getElementById("memorize-face-front-content"));
   /* リセット直後に transition を戻し、以降の裏返し操作はアニメーションさせる */
   requestAnimationFrame(() => {
     card.style.transition = "";
@@ -2919,7 +2919,7 @@ function revealMemorizeDetail() {
   extraEl.style.display = hasExtra ? "flex" : "none";
 
   /* 裏面のコンテンツ高さに合わせてカードの高さを変化させつつ、裏返す */
-  resizeMemorizeCard(document.getElementById("memorize-face-back"));
+  resizeMemorizeCard(document.getElementById("memorize-face-back-content"));
   document.getElementById("memorize-card").classList.add("flipped");
   if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
@@ -2940,7 +2940,7 @@ function hideMemorizeDetail() {
   memorizeRevealed = false;
   clearMemorizeAutoTimer();
 
-  resizeMemorizeCard(document.getElementById("memorize-face-front"));
+  resizeMemorizeCard(document.getElementById("memorize-face-front-content"));
   document.getElementById("memorize-card").classList.remove("flipped");
 
   const extraEl = document.getElementById("memorize-extra");
