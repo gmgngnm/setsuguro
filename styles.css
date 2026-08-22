@@ -513,6 +513,7 @@ button{font-family:inherit;cursor:pointer;}
   font-family:'JetBrains Mono',monospace;border:1.5px solid var(--line);color:var(--ink-faint);background:var(--surface);
 }
 .provider-pill.on, .anim-pill.on, .mode-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
+.provider-pill:disabled, .anim-pill:disabled, .mode-pill:disabled{opacity:.4;}
 .theme-swatch-row{display:flex;gap:10px;flex-wrap:wrap;}
 .theme-swatch{
   width:34px;height:34px;border-radius:50%;border:2px solid transparent;
@@ -537,6 +538,23 @@ button{font-family:inherit;cursor:pointer;}
 }
 .btn-solid:disabled{opacity:.5;}
 .settings-status{font-size:12px;text-align:center;min-height:16px;color:var(--ink-soft);}
+
+/* Google サインイン */
+.google-signin-slot{display:flex;justify-content:center;min-height:0;}
+.google-signin-slot:empty{display:none;}
+.google-profile{
+  display:flex;align-items:center;gap:10px;background:var(--surface);
+  border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+}
+.google-profile[hidden]{display:none;}
+.google-avatar{width:36px;height:36px;border-radius:50%;flex-shrink:0;background:var(--line);}
+.google-profile-text{flex:1;min-width:0;}
+.google-profile-name{font-size:13px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.google-profile-email{font-size:11px;color:var(--ink-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.btn-ghost{
+  background:none;border:1px solid var(--line);border-radius:999px;padding:7px 12px;
+  font-size:11.5px;font-family:'JetBrains Mono',monospace;color:var(--ink-soft);flex-shrink:0;
+}
 
 /* Toast */
 #toast{

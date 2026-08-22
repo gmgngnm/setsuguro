@@ -747,48 +747,272 @@ const micOverlayBtn = document.getElementById("mic-overlay-btn");
 const micOverlayHint = document.getElementById("mic-overlay-hint");
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-if (!SpeechRecognitionCtor) {
+const MIC_HINT_IDLE = "長押しで入力";
+
+/* Whisper の文字起こしエンドポイント。OpenAI 互換で
+   multipart/form-data の file + model を受け付ける。
+   対応プロバイダを増やす場合はここに足せば、選択可否の判定も
+   フォールバックもこのマップの有無だけで動く */
+const WHISPER_ENDPOINTS = {
+  sakura: { url: "https://api.ai.sakura.ad.jp/v1/audio/transcriptions", model: "whisper-large-v3-turbo" },
+};
+
+/* ほぼ無音の録音を渡すと、Whisper が学習データ由来の定型句を
+   でっち上げて返すことがある。単語として採用しないよう弾く */
+const WHISPER_NOISE = new Set([
+  "you", "thankyou", "thanksforwatching", "bye", "goodbye", "okay", "ok",
+  "so", "pleasesubscribe", "subtitlesbytheamaraorgcommunity", "hmm",
+]);
+
+/* マイク入力は「英単語をひとつ」言う前提。認識結果が複数語に割れても
+   捨てずに連結して1語へ組み直す (responsibility が "response ability"、
+   abandon が "a bandon" と割れるなど)。多少崩れても、分解時のタイポ
+   訂正が実在語へ寄せてくれるので、先頭だけ拾うより取りこぼしが少ない */
+function transcriptToWord(transcript) {
+  /* 英字以外 (空白・句読点・語中のハイフンやアポストロフィ) をすべて
+     落として1語に畳む。"response ability" も "re-construction" も
+     つながった1語になる */
+  const word = String(transcript || "").toLowerCase().replace(/[^a-z]+/g, "");
+  return WHISPER_NOISE.has(word) ? "" : word;
+}
+
+async function transcribeWithWhisper(blob, provider, apiKey, filename) {
+  const cfg = WHISPER_ENDPOINTS[provider];
+  if (!cfg) throw new Error("このプロバイダは音声認識に未対応です");
+  const form = new FormData();
+  form.append("file", blob, filename);
+  form.append("model", cfg.model);
+  /* OpenAI 互換の任意パラメータ。英単語1語だと文脈が無く
+     他言語に引きずられやすいので言語を固定する。
+     受け付けないサーバでも単に無視される */
+  form.append("language", "en");
+  form.append("response_format", "json");
+
+  /* Content-Type は boundary 付きで FormData に組み立てさせる */
+  const res = await fetch(cfg.url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await res.json();
+  return json.text || "";
+}
+
+function pickRecorderMime() {
+  /* さくらのAI側はmp3/wav/m4a/mp4が明示されているのに対しwebmの記載が
+     ないため、対応していればmp4 (=m4a) を優先する。webmしか録音できない
+     ブラウザでも、拒否された場合はAPIのエラーがそのままトーストに出る */
+  const candidates = [
+    "audio/mp4",
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+  ];
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+  return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+}
+
+function mimeToFilename(mime) {
+  if (mime.includes("mp4")) return "speech.m4a";
+  if (mime.includes("ogg")) return "speech.ogg";
+  return "speech.webm";
+}
+
+const canRecord = !!(navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined" && pickRecorderMime());
+
+if (!SpeechRecognitionCtor && !canRecord) {
   micSection.style.display = "none";
 } else {
-  let recognition = null;
-  let listening = false;
+  /* busy: 押してから認識完了までの一連の処理が進行中
+     released: その最中に既にボタンを離したか
+     キー読み出しやマイク許可の待ち時間中に離されることがあるため、
+     この2つで「起動を続けてよいか」を判断する */
+  let busy = false;
+  let released = false;
+  let engineInUse = null;
 
-  const startListening = () => {
-    if (listening) return;
-    listening = true;
-    recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    micOverlayBtn.classList.add("listening");
-    micOverlayHint.textContent = "話してください…";
-    recognition.onresult = (e) => {
-      const transcript = (e.results[0]?.[0]?.transcript || "").trim();
-      const firstWord = transcript.split(/\s+/)[0] || "";
-      wordInput.value = firstWord;
-      homeError.textContent = "";
-      if (firstWord) startDecompose(firstWord);
-    };
-    recognition.onerror = () => {
-      toast("音声入力に失敗しました");
-    };
-    recognition.onend = () => {
-      listening = false;
-      micOverlayBtn.classList.remove("listening");
-      micOverlayHint.textContent = "長押しで入力";
-    };
-    recognition.start();
+  const setMicState = (active, hint) => {
+    micOverlayBtn.classList.toggle("listening", active);
+    micOverlayHint.textContent = hint;
   };
+
+  const resetMic = () => {
+    busy = false;
+    engineInUse = null;
+    setMicState(false, MIC_HINT_IDLE);
+  };
+
+  const submitWord = (transcript) => {
+    const word = transcriptToWord(transcript);
+    if (!word) {
+      toast("聞き取れませんでした");
+      return;
+    }
+    wordInput.value = word;
+    homeError.textContent = "";
+    startDecompose(word);
+  };
+
+  /* --- エンジンA: ブラウザ内蔵の音声認識 (APIキー不要) ---
+     continuous=true では発話が複数のresultに分割されるため、
+     resultIndex から全件を積み上げる。確定と送信はボタンを離した
+     後 (onend) に一度だけ行う。onresult の時点で送信すると、長い
+     単語の途中で確定した仮説がそのまま送られてしまう */
+  const browserEngine = {
+    recognition: null,
+    start() {
+      const recognition = new SpeechRecognitionCtor();
+      this.recognition = recognition;
+      recognition.lang = "en-US";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      let finalText = "";
+      let interimText = "";
+      let failed = false;
+
+      recognition.onresult = (e) => {
+        interimText = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const chunk = e.results[i][0]?.transcript || "";
+          if (e.results[i].isFinal) finalText += ` ${chunk}`;
+          else interimText += ` ${chunk}`;
+        }
+        /* 認識の途中経過は入力欄に映すだけに留める */
+        wordInput.value = transcriptToWord(`${finalText} ${interimText}`);
+      };
+      recognition.onerror = (e) => {
+        /* 離した直後に発話が無いと no-speech / aborted が飛ぶが、
+           これは異常ではないので黙って終える */
+        if (e.error !== "no-speech" && e.error !== "aborted") failed = true;
+      };
+      recognition.onend = () => {
+        this.recognition = null;
+        resetMic();
+        if (failed) { toast("音声入力に失敗しました"); return; }
+        submitWord(finalText || interimText);
+      };
+
+      recognition.start();
+      setMicState(true, "話してください…");
+    },
+    stop() {
+      if (this.recognition) this.recognition.stop();
+    },
+  };
+
+  /* --- エンジンB: 録音して Whisper に投げる (高精度・APIキー必要) ---
+     押している間だけ録音し、離してから音声全体を1リクエストで送る。
+     発話を区切る余地がそもそも無いので、長い単語でも切れない */
+  const whisperEngine = {
+    recorder: null,
+    stream: null,
+    start(provider, apiKey) {
+      const mime = pickRecorderMime();
+      setMicState(true, "準備中…");
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        /* マイク許可を待つ間に指が離れていたら、録音せず後始末だけする */
+        if (released) { stream.getTracks().forEach((t) => t.stop()); resetMic(); return; }
+        this.stream = stream;
+        const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        this.recorder = recorder;
+        const chunks = [];
+        const startedAt = Date.now();
+
+        recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          this.recorder = null;
+          this.stream = null;
+          const elapsed = Date.now() - startedAt;
+          const blob = new Blob(chunks, { type: mime || "audio/webm" });
+
+          /* 短すぎる録音は Whisper が幻聴を返しやすいので送らない */
+          if (elapsed < 350 || blob.size < 1200) {
+            resetMic();
+            toast("もう少し長く押しながら話してください");
+            return;
+          }
+
+          setMicState(false, "認識中…");
+          try {
+            const text = await transcribeWithWhisper(blob, provider, apiKey, mimeToFilename(mime || "audio/webm"));
+            resetMic();
+            submitWord(text);
+          } catch (err) {
+            console.warn("Whisper transcription failed:", err);
+            resetMic();
+            toast(err.message || "音声認識に失敗しました");
+          }
+        };
+
+        recorder.start();
+        setMicState(true, "話してください…");
+      }).catch((err) => {
+        console.warn("getUserMedia failed:", err);
+        resetMic();
+        toast("マイクを使用できませんでした");
+      });
+    },
+    stop() {
+      if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
+      else if (this.stream) {
+        /* 録音開始前に離された場合 */
+        this.stream.getTracks().forEach((t) => t.stop());
+        this.stream = null;
+      }
+    },
+  };
+
+  const startListening = async (e) => {
+    if (busy) return;
+    busy = true;
+    released = false;
+    /* 押している最中に指が少しずれても離したと扱われないよう、
+       ポインタをボタンに固定する */
+    if (e && e.pointerId !== undefined && micOverlayBtn.setPointerCapture) {
+      try { micOverlayBtn.setPointerCapture(e.pointerId); } catch { /* 無視 */ }
+    }
+    setMicState(true, "準備中…");
+
+    const mode = await kvGet("voice_engine", "auto");
+    const provider = await kvGet("provider", "groq");
+    const apiKey = WHISPER_ENDPOINTS[provider] ? await loadApiKey(provider) : "";
+    const useWhisper = mode !== "browser" && canRecord && !!apiKey;
+
+    /* 設定の読み出しを待つ間に離されていたら起動しない */
+    if (released) { resetMic(); return; }
+
+    if (useWhisper) {
+      engineInUse = whisperEngine;
+      whisperEngine.start(provider, apiKey);
+    } else if (SpeechRecognitionCtor) {
+      engineInUse = browserEngine;
+      browserEngine.start();
+    } else {
+      resetMic();
+      toast("音声入力にはAPIキーの設定が必要です");
+    }
+  };
+
   const stopListening = () => {
-    if (!listening || !recognition) return;
-    recognition.stop();
+    if (!busy || released) return;
+    released = true;
+    /* engineInUse が未設定なら、まだ起動処理の途中。
+       起動側が released を見て自分で中断する */
+    if (engineInUse) engineInUse.stop();
   };
 
   micOverlayBtn.addEventListener("pointerdown", startListening);
   micOverlayBtn.addEventListener("pointerup", stopListening);
-  micOverlayBtn.addEventListener("pointerleave", stopListening);
   micOverlayBtn.addEventListener("pointercancel", stopListening);
+  /* pointerleave では止めない。指がボタンからわずかにずれただけで
+     録音が切れてしまい、長い単語の途中で終わる原因になる */
 }
 
 /* 単語履歴が少ない(初回起動時・6件に満たない間)に埋め合わせで表示する、
@@ -3096,6 +3320,9 @@ async function initSettingsScreen() {
 
   renderModePills(await kvGet("theme_mode", "light"));
   renderThemeSwatches(await kvGet("theme_color", "blue"));
+
+  await refreshVoiceEngineUI();
+  await initGoogleAuth();
 }
 
 document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((pill) => {
@@ -3122,6 +3349,9 @@ document.querySelectorAll(".provider-pill").forEach((pill) => {
     document.getElementById("settings-status").textContent = "";
   });
 });
+
+/* プロバイダを選び直しただけでは kv の provider は保存されないため、
+   音声入力の説明文は保存後の initSettingsScreen で追従させる */
 
 document.getElementById("toggle-key-visibility").addEventListener("click", () => {
   const input = document.getElementById("api-key-input");
@@ -3154,6 +3384,8 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   }
   btn.disabled = false;
   await refreshUsageDisplay();
+  /* Whisperを使えるかはキーの有無で決まるので、説明文を更新する */
+  await refreshVoiceEngineUI();
 });
 
 async function refreshUsageDisplay() {
@@ -3162,6 +3394,193 @@ async function refreshUsageDisplay() {
   document.getElementById("usage-calls").textContent = `${calls} 回`;
   document.getElementById("usage-tokens").textContent = `約 ${tokens.toLocaleString()}`;
 }
+
+/* ------------------------------------------------------------------ *
+ * 12b. 音声入力の設定
+ * ------------------------------------------------------------------ */
+async function refreshVoiceEngineUI() {
+  const mode = await kvGet("voice_engine", "auto");
+  const provider = await kvGet("provider", "groq");
+  const whisperSupported = !!WHISPER_ENDPOINTS[provider];
+  const selectable = whisperSupported && canRecord;
+  const hasKey = whisperSupported && !!(await loadApiKey(provider));
+
+  /* Whisperを選べない構成では、実際に動く「ブラウザ標準」の方を
+     選択済みとして見せる。保存された設定自体は書き換えないので、
+     さくらのAIに戻せば元の選択が復活する */
+  const shown = selectable ? mode : "browser";
+  document.querySelectorAll("#voice-engine-row .mode-pill").forEach((p) => {
+    const isWhisper = p.dataset.voiceEngine === "auto";
+    p.classList.toggle("on", p.dataset.voiceEngine === shown);
+    p.disabled = isWhisper && !selectable;
+  });
+
+  const note = document.getElementById("voice-engine-note");
+  if (!canRecord) {
+    note.textContent = "このブラウザは録音に対応していないため、ブラウザ内蔵の音声認識を使います。";
+  } else if (!whisperSupported) {
+    note.textContent = `Whisperによる音声認識はさくらのAIを選んでいるときだけ使えます。現在は${PROVIDER_LABELS[provider]}のため、ブラウザ内蔵の音声認識を使います。`;
+  } else if (mode === "browser") {
+    note.textContent = "ブラウザ内蔵の音声認識を使います。APIキーを消費しません。";
+  } else if (!hasKey) {
+    note.textContent = "さくらのAIのAPIキーが未設定のため、当面はブラウザ内蔵の音声認識を使います。";
+  } else {
+    note.textContent = "押している間の音声をさくらのAIのWhisperで認識します。1回の発話をまとめて送るため、長い単語でも途中で切れません。";
+  }
+}
+
+document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("voice_engine", pill.dataset.voiceEngine);
+    await refreshVoiceEngineUI();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 12c. Googleサインイン
+ *   EnGoloydはサーバを持たないため、受け取ったIDトークンの署名を
+ *   検証する術がない。したがってこのサインインは「誰が使っているか
+ *   を端末上に表示する」ためのもので、データ保護の境界にはならない
+ *   (単語帳もAPIキーも従来どおりこの端末のIndexedDBにだけ残る)。
+ *   利用にはGoogle Cloudで発行したOAuthクライアントIDと、そこへの
+ *   このアプリのオリジンの登録が必要。
+ * ------------------------------------------------------------------ */
+const GSI_SRC = "https://accounts.google.com/gsi/client";
+let gsiLoadPromise = null;
+let gsiInitializedFor = null;
+
+function loadGsiLibrary() {
+  if (window.google?.accounts?.id) return Promise.resolve();
+  if (gsiLoadPromise) return gsiLoadPromise;
+  gsiLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = GSI_SRC;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      gsiLoadPromise = null;
+      reject(new Error("Googleのライブラリを読み込めませんでした"));
+    };
+    document.head.appendChild(script);
+  });
+  return gsiLoadPromise;
+}
+
+/* IDトークンのペイロードだけを取り出す。署名検証はしていないので、
+   ここで得た値は表示以外の用途に使わないこと */
+function decodeJwtPayload(token) {
+  const segment = String(token).split(".")[1] || "";
+  const base64 = segment.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+  const bytes = atob(padded);
+  const json = decodeURIComponent(
+    Array.from(bytes, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`).join("")
+  );
+  return JSON.parse(json);
+}
+
+function renderGoogleUser(user) {
+  const profile = document.getElementById("google-profile");
+  const slot = document.getElementById("google-signin-btn");
+  if (!user) {
+    profile.hidden = true;
+    return;
+  }
+  document.getElementById("google-name").textContent = user.name || "(名前なし)";
+  document.getElementById("google-email").textContent = user.email || "";
+  const avatar = document.getElementById("google-avatar");
+  if (user.picture) { avatar.src = user.picture; avatar.hidden = false; } else { avatar.hidden = true; }
+  profile.hidden = false;
+  slot.innerHTML = "";
+}
+
+async function handleGoogleCredential(response) {
+  const status = document.getElementById("google-status");
+  try {
+    const payload = decodeJwtPayload(response.credential);
+    const user = {
+      sub: payload.sub || "",
+      name: payload.name || "",
+      email: payload.email || "",
+      picture: payload.picture || "",
+      signedInAt: Date.now(),
+    };
+    await kvSet("google_user", user);
+    renderGoogleUser(user);
+    status.textContent = "";
+    toast(`${user.name || user.email} でサインインしました`);
+  } catch (err) {
+    console.warn("Google credential decode failed:", err);
+    status.textContent = "サインイン情報を読み取れませんでした。";
+  }
+}
+
+async function initGoogleAuth() {
+  const status = document.getElementById("google-status");
+  const slot = document.getElementById("google-signin-btn");
+  const input = document.getElementById("google-client-id-input");
+
+  const clientId = await kvGet("google_client_id", "");
+  input.value = clientId;
+
+  const user = await kvGet("google_user", null);
+  renderGoogleUser(user);
+  if (user) return; // サインイン済みならボタンは出さない
+
+  slot.innerHTML = "";
+  if (!clientId) {
+    status.textContent = "Google Cloudで発行したクライアントIDを設定するとサインインできます。";
+    return;
+  }
+
+  try {
+    await loadGsiLibrary();
+    if (gsiInitializedFor !== clientId) {
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: handleGoogleCredential,
+        auto_select: false,
+      });
+      gsiInitializedFor = clientId;
+    }
+    window.google.accounts.id.renderButton(slot, {
+      theme: "outline",
+      size: "large",
+      shape: "pill",
+      text: "signin_with",
+      locale: "ja",
+    });
+    status.textContent = "";
+  } catch (err) {
+    console.warn("Google Identity Services init failed:", err);
+    status.textContent = err.message || "Googleサインインを初期化できませんでした。";
+  }
+}
+
+document.getElementById("clear-google-client-id").addEventListener("click", () => {
+  const input = document.getElementById("google-client-id-input");
+  input.value = "";
+  input.focus();
+  document.getElementById("google-status").textContent = "";
+});
+
+document.getElementById("save-google-client-id-btn").addEventListener("click", async () => {
+  const clientId = document.getElementById("google-client-id-input").value.trim();
+  await kvSet("google_client_id", clientId);
+  /* クライアントIDが変わったらGSIを初期化し直す必要がある */
+  gsiInitializedFor = null;
+  document.getElementById("google-status").textContent = clientId ? "保存しました。" : "クライアントIDを消去しました。";
+  await initGoogleAuth();
+});
+
+document.getElementById("google-signout-btn").addEventListener("click", async () => {
+  if (window.google?.accounts?.id) window.google.accounts.id.disableAutoSelect();
+  await idbDelete("kv", "google_user");
+  renderGoogleUser(null);
+  toast("サインアウトしました");
+  await initGoogleAuth();
+});
 
 /* ------------------------------------------------------------------ *
  * 13. テーマカラー
