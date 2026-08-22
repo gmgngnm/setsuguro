@@ -596,11 +596,14 @@ button{font-family:inherit;cursor:pointer;}
 }
 .memorize-card.flipped .memorize-card-inner{transform:rotateY(180deg);}
 .memorize-face{
-  position:absolute;top:0;left:0;right:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
-  padding:24px;box-sizing:border-box;
+  position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  display:flex;align-items:center;justify-content:center;
 }
 .memorize-face-back{transform:rotateY(180deg);}
+.memorize-face-content{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  width:100%;padding:24px;box-sizing:border-box;
+}
 @media (prefers-reduced-motion: reduce){
   .memorize-card, .memorize-card-inner{transition:none;}
 }
