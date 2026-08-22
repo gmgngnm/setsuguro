@@ -238,84 +238,6 @@ async function extractErrorDetail(res) {
 }
 
 const AI_ADAPTERS = {
-  openai: {
-    label: "ChatGPT",
-    async chat(apiKey, systemPrompt, userPrompt, temperature) {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-          temperature,
-        }),
-      });
-      if (!res.ok) {
-        const detail = await extractErrorDetail(res);
-        throw new Error(`OpenAI API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-      }
-      const json = await res.json();
-      const text = json.choices?.[0]?.message?.content || "{}";
-      const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
-      return { text, tokens };
-    },
-  },
-  gemini: {
-    label: "Gemini",
-    async chat(apiKey, systemPrompt, userPrompt, temperature) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature },
-        }),
-      });
-      if (!res.ok) {
-        const detail = await extractErrorDetail(res);
-        throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-      }
-      const json = await res.json();
-      const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-      const tokens = json.usageMetadata?.totalTokenCount || Math.round(text.length / 2);
-      return { text, tokens };
-    },
-  },
-  claude: {
-    label: "Claude",
-    async chat(apiKey, systemPrompt, userPrompt, temperature) {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-5",
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-          temperature,
-        }),
-      });
-      if (!res.ok) {
-        const detail = await extractErrorDetail(res);
-        throw new Error(`Claude API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-      }
-      const json = await res.json();
-      const text = json.content?.[0]?.text || "{}";
-      const tokens = (json.usage?.input_tokens || 0) + (json.usage?.output_tokens || 0) || Math.round(text.length / 2);
-      return { text, tokens };
-    },
-  },
   groq: {
     label: "Groq",
     async chat(apiKey, systemPrompt, userPrompt, temperature) {
@@ -610,6 +532,9 @@ function showScreen(id) {
   }
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
+  /* 画面切り替え時、前の画面のスクロール位置が残ってしまうことがあるため、
+     常にページ最上部から表示されるようにする */
+  window.scrollTo(0, 0);
 }
 document.querySelectorAll("[data-nav]").forEach((el) => {
   el.addEventListener("click", () => {
@@ -1065,7 +990,7 @@ async function startDecompose(rawWord) {
   }
   homeError.textContent = "";
 
-  const provider = await kvGet("provider", "openai");
+  const provider = await kvGet("provider", "groq");
   const apiKey = await loadApiKey(provider);
   const demo = !apiKey ? DEMO_WORD_DATA[word.toLowerCase()] : null;
   if (!apiKey && !demo) {
@@ -1677,13 +1602,28 @@ const DECOMPOSE_ANIM_STYLES = {
   },
 };
 
-/* ---- 接辞カード（スワイプで接辞帳へ保存） ---- */
+function affixCardHtml(m) {
+  return `<div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
+      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
+}
+
+/* ---- 接辞カード（タップで同じ接辞を含む単語一覧へ） ---- */
 async function renderResultScreen() {
   const wordMeaningEl = document.getElementById("word-meaning");
   if (currentWordMeaning) {
     const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
-    wordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+    wordMeaningEl.innerHTML = `
+      <div class="word-meaning-word-row">
+        <span class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</span>
+        <button class="word-speak-btn" type="button" aria-label="英単語を読み上げ">${speakerIconHtml()}</button>
+      </div>
+      <div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
     wordMeaningEl.style.display = "block";
+    const speakBtn = wordMeaningEl.querySelector(".word-speak-btn");
+    speakBtn.addEventListener("click", () => {
+      speakBtn.classList.add("speaking");
+      speak(currentWord, () => speakBtn.classList.remove("speaking"), "en-US");
+    });
   } else {
     wordMeaningEl.innerHTML = "";
     wordMeaningEl.style.display = "none";
@@ -1703,10 +1643,9 @@ async function renderResultScreen() {
 
   currentMorphemes.forEach((m) => {
     const card = document.createElement("div");
-    card.className = "affix-card";
-    card.innerHTML = `
-      <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
-      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
+    card.className = "affix-card tappable";
+    card.innerHTML = affixCardHtml(m);
+    card.addEventListener("click", () => openAffixWordsScreen(m, currentWord, "screen-result"));
     list.appendChild(card);
   });
 
@@ -1786,7 +1725,7 @@ async function toggleSaveWord() {
   if (existing && existing.goro_text === newGoroText) {
     await idbDelete("words", id);
   } else {
-    const provider = await kvGet("provider", "openai");
+    const provider = await kvGet("provider", "groq");
     await idbPut("words", {
       id,
       word: currentWord,
@@ -1807,7 +1746,7 @@ async function toggleSaveWord() {
 document.getElementById("save-word-btn").addEventListener("click", toggleSaveWord);
 
 document.getElementById("regen-btn").addEventListener("click", async () => {
-  const provider = await kvGet("provider", "openai");
+  const provider = await kvGet("provider", "groq");
   const apiKey = await loadApiKey(provider);
   if (!apiKey) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
@@ -2025,10 +1964,9 @@ function openWordDetail(record) {
   affixList.innerHTML = "";
   (record.morphemes || []).forEach((m) => {
     const card = document.createElement("div");
-    card.className = "affix-card";
-    card.innerHTML = `
-      <div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
-      <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
+    card.className = "affix-card tappable";
+    card.innerHTML = affixCardHtml(m);
+    card.addEventListener("click", () => openAffixWordsScreen(m, record.word, "screen-word-detail"));
     affixList.appendChild(card);
   });
   if (!affixList.children.length) {
@@ -2057,6 +1995,48 @@ function openWordDetail(record) {
 
   showScreen("screen-word-detail");
 }
+
+/* ---- 接辞タップ → 同じ接辞を含む単語一覧 ---- */
+let affixWordsReturnScreen = "screen-result";
+
+async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
+  affixWordsReturnScreen = returnScreenId || "screen-result";
+
+  const cardEl = document.getElementById("affix-words-card");
+  cardEl.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "affix-card";
+  card.innerHTML = affixCardHtml(morpheme);
+  cardEl.appendChild(card);
+
+  const listEl = document.getElementById("affix-words-list");
+  listEl.innerHTML = "";
+  const part = (morpheme.part || "").toLowerCase();
+  const allWords = await idbGetAll("words");
+  const matches = allWords
+    .filter((r) => (r.morphemes || []).some((m) => (m.part || "").toLowerCase() === part))
+    .filter((r) => !sourceWord || r.word.toLowerCase() !== sourceWord.toLowerCase())
+    .sort((a, b) => b.created_at - a.created_at);
+
+  if (!matches.length) {
+    listEl.innerHTML = `<div class="empty-note">この接辞を含む保存済みの単語はありません</div>`;
+  } else {
+    matches.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.className = "related-word-btn";
+      btn.type = "button";
+      btn.textContent = r.word;
+      btn.addEventListener("click", () => startDecompose(r.word));
+      listEl.appendChild(btn);
+    });
+  }
+
+  showScreen("screen-affix-words");
+}
+
+document.getElementById("affix-words-back-btn").addEventListener("click", () => {
+  showScreen(affixWordsReturnScreen);
+});
 
 function buildBookRow(title, sub, createdAt, onTap, onDelete) {
   const wrap = document.createElement("div");
@@ -2389,11 +2369,11 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
 /* ------------------------------------------------------------------ *
  * 12. API設定画面
  * ------------------------------------------------------------------ */
-const PROVIDER_LABELS = { openai: "ChatGPT", gemini: "Gemini", claude: "Claude", groq: "Groq", sakura: "さくらのAI" };
-let activeProvider = "openai";
+const PROVIDER_LABELS = { groq: "Groq", sakura: "さくらのAI" };
+let activeProvider = "groq";
 
 async function initSettingsScreen() {
-  activeProvider = await kvGet("provider", "openai");
+  activeProvider = await kvGet("provider", "groq");
   document.querySelectorAll(".provider-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.provider === activeProvider);
   });
@@ -2430,6 +2410,13 @@ document.querySelectorAll(".provider-pill").forEach((pill) => {
 document.getElementById("toggle-key-visibility").addEventListener("click", () => {
   const input = document.getElementById("api-key-input");
   input.type = input.type === "password" ? "text" : "password";
+});
+
+document.getElementById("clear-key-input").addEventListener("click", () => {
+  const input = document.getElementById("api-key-input");
+  input.value = "";
+  input.focus();
+  document.getElementById("settings-status").textContent = "";
 });
 
 document.getElementById("save-key-btn").addEventListener("click", async () => {

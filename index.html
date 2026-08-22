@@ -90,7 +90,7 @@
   <!-- ============ SCREEN 04: 単語帳 ============ -->
   <section id="screen-book" class="screen">
     <div class="appbar">
-      <span class="logo">単語アーカイブ</span>
+      <span class="logo">マイ単語</span>
       <div class="nav-icons">
         <button class="icon-btn" id="csv-menu-btn" type="button" title="CSV出力・読み込み" aria-label="CSV出力・読み込み"><svg class="icon-svg icon-svg-csv" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg></button>
         <button class="icon-btn" data-nav="home" title="ホームへ戻る" aria-label="ホームへ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
@@ -131,6 +131,18 @@
     <div class="goro-list" id="word-detail-goro"></div>
   </section>
 
+  <!-- ============ SCREEN 05b: 同じ接辞を含む単語 ============ -->
+  <section id="screen-affix-words" class="screen">
+    <div class="appbar affix-words-appbar">
+      <div class="nav-icons">
+        <button class="icon-btn" id="affix-words-back-btn" type="button" title="戻る" aria-label="戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+      </div>
+    </div>
+    <div class="affix-list" id="affix-words-card"></div>
+    <div class="section-label" style="margin-top:6px;">この接辞を含む単語</div>
+    <div class="book-list" id="affix-words-list"></div>
+  </section>
+
   <!-- ============ SCREEN 06: 暗記モード ============ -->
   <section id="screen-memorize" class="screen">
     <div class="appbar">
@@ -162,7 +174,7 @@
   <!-- ============ SCREEN 07: API設定 ============ -->
   <section id="screen-settings" class="screen">
     <div class="appbar">
-      <span class="logo">API設定</span>
+      <span class="logo">設定</span>
       <div class="nav-icons">
         <button class="icon-btn" data-nav="home" title="閉じる" aria-label="閉じる">✕</button>
       </div>
@@ -170,17 +182,15 @@
 
     <div class="section-label">利用する生成AI</div>
     <div class="provider-row" id="provider-row">
-      <button class="provider-pill on" data-provider="openai">ChatGPT</button>
-      <button class="provider-pill" data-provider="gemini">Gemini</button>
-      <button class="provider-pill" data-provider="claude">Claude</button>
-      <button class="provider-pill" data-provider="groq">Groq</button>
+      <button class="provider-pill on" data-provider="groq">Groq</button>
       <button class="provider-pill" data-provider="sakura">さくらのAI</button>
     </div>
 
     <div class="form-row">
-      <label id="key-label">OpenAI API キー</label>
+      <label id="key-label">Groq API キー</label>
       <div class="form-field">
         <input id="api-key-input" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        <button id="clear-key-input" type="button" aria-label="入力をクリア"><svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         <button id="toggle-key-visibility" type="button" aria-label="表示切替"><svg class="icon-svg icon-svg-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </div>
