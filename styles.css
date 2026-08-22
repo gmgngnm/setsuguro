@@ -520,10 +520,11 @@ button{font-family:inherit;cursor:pointer;}
 }
 .save-word-btn.on{background:var(--surface);color:var(--accent-ink);border:1.5px solid var(--accent);}
 #screen-result{padding-bottom:96px;}
+.goro-label-group{display:flex;align-items:center;gap:8px;}
 .regen-btn{
-  align-self:center;margin-top:6px;
   background:var(--surface);border:1.5px solid var(--accent);color:var(--accent-ink);border-radius:999px;
-  font-size:13.5px;padding:11px 22px;font-family:'JetBrains Mono',monospace;font-weight:600;
+  font-size:10.5px;padding:4px 10px;font-family:'JetBrains Mono',monospace;font-weight:600;
+  text-transform:none;letter-spacing:normal;
 }
 .regen-btn:disabled{opacity:.5;}
 .add-goro-btn{
