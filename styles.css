@@ -416,15 +416,16 @@ button{font-family:inherit;cursor:pointer;}
   border-radius:12px;padding:12px 14px;font-size:16px;font-weight:700;color:var(--ink);line-height:1.5;
 }
 .word-related-card{display:flex;flex-direction:column;gap:8px;margin-top:-4px;}
-.word-related-row{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;}
+.word-related-row{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
 .word-related-label{
   flex-shrink:0;font-size:11.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-weight:700;
   padding:4px 0;
 }
-.word-related-chips{display:flex;flex-wrap:wrap;gap:6px;}
+/* 折り返さず1行に収まる分だけ表示する（収まらないチップはJS側で取り除く） */
+.word-related-chips{display:flex;flex-wrap:nowrap;gap:6px;overflow:hidden;min-width:0;}
 .word-related-chip{
-  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px 11px;
-  font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);
+  flex-shrink:0;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px 11px;
+  font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);white-space:nowrap;
 }
 .word-related-chip:active{transform:scale(.96);}
 #decompose-word-meaning{
@@ -513,10 +514,10 @@ button{font-family:inherit;cursor:pointer;}
 #screen-result{padding-bottom:96px;}
 .goro-label-group{display:flex;align-items:center;gap:8px;}
 .regen-btn{
-  background:var(--surface);border:1.5px solid var(--accent);color:var(--accent-ink);border-radius:999px;
-  font-size:10.5px;padding:4px 10px;font-family:'JetBrains Mono',monospace;font-weight:600;
-  text-transform:none;letter-spacing:normal;
+  background:var(--surface);border:1.5px solid var(--accent);color:var(--accent-ink);border-radius:50%;
+  width:24px;height:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
 }
+.regen-btn:active{transform:scale(.92);}
 .regen-btn:disabled{opacity:.5;}
 .add-goro-btn{
   background:none;border:none;padding:0;font-family:inherit;font-weight:600;
