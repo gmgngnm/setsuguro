@@ -622,7 +622,7 @@ button{font-family:inherit;cursor:pointer;}
 }
 .memorize-extra{display:flex;flex-direction:column;gap:14px;}
 .memorize-actions{
-  position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
+  position:fixed;left:50%;bottom:34px;transform:translateX(-50%);
   display:flex;gap:24px;z-index:30;
 }
 .memorize-action-btn{
