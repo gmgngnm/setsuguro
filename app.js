@@ -1272,7 +1272,7 @@ const DECOMPOSE_ANIM_STYLES = {
       /* word-pulse解除でmax-widthが150pxに縮むと長い単語が2行に折り返り、
          幅の割合だけで算出する亀裂の位置がずれるため、計測前に1行表示・広めの幅に固定する */
       placeholder.style.whiteSpace = "nowrap";
-      placeholder.style.maxWidth = "min(90vw, 320px)";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
       /* getBoundingClientRect()は、出現時の pop アニメーション(transform:scale(.5→1))が
          再生中だと縮小された見た目のサイズを返してしまう。offsetWidth/offsetHeightは
          transformの影響を受けないレイアウト上の実寸なので、こちらを使う */
