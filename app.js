@@ -1093,6 +1093,9 @@ async function startDecompose(rawWord) {
 
   let morphemes;
   if (demo) {
+    /* 本来はAI分解の応答待ちが入る箇所。デモ単語は即座にデータが揃ってしまい
+       不自然にノータイムで進んでしまうため、ダミーの待ち時間を入れる */
+    await sleep(1000);
     morphemes = demo.morphemes;
     currentWordMeaning = demo.meaning;
     currentWordPhonetic = demo.phonetic;
