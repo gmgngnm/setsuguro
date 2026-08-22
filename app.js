@@ -1297,6 +1297,24 @@ function reducedMotion() {
   return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+/* .morphのテキストはWebフォント(JetBrains Mono)で描画されるが、フォントの読み込みが
+   間に合わないうちに幅を計測すると、フォールバックフォントの狭い幅で亀裂/ハサミの
+   位置を計算してしまい、フォント切り替わり後に実際の文字幅とずれてしまう。
+   （デコンポーズ画面への遷移直後はAPI待ち時間が無く、特に発生しやすい）
+   計測前にフォントの読み込み完了を待つことでこれを防ぐ */
+let morphFontReady = null;
+function ensureMorphFontLoaded() {
+  if (!morphFontReady) {
+    morphFontReady = (document.fonts && document.fonts.load)
+      ? Promise.all([
+          document.fonts.load('700 20px "JetBrains Mono"'),
+          document.fonts.load('400 20px "JetBrains Mono"'),
+        ]).catch(() => {})
+      : Promise.resolve();
+  }
+  return morphFontReady;
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -1309,13 +1327,17 @@ const DECOMPOSE_ANIM_STYLES = {
     /* 単語ブロックに亀裂が入り、揺れてから砕ける */
     async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
 
       placeholder.classList.remove("word-pulse");
       /* word-pulse解除でmax-widthが150pxに縮むと長い単語が2行に折り返り、
          幅の割合だけで算出する亀裂の位置がずれるため、計測前に1行表示・広めの幅に固定する */
       placeholder.style.whiteSpace = "nowrap";
       placeholder.style.maxWidth = "min(90vw, 320px)";
-      const rect = placeholder.getBoundingClientRect();
+      /* getBoundingClientRect()は、出現時の pop アニメーション(transform:scale(.5→1))が
+         再生中だと縮小された見た目のサイズを返してしまう。offsetWidth/offsetHeightは
+         transformの影響を受けないレイアウト上の実寸なので、こちらを使う */
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       const svgNS = "http://www.w3.org/2000/svg";
       const svg = document.createElementNS(svgNS, "svg");
       svg.setAttribute("class", "crack-overlay");
@@ -1579,9 +1601,12 @@ const DECOMPOSE_ANIM_STYLES = {
     /* 各接辞の境界にハサミが現れ、チョキンと切り分ける */
     async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
       placeholder.classList.remove("word-pulse");
       placeholder.style.position = "relative";
-      const rect = placeholder.getBoundingClientRect();
+      /* pop アニメーション(transform:scale)再生中の見た目サイズではなく、
+         transformの影響を受けないレイアウト上の実寸を使う */
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
 
       let acc = 0;
       const boundaries = [];
