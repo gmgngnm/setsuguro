@@ -687,7 +687,8 @@ if (!SpeechRecognitionCtor) {
   micOverlayBtn.addEventListener("pointercancel", stopListening);
 }
 
-/* まだ単語履歴がない(初回起動時など)に表示する、接辞分解しがいのある長め単語のサンプル */
+/* 単語履歴が少ない(初回起動時・6件に満たない間)に埋め合わせで表示する、
+   接辞分解しがいのある長め単語のサンプル */
 const SAMPLE_WORDS = [
   "presentation", "reincarnation", "visualization", "immortality", "reconstruction",
   "architecture", "transformation", "disqualification", "misunderstanding", "unbelievable",
@@ -697,8 +698,9 @@ const SAMPLE_WORDS = [
   "inspiration", "exploration", "observation", "publication", "graduation",
 ];
 
-function pickSampleWords(count) {
-  const pool = [...SAMPLE_WORDS];
+function pickSampleWords(count, exclude = []) {
+  const excludeLower = new Set(exclude.map((w) => w.toLowerCase()));
+  const pool = SAMPLE_WORDS.filter((w) => !excludeLower.has(w.toLowerCase()));
   const picked = [];
   while (picked.length < count && pool.length) {
     const idx = Math.floor(Math.random() * pool.length);
@@ -709,7 +711,7 @@ function pickSampleWords(count) {
 
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
-  const words = recent.length ? recent : pickSampleWords(6);
+  const words = recent.length < 6 ? [...recent, ...pickSampleWords(6 - recent.length, recent)] : recent;
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
   words.forEach((w) => {
