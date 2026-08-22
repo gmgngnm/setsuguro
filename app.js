@@ -1232,8 +1232,16 @@ async function playNotFoundError(placeholder, word) {
   splitEl.innerHTML = "";
 }
 
+/* 設定画面の「アニメーション オン/オフ」トグル。同期的に参照する必要が
+   あるため、起動時に一度だけ読み込んでおく */
+let animationsEnabled = true;
+async function loadAnimationsEnabledSetting() {
+  animationsEnabled = await kvGet("anim_enabled", true);
+}
+loadAnimationsEnabledSetting();
+
 function reducedMotion() {
-  return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return !animationsEnabled || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
 /* .morphのテキストはWebフォント(JetBrains Mono)で描画されるが、フォントの読み込みが
@@ -1254,6 +1262,239 @@ function ensureMorphFontLoaded() {
   return morphFontReady;
 }
 
+/* ---- 「ひび割れ」アニメーション: Canvasで実際に破片が飛び散るガラス割れ演出 ---- */
+function roundRectPath(ctx, x, y, w, h, r) {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radius);
+    return;
+  }
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function shardClipPath(ctx, leftPath, rightPath) {
+  ctx.beginPath();
+  ctx.moveTo(leftPath[0].x, leftPath[0].y);
+  for (let i = 1; i < leftPath.length; i++) ctx.lineTo(leftPath[i].x, leftPath[i].y);
+  for (let i = rightPath.length - 1; i >= 0; i--) ctx.lineTo(rightPath[i].x, rightPath[i].y);
+  ctx.closePath();
+}
+
+/* 単語カードをそのままCanvas上に再現し、各接辞の境界(ギザギザの亀裂)で
+   実際に破片として切り分けて物理的に吹き飛ばす。placeholder自体は
+   visibility:hiddenにして隠し、その上に重ねたcanvasだけを見せる */
+async function runCrackShatter(placeholder, word, morphemes, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = rect.width * 0.65;
+  const padTop = rect.height * 0.5;
+  const padBottom = rect.height * 2.4;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "crack-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  /* 元絵(無傷のカード)を一度だけオフスクリーンに描き、破片を切り抜く元画像にする */
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+
+  /* 各接辞の文字数比率の位置に、ギザギザの亀裂境界線を作る */
+  let acc = 0;
+  const boundaryFracs = [];
+  morphemes.slice(0, -1).forEach((m) => {
+    acc += (m.part || "").length;
+    boundaryFracs.push(acc / word.length);
+  });
+
+  const JAG_STEPS = 6;
+  const jagPaths = boundaryFracs.map((frac) => {
+    const baseX = rect.width * frac;
+    const pts = [];
+    for (let j = 0; j <= JAG_STEPS; j++) {
+      const y = (rect.height / JAG_STEPS) * j;
+      const jitter = j === 0 || j === JAG_STEPS ? 0 : (Math.random() - 0.5) * Math.min(rect.width * 0.1, 14);
+      pts.push({ x: baseX + jitter, y });
+    }
+    return pts;
+  });
+  const leftEdge = [{ x: 0, y: 0 }, { x: 0, y: rect.height }];
+  const rightEdge = [{ x: rect.width, y: 0 }, { x: rect.width, y: rect.height }];
+  const allBoundaries = [leftEdge, ...jagPaths, rightEdge];
+
+  const shardCount = morphemes.length;
+  const shards = allBoundaries.slice(0, -1).map((leftPath, i) => {
+    const rightPath = allBoundaries[i + 1];
+    const xs = [...leftPath, ...rightPath].map((p) => p.x);
+    const dir = i - (shardCount - 1) / 2;
+    return {
+      leftPath, rightPath,
+      pivotX: (Math.min(...xs) + Math.max(...xs)) / 2,
+      pivotY: rect.height / 2,
+      x: 0, y: 0,
+      vx: dir * (60 + Math.random() * 50),
+      vy: -(110 + Math.random() * 70),
+      rot: 0,
+      vrot: (dir === 0 ? Math.random() - 0.5 : Math.sign(dir)) * (140 + Math.random() * 160) * (Math.PI / 180),
+      opacity: 1,
+    };
+  });
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const dustColor = rootStyle.getPropertyValue("--accent-2").trim() || "#E2622F";
+  const crackColor = rootStyle.getPropertyValue("--danger").trim() || "#C74B3F";
+  const dust = [];
+  jagPaths.forEach((path) => {
+    const mid = path[Math.floor(path.length / 2)];
+    for (let k = 0; k < 4; k++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 60 + Math.random() * 90;
+      dust.push({
+        x: mid.x, y: mid.y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40,
+        r: 1 + Math.random() * 1.8,
+        opacity: 1,
+      });
+    }
+  });
+
+  const CRACK_MS = 150;
+  const FLY_MS = 560;
+  const FADE_FROM = FLY_MS * 0.5;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = now - start;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+
+      if (t < CRACK_MS) {
+        /* フェーズA: まだ砕けず、揺れながら亀裂が走っていく
+           (rAFの最初のコールバックのtimestampがperformance.now()より
+           わずかに前になることがあり、tが負になる場合があるためクランプする) */
+        const p = Math.max(0, t / CRACK_MS);
+        const shake = (1 - p) * 3;
+        ctx.save();
+        ctx.translate(padX + (Math.random() - 0.5) * shake, padTop + (Math.random() - 0.5) * shake);
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.strokeStyle = crackColor;
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.globalAlpha = Math.min(1, p * 2.2);
+        jagPaths.forEach((path) => {
+          const reveal = Math.max(0, Math.min(path.length - 1, p * (path.length - 1) * 1.3));
+          ctx.beginPath();
+          ctx.moveTo(path[0].x, path[0].y);
+          for (let i = 1; i <= Math.floor(reveal); i++) ctx.lineTo(path[i].x, path[i].y);
+          const frac = reveal - Math.floor(reveal);
+          if (frac > 0 && Math.floor(reveal) + 1 < path.length) {
+            const a = path[Math.floor(reveal)];
+            const b = path[Math.floor(reveal) + 1];
+            ctx.lineTo(a.x + (b.x - a.x) * frac, a.y + (b.y - a.y) * frac);
+          }
+          ctx.stroke();
+        });
+        ctx.restore();
+        requestAnimationFrame(frame);
+        return;
+      }
+
+      /* フェーズB: 破片が物理的に砕け散る */
+      const ft = t - CRACK_MS;
+      const dt = 1 / 60;
+      const gravity = 900;
+
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      shards.forEach((s) => {
+        if (s.opacity <= 0) return;
+        s.vy += gravity * dt;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.rot += s.vrot * dt;
+        if (ft > FADE_FROM) s.opacity = Math.max(0, 1 - (ft - FADE_FROM) / (FLY_MS - FADE_FROM));
+
+        ctx.save();
+        ctx.globalAlpha = s.opacity;
+        ctx.translate(s.pivotX + s.x, s.pivotY + s.y);
+        ctx.rotate(s.rot);
+        ctx.translate(-s.pivotX, -s.pivotY);
+        shardClipPath(ctx, s.leftPath, s.rightPath);
+        ctx.clip();
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      });
+
+      dust.forEach((d) => {
+        if (d.opacity <= 0) return;
+        d.vy += gravity * 0.5 * dt;
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        d.opacity -= dt / 0.4;
+        if (d.opacity <= 0) return;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, d.opacity);
+        ctx.fillStyle = dustColor;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      ctx.restore();
+
+      if (ft >= FLY_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -1263,7 +1504,7 @@ const DECOMPOSE_ANIM_STYLES = {
       const dir = i - mid;
       return { "--from-x": `${-dir * 22}px`, "--from-y": "0px", "--from-rot": `${dir * 5}deg` };
     },
-    /* 単語ブロックに亀裂が入り、揺れてから砕ける */
+    /* 単語ブロックが実際にガラスのように砕け、破片が物理的に飛び散る */
     async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
       await ensureMorphFontLoaded();
@@ -1277,38 +1518,8 @@ const DECOMPOSE_ANIM_STYLES = {
          再生中だと縮小された見た目のサイズを返してしまう。offsetWidth/offsetHeightは
          transformの影響を受けないレイアウト上の実寸なので、こちらを使う */
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
-      const svgNS = "http://www.w3.org/2000/svg";
-      const svg = document.createElementNS(svgNS, "svg");
-      svg.setAttribute("class", "crack-overlay");
-      svg.setAttribute("width", rect.width);
-      svg.setAttribute("height", rect.height);
-
-      let acc = 0;
-      const boundaries = [];
-      morphemes.slice(0, -1).forEach((m) => {
-        acc += (m.part || "").length;
-        boundaries.push(acc / word.length);
-      });
-
-      boundaries.forEach((frac, i) => {
-        const x = rect.width * frac;
-        const steps = 5;
-        const points = Array.from({ length: steps }, (_, j) => {
-          const y = (rect.height / (steps - 1)) * j;
-          const jitter = (j % 2 === 0 ? -1 : 1) * (3 + Math.random() * 4);
-          return `${(x + jitter).toFixed(1)},${y.toFixed(1)}`;
-        });
-        const path = document.createElementNS(svgNS, "path");
-        path.setAttribute("d", `M ${points.join(" L ")}`);
-        path.setAttribute("class", "crack-line");
-        path.style.animationDelay = `${i * 0.09}s`;
-        svg.appendChild(path);
-      });
-
       placeholder.style.position = "relative";
-      placeholder.appendChild(svg);
-      placeholder.classList.add("crack-shake");
-      await sleep(620);
+      await runCrackShatter(placeholder, word, morphemes, rect);
     },
   },
 
@@ -2497,6 +2708,10 @@ async function initSettingsScreen() {
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
   await refreshUsageDisplay();
 
+  document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.animToggle === (animationsEnabled ? "on" : "off"));
+  });
+
   const activeAnim = await kvGet("decompose_anim", "crack");
   document.querySelectorAll(".anim-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
@@ -2505,6 +2720,14 @@ async function initSettingsScreen() {
   renderModePills(await kvGet("theme_mode", "light"));
   renderThemeSwatches(await kvGet("theme_color", "blue"));
 }
+
+document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    animationsEnabled = pill.dataset.animToggle === "on";
+    await kvSet("anim_enabled", animationsEnabled);
+    document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+  });
+});
 
 document.querySelectorAll(".anim-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
@@ -2593,12 +2816,12 @@ async function applyThemeMode() {
 }
 
 function renderModePills(activeMode) {
-  document.querySelectorAll(".mode-pill").forEach((p) => {
+  document.querySelectorAll("#mode-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.mode === activeMode);
   });
 }
 
-document.querySelectorAll(".mode-pill").forEach((pill) => {
+document.querySelectorAll("#mode-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
     await kvSet("theme_mode", pill.dataset.mode);
     renderModePills(pill.dataset.mode);

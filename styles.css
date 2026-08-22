@@ -148,7 +148,6 @@ button{font-family:inherit;cursor:pointer;}
   animation:pop .5s ease both, wordPulse 1.2s ease-in-out .5s infinite;
   max-width:min(90vw, 320px);
 }
-.morph.crack-shake{ animation:shake .6s ease; }
 .morph.shatter-in{
   animation:shatterIn .7s cubic-bezier(.22,1,.36,1) both;
 }
@@ -170,11 +169,7 @@ button{font-family:inherit;cursor:pointer;}
   width:100%; text-align:center;
 }
 .trash-can.show{ animation:trashPop .5s ease .3s forwards; }
-.crack-overlay{position:absolute; top:0; left:0; pointer-events:none; overflow:visible;}
-.crack-line{
-  fill:none; stroke:var(--danger); stroke-width:1.5; stroke-linecap:round;
-  stroke-dasharray:80; stroke-dashoffset:80; animation:crackDraw .4s ease forwards;
-}
+.crack-canvas{position:absolute;pointer-events:none;}
 .burst-flash{
   position:absolute; transform:translate(-50%,-50%); border-radius:50%;
   pointer-events:none;
@@ -215,7 +210,6 @@ button{font-family:inherit;cursor:pointer;}
   0%,100%{transform:rotate(0) scale(1);}
   50%{transform:rotate(-8deg) scale(1.08);}
 }
-@keyframes crackDraw{to{stroke-dashoffset:0;}}
 @keyframes burstFlash{
   from{ width:0; height:0; opacity:1; }
   to{ width:220px; height:220px; opacity:0; }
@@ -440,10 +434,10 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 @media (prefers-reduced-motion: reduce){
-  .morph, .morph.word-pulse, .morph.crack-shake, .morph.shatter-in,
+  .morph, .morph.word-pulse, .morph.shatter-in,
   .morph.burst-shake, .morph.burst-in, .morph.spin-wind-up, .morph.spin-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
-  .trash-can.show, .crack-line, .burst-flash.ring1, .burst-flash.ring2,
+  .trash-can.show, .burst-flash.ring1, .burst-flash.ring2,
   .burst-core-flash, .burst-spark, .spinner,
   .morph.warp-shrink, .morph.warp-in, .warp-beam,
   .morph.glitch-out, .morph.glitch-in, .glitch-ghost.cyan, .glitch-ghost.magenta,
@@ -707,16 +701,16 @@ button{font-family:inherit;cursor:pointer;}
     max-width:900px;margin:0 auto;min-height:0;
   }
   .screen{padding:0 32px 32px;}
-  .affix-list, .goro-list{
+  .affix-list{
     display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:14px;
   }
+  /* 語呂合わせは常に1件だけなので、接辞一覧と違いグリッドで幅を
+     分割せず、通常のブロックとして他のカードと左右をそろえて表示する */
+  .goro-list{display:block;}
   /* 共通接辞画面の接辞カードは、他の一覧のようにグリッドで幅いっぱいに
      広げず、画面上部中央に単体でバランス良く配置する */
   #affix-words-card{display:flex;flex-direction:row;justify-content:center;}
   #affix-words-card .affix-card{width:100%;max-width:420px;}
-  /* 単語詳細画面の語呂合わせは1件だけなので、グリッドで幅を分割せず
-     通常のブロックとして他の一覧と左右そろえて表示する */
-  #word-detail-goro{display:block;}
   .book-list{
     display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;
   }
