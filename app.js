@@ -1996,10 +1996,60 @@ function openWordDetail(record) {
   showScreen("screen-word-detail");
 }
 
-/* ---- 接辞タップ → 同じ接辞を含む単語一覧 ---- */
+/* ---- 接辞タップ → 同じ接辞を含む単語一覧（マイ単語→AI検索の順） ---- */
+const RELATED_WORDS_TARGET = 10;
+
+function relatedWordsPrompt(morpheme, excludeWords, count) {
+  return [
+    "あなたは英語の語彙・語源の専門家です。",
+    `接頭辞・語根・接尾辞のいずれかとして "${morpheme.part}"（読み: ${morpheme.reading}、意味: ${morpheme.meaning}、由来: ${morpheme.origin}）を含む、実在する英単語を探してください。`,
+    `次の単語は候補から除外してください（既出のため）: ${excludeWords.length ? excludeWords.join(", ") : "なし"}`,
+    `実在する一般的な英単語を、見つかる限り多く、最大${count}件挙げてください。${count}件に満たない場合は見つかった分だけで構いません。`,
+    "各単語は小文字の英字のみで構成される、実在の一般的な英単語にしてください（固有名詞・造語・除外リストの単語は不可）。",
+    "出力は次のJSON形式のみを返してください。それ以外の文章は一切書かないでください。",
+    '{"words":["word1","word2"]}',
+  ].join("\n");
+}
+
+async function findRelatedWordsViaAI(morpheme, excludeWords, count, provider, apiKey) {
+  try {
+    const sys = relatedWordsPrompt(morpheme, excludeWords, count);
+    const json = await callAI(provider, apiKey, sys, "実在する単語をJSON形式で出力してください。", 0.5);
+    const words = Array.isArray(json.words) ? json.words : [];
+    const excludeLower = new Set(excludeWords.map((w) => w.toLowerCase()));
+    const seen = new Set();
+    return words
+      .map((w) => (typeof w === "string" ? w.trim() : ""))
+      .filter((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w))
+      .filter((w) => {
+        const lower = w.toLowerCase();
+        if (excludeLower.has(lower) || seen.has(lower)) return false;
+        seen.add(lower);
+        return true;
+      })
+      .slice(0, count);
+  } catch (err) {
+    console.warn("AI関連単語検索に失敗:", err);
+    return [];
+  }
+}
+
+function buildRelatedWordButton(word, tag) {
+  const btn = document.createElement("button");
+  btn.className = "related-word-btn";
+  btn.type = "button";
+  btn.innerHTML = tag
+    ? `<span>${escapeHtml(word)}</span><span class="related-word-tag">${escapeHtml(tag)}</span>`
+    : escapeHtml(word);
+  btn.addEventListener("click", () => startDecompose(word));
+  return btn;
+}
+
 let affixWordsReturnScreen = "screen-result";
+let affixWordsRequestId = 0;
 
 async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
+  const requestId = ++affixWordsRequestId;
   affixWordsReturnScreen = returnScreenId || "screen-result";
 
   const cardEl = document.getElementById("affix-words-card");
@@ -2009,29 +2059,48 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
   card.innerHTML = affixCardHtml(morpheme);
   cardEl.appendChild(card);
 
-  const listEl = document.getElementById("affix-words-list");
-  listEl.innerHTML = "";
   const part = (morpheme.part || "").toLowerCase();
   const allWords = await idbGetAll("words");
-  const matches = allWords
+  const localMatches = allWords
     .filter((r) => (r.morphemes || []).some((m) => (m.part || "").toLowerCase() === part))
     .filter((r) => !sourceWord || r.word.toLowerCase() !== sourceWord.toLowerCase())
-    .sort((a, b) => b.created_at - a.created_at);
+    .sort((a, b) => b.created_at - a.created_at)
+    .map((r) => r.word);
 
-  if (!matches.length) {
-    listEl.innerHTML = `<div class="empty-note">この接辞を含む保存済みの単語はありません</div>`;
-  } else {
-    matches.forEach((r) => {
-      const btn = document.createElement("button");
-      btn.className = "related-word-btn";
-      btn.type = "button";
-      btn.textContent = r.word;
-      btn.addEventListener("click", () => startDecompose(r.word));
-      listEl.appendChild(btn);
-    });
-  }
+  const listEl = document.getElementById("affix-words-list");
+  listEl.innerHTML = "";
+  localMatches.forEach((w) => listEl.appendChild(buildRelatedWordButton(w, "マイ単語")));
 
   showScreen("screen-affix-words");
+
+  const remaining = RELATED_WORDS_TARGET - localMatches.length;
+  if (remaining <= 0) return;
+
+  const provider = await kvGet("provider", "groq");
+  const apiKey = await loadApiKey(provider);
+  if (requestId !== affixWordsRequestId) return;
+  if (!apiKey) {
+    if (!localMatches.length) {
+      listEl.innerHTML = `<div class="empty-note">この接辞を含む保存済みの単語はありません（設定画面でAPIキーを登録すると他の単語もAIで検索できます）</div>`;
+    }
+    return;
+  }
+
+  const loadingEl = document.createElement("div");
+  loadingEl.className = "empty-note";
+  loadingEl.textContent = "他の単語をAIで検索中…";
+  listEl.appendChild(loadingEl);
+
+  const exclude = [sourceWord, ...localMatches].filter(Boolean);
+  const aiWords = await findRelatedWordsViaAI(morpheme, exclude, remaining, provider, apiKey);
+  if (requestId !== affixWordsRequestId) return;
+  loadingEl.remove();
+
+  aiWords.forEach((w) => listEl.appendChild(buildRelatedWordButton(w, "AI")));
+
+  if (!localMatches.length && !aiWords.length) {
+    listEl.innerHTML = `<div class="empty-note">この接辞を含む単語は見つかりませんでした</div>`;
+  }
 }
 
 document.getElementById("affix-words-back-btn").addEventListener("click", () => {
