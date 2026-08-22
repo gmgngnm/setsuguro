@@ -274,11 +274,12 @@ async function extractErrorDetail(res) {
 const AI_ADAPTERS = {
   groq: {
     label: "Groq",
+    modelsUrl: "https://api.groq.com/openai/v1/models",
     /* 語呂合わせは「読みの音を含む実在の日本語を探す」制約充足タスクで、
        推論を有効にした方が不自然な造語が出にくい。ただしモデルによっては
-       reasoning_effort を受け付けず400を返すため、その場合はパラメータを
+       推論系のパラメータを受け付けず400を返すため、その場合はまとめて
        外して一度だけ再試行し、機能自体が止まらないようにする */
-    reasoningEffort: "default",
+    reasoning: true,
     async chat(apiKey, systemPrompt, userPrompt, temperature) {
       const body = {
         model: "qwen/qwen3.6-27b",
@@ -289,7 +290,12 @@ const AI_ADAPTERS = {
         response_format: { type: "json_object" },
         temperature,
       };
-      if (this.reasoningEffort) body.reasoning_effort = this.reasoningEffort;
+      if (this.reasoning) {
+        body.reasoning_effort = "default";
+        /* 推論の途中経過が本文に混ざるとJSONとして壊れるため、最終回答
+           だけを返させる。JSONモードでは raw を指定できない */
+        body.reasoning_format = "hidden";
+      }
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -297,9 +303,9 @@ const AI_ADAPTERS = {
       });
       if (!res.ok) {
         const detail = await extractErrorDetail(res);
-        if (res.status === 400 && this.reasoningEffort && /reasoning/i.test(detail)) {
-          console.warn("Groq rejected reasoning_effort, retrying without it:", detail);
-          this.reasoningEffort = null;
+        if (res.status === 400 && this.reasoning && /reasoning/i.test(detail)) {
+          console.warn("Groq rejected the reasoning parameters, retrying without them:", detail);
+          this.reasoning = false;
           return this.chat(apiKey, systemPrompt, userPrompt, temperature);
         }
         throw new Error(`Groq API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
@@ -312,6 +318,7 @@ const AI_ADAPTERS = {
   },
   sakura: {
     label: "さくらのAI",
+    modelsUrl: "https://api.ai.sakura.ad.jp/v1/models",
     async chat(apiKey, systemPrompt, userPrompt, temperature) {
       const res = await fetch("https://api.ai.sakura.ad.jp/v1/chat/completions", {
         method: "POST",
@@ -337,6 +344,20 @@ const AI_ADAPTERS = {
   },
 };
 
+/* 疎通確認は生成を伴わない /v1/models で行う。生成させて確かめると、
+   キーが正しくてもモデルの出力揺れ (JSON検証エラーなど) で失敗し、
+   キーの問題だと誤認させてしまうため */
+async function verifyApiKey(provider, apiKey) {
+  const adapter = AI_ADAPTERS[provider];
+  if (!adapter) throw new Error("未対応のプロバイダです");
+  const res = await fetch(adapter.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (res.status === 401 || res.status === 403) throw new Error("APIキーが受け付けられませんでした");
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new Error(`${adapter.label} API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+}
+
 const RETRYABLE_STATUS = [429, 500, 502, 503, 504];
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
@@ -347,6 +368,13 @@ function sleep(ms) {
 function statusFromError(err) {
   const match = /\((\d+)\)/.exec(err.message || "");
   return match ? Number(match[1]) : null;
+}
+
+/* JSONモードでは、モデルがJSONとして壊れた出力をした回だけ400が返る。
+   恒久的な不正リクエストではなく引き直せば直ることが多いので、
+   400でも例外的に再試行の対象にする */
+function isJsonValidationFailure(err) {
+  return /failed to validate json|json_validate_failed/i.test(err.message || "");
 }
 
 async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9) {
@@ -363,7 +391,8 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
     } catch (err) {
       lastErr = err;
       const status = statusFromError(err);
-      const canRetry = RETRYABLE_STATUS.includes(status) && attempt < RETRY_DELAYS_MS.length;
+      const retryable = RETRYABLE_STATUS.includes(status) || isJsonValidationFailure(err);
+      const canRetry = retryable && attempt < RETRY_DELAYS_MS.length;
       if (!canRetry) throw err;
       await sleep(RETRY_DELAYS_MS[attempt]);
     }
@@ -3377,10 +3406,10 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   await saveApiKey(activeProvider, key);
 
   try {
-    await callAI(activeProvider, key, DECOMPOSE_SYS, "単語: test");
+    await verifyApiKey(activeProvider, key);
     status.textContent = "✓ 保存しました。接続を確認できました。";
   } catch (err) {
-    status.textContent = `保存しましたが、疎通確認に失敗しました（${err.message}）。キーをご確認ください。`;
+    status.textContent = `保存しましたが、疎通確認に失敗しました（${err.message}）。`;
   }
   btn.disabled = false;
   await refreshUsageDisplay();
@@ -3412,7 +3441,9 @@ async function refreshVoiceEngineUI() {
   document.querySelectorAll("#voice-engine-row .mode-pill").forEach((p) => {
     const isWhisper = p.dataset.voiceEngine === "auto";
     p.classList.toggle("on", p.dataset.voiceEngine === shown);
-    p.disabled = isWhisper && !selectable;
+    /* 押せなくするのではなく薄く見せるだけにする。disabled にすると
+       押しても何も起きず、ボタンが壊れているようにしか見えないため */
+    p.classList.toggle("pill-muted", isWhisper && !selectable);
   });
 
   const note = document.getElementById("voice-engine-note");
@@ -3431,6 +3462,14 @@ async function refreshVoiceEngineUI() {
 
 document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
+    if (pill.dataset.voiceEngine === "auto") {
+      if (!canRecord) { toast("このブラウザは録音に対応していません"); return; }
+      const provider = await kvGet("provider", "groq");
+      if (!WHISPER_ENDPOINTS[provider]) {
+        toast("Whisperを使うには、上の「利用する生成AI」でさくらのAIを選んで保存してください");
+        return;
+      }
+    }
     await kvSet("voice_engine", pill.dataset.voiceEngine);
     await refreshVoiceEngineUI();
   });
@@ -3445,6 +3484,14 @@ document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
  *   利用にはGoogle Cloudで発行したOAuthクライアントIDと、そこへの
  *   このアプリのオリジンの登録が必要。
  * ------------------------------------------------------------------ */
+/* OAuthクライアントIDはリポジトリのオーナーが Google Cloud で発行し、
+   ここに直接記入する。利用者ごとに設定画面から入れさせる形は取らない
+   (クライアントIDはアプリ固有の値で、利用者が用意するものではないため)。
+   空のままなら、サインインUIは出さず未設定である旨だけを表示する。
+   発行時は、このアプリを配信するオリジンを対象クライアントの
+   Authorized JavaScript origins に登録すること */
+const GOOGLE_CLIENT_ID = "";
+
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 let gsiLoadPromise = null;
 let gsiInitializedFor = null;
@@ -3519,10 +3566,7 @@ async function handleGoogleCredential(response) {
 async function initGoogleAuth() {
   const status = document.getElementById("google-status");
   const slot = document.getElementById("google-signin-btn");
-  const input = document.getElementById("google-client-id-input");
-
-  const clientId = await kvGet("google_client_id", "");
-  input.value = clientId;
+  const clientId = GOOGLE_CLIENT_ID;
 
   const user = await kvGet("google_user", null);
   renderGoogleUser(user);
@@ -3530,7 +3574,7 @@ async function initGoogleAuth() {
 
   slot.innerHTML = "";
   if (!clientId) {
-    status.textContent = "Google Cloudで発行したクライアントIDを設定するとサインインできます。";
+    status.textContent = "Googleサインインは未設定です。";
     return;
   }
 
@@ -3557,22 +3601,6 @@ async function initGoogleAuth() {
     status.textContent = err.message || "Googleサインインを初期化できませんでした。";
   }
 }
-
-document.getElementById("clear-google-client-id").addEventListener("click", () => {
-  const input = document.getElementById("google-client-id-input");
-  input.value = "";
-  input.focus();
-  document.getElementById("google-status").textContent = "";
-});
-
-document.getElementById("save-google-client-id-btn").addEventListener("click", async () => {
-  const clientId = document.getElementById("google-client-id-input").value.trim();
-  await kvSet("google_client_id", clientId);
-  /* クライアントIDが変わったらGSIを初期化し直す必要がある */
-  gsiInitializedFor = null;
-  document.getElementById("google-status").textContent = clientId ? "保存しました。" : "クライアントIDを消去しました。";
-  await initGoogleAuth();
-});
 
 document.getElementById("google-signout-btn").addEventListener("click", async () => {
   if (window.google?.accounts?.id) window.google.accounts.id.disableAutoSelect();
