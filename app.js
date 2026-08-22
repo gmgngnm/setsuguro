@@ -967,7 +967,7 @@ const DEMO_WORD_DATA = {
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
   /* PC版は画面が広いので履歴を最大20個まで表示する */
-  const limit = window.innerWidth >= 860 ? 20 : 6;
+  const limit = window.innerWidth >= 860 ? 20 : 10;
   const words = recent.length < limit ? [...recent, ...pickSampleWords(limit - recent.length, recent)] : recent.slice(0, limit);
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
