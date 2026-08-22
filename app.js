@@ -1395,6 +1395,7 @@ async function pushRecentWord(word) {
   let recent = await kvGet("recent_words", []);
   recent = [word, ...recent.filter((w) => w.toLowerCase() !== word.toLowerCase())].slice(0, 20);
   await kvSet("recent_words", recent);
+  await syncRecentWords(recent);
   renderRecentChips();
 }
 
@@ -2451,10 +2452,10 @@ async function toggleSaveWord() {
   /* 既に保存済みでも、現在表示中の語呂合わせが保存内容と同じ時だけ「取り消し」扱いにする。
      語呂合わせを作り直して再保存した場合は、既存レコードを上書き更新する */
   if (existing && existing.goro_text === newGoroText) {
-    await idbDelete("words", id);
+    await deleteWordRecord(id);
   } else {
     const provider = await kvGet("provider", "groq");
-    await idbPut("words", {
+    await saveWordRecord({
       id,
       word: currentWord,
       word_meaning: currentWordMeaning,
@@ -2534,7 +2535,7 @@ async function renderBookList() {
   rows.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
     const row = buildBookRow(title, r.word_phonetic || "", r.word_meaning || "", r.created_at, () => openWordDetail(r), async () => {
-      await idbDelete("words", r.id);
+      await deleteWordRecord(r.id);
       renderBookList();
     });
     listEl.appendChild(row);
@@ -2676,7 +2677,7 @@ csvImportInput.addEventListener("change", async (e) => {
   const text = await file.text();
   const records = csvToWords(text);
   if (!records.length) { toast("読み込めるデータが見つかりませんでした"); return; }
-  for (const r of records) await idbPut("words", r);
+  for (const r of records) await saveWordRecord(r);
   toast(`${records.length}件の単語を読み込みました`);
   renderBookList();
 });
@@ -2755,7 +2756,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
     const c = candidates[0];
     record.goro_text = c.text;
     record.goro_highlight = c.highlight || [];
-    await idbPut("words", record);
+    await saveWordRecord(record);
     renderWordDetailGoro(record);
   } catch (err) {
     document.getElementById("word-detail-goro").innerHTML =
@@ -3256,7 +3257,7 @@ async function classifyMemorizeCard(memorized) {
   if (!record) return;
   clearMemorizeAutoTimer();
   record.memorized = memorized;
-  await idbPut("words", record);
+  await saveWordRecord(record);
 
   const card = document.getElementById("memorize-card");
   card.style.transition = "transform .25s ease, opacity .25s ease";
@@ -3477,10 +3478,12 @@ document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
 
 /* ------------------------------------------------------------------ *
  * 12c. Googleサインイン
- *   EnGoloydはサーバを持たないため、受け取ったIDトークンの署名を
- *   検証する術がない。したがってこのサインインは「誰が使っているか
- *   を端末上に表示する」ためのもので、データ保護の境界にはならない
- *   (単語帳もAPIキーも従来どおりこの端末のIndexedDBにだけ残る)。
+ *   受け取ったIDトークンはこの画面用の表示（名前・メール・アイコン）に
+ *   使うだけで、それ自体の署名検証はしていない。下のSupabase同期(12d)
+ *   が設定されている場合は、同じIDトークンをSupabase Authにも渡して
+ *   署名検証済みのセッションを作り、単語帳・履歴のクラウド同期に使う。
+ *   Supabaseが未設定なら表示専用のまま(単語帳もAPIキーも従来どおり
+ *   この端末のIndexedDBにだけ残る)。
  *   利用にはGoogle Cloudで発行したOAuthクライアントIDと、そこへの
  *   このアプリのオリジンの登録が必要。
  * ------------------------------------------------------------------ */
@@ -3557,6 +3560,7 @@ async function handleGoogleCredential(response) {
     renderGoogleUser(user);
     status.textContent = "";
     toast(`${user.name || user.email} でサインインしました`);
+    await signInToCloud(response.credential);
   } catch (err) {
     console.warn("Google credential decode failed:", err);
     status.textContent = "サインイン情報を読み取れませんでした。";
@@ -3607,8 +3611,233 @@ document.getElementById("google-signout-btn").addEventListener("click", async ()
   await idbDelete("kv", "google_user");
   renderGoogleUser(null);
   toast("サインアウトしました");
+  await signOutFromCloud();
   await initGoogleAuth();
 });
+
+/* ------------------------------------------------------------------ *
+ * 12d. Supabaseクラウド同期（任意）
+ *   Googleサインインした場合だけ、単語帳(words)と履歴(recent_words)を
+ *   Supabaseに同期する。サインインしなければ今まで通りIndexedDBのみで
+ *   完結し、ネットワークには一切触れない。
+ *   利用にはSupabaseプロジェクトのURL・anon keyと、Supabase側での
+ *   Google認証プロバイダの設定（GOOGLE_CLIENT_IDと同じ値を
+ *   「Authorized Client IDs」に登録）が必要。空のままなら同期は無効化
+ *   されたままで、Googleサインイン自体は12cの表示専用のまま動く。
+ * ------------------------------------------------------------------ */
+/* リポジトリのオーナーがSupabaseプロジェクトを作成し、ここに直接記入する。
+   anon keyはRLS(行レベルセキュリティ)で保護される前提の公開鍵なので、
+   フロントエンドに埋め込んでよい値（Supabase公式ドキュメント通り）。
+   テーブル定義・RLSポリシーはリポジトリのSUPABASE_SETUP.mdを参照 */
+let SUPABASE_URL = "";
+let SUPABASE_ANON_KEY = "";
+
+const SUPABASE_SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
+let supabaseLoadPromise = null;
+let supabaseClient = null;
+let cloudUserId = null;
+
+function cloudSyncConfigured() {
+  return !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
+function loadSupabaseLibrary() {
+  if (window.supabase?.createClient) return Promise.resolve();
+  if (supabaseLoadPromise) return supabaseLoadPromise;
+  supabaseLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = SUPABASE_SRC;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      supabaseLoadPromise = null;
+      reject(new Error("Supabaseのライブラリを読み込めませんでした"));
+    };
+    document.head.appendChild(script);
+  });
+  return supabaseLoadPromise;
+}
+
+async function getSupabaseClient() {
+  if (!cloudSyncConfigured()) return null;
+  if (supabaseClient) return supabaseClient;
+  await loadSupabaseLibrary();
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  return supabaseClient;
+}
+
+function setSyncStatus(text, cls) {
+  const el = document.getElementById("cloud-sync-status");
+  if (!el) return;
+  if (!text) { el.hidden = true; el.textContent = ""; el.className = "sync-status"; return; }
+  el.hidden = false;
+  el.textContent = text;
+  el.className = `sync-status${cls ? ` ${cls}` : ""}`;
+}
+
+function localWordToCloudRow(w) {
+  return {
+    id: w.id, user_id: cloudUserId, word: w.word, word_meaning: w.word_meaning || "",
+    word_phonetic: w.word_phonetic || "", word_memory_tip: w.word_memory_tip || "",
+    morphemes: w.morphemes || [], goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
+    provider: w.provider || "", memorized: !!w.memorized, created_at: w.created_at || Date.now(),
+    updated_at: w.updated_at || Date.now(),
+  };
+}
+function cloudRowToLocalWord(r) {
+  return {
+    id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
+    word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [], goro_text: r.goro_text || "",
+    goro_highlight: r.goro_highlight || [], provider: r.provider || "", memorized: !!r.memorized,
+    created_at: r.created_at || Date.now(), updated_at: r.updated_at || Date.now(),
+  };
+}
+
+/* サインイン直後に一度だけ、クラウドとローカルをすり合わせる。
+   同じidが両方にあれば updated_at が新しい方を採用する、単純な
+   last-write-winsマージ（端末を跨いで使う場合の想定） */
+async function pullAndMergeCloudData() {
+  const sb = supabaseClient;
+  if (!sb || !cloudUserId) return;
+  setSyncStatus("同期中…", "syncing");
+  try {
+    const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }] = await Promise.all([
+      sb.from("words").select("*").eq("user_id", cloudUserId),
+      sb.from("recent_words").select("words").eq("user_id", cloudUserId).maybeSingle(),
+    ]);
+    if (wErr) throw wErr;
+    if (rErr) throw rErr;
+
+    const localWords = await idbGetAll("words");
+    const localById = new Map(localWords.map((w) => [w.id, w]));
+    const remoteById = new Map((remoteWords || []).map((w) => [w.id, w]));
+
+    for (const remote of remoteWords || []) {
+      const local = localById.get(remote.id);
+      if (!local || (remote.updated_at || 0) > (local.updated_at || 0)) {
+        await idbPut("words", cloudRowToLocalWord(remote));
+      }
+    }
+    const toUpload = localWords.filter((w) => {
+      const remote = remoteById.get(w.id);
+      return !remote || (w.updated_at || 0) > (remote.updated_at || 0);
+    });
+    if (toUpload.length) {
+      const { error } = await sb.from("words").upsert(toUpload.map(localWordToCloudRow));
+      if (error) throw error;
+    }
+
+    const localRecent = await kvGet("recent_words", []);
+    const remoteRecentList = (remoteRecentRow && remoteRecentRow.words) || [];
+    const mergedRecent = [
+      ...localRecent,
+      ...remoteRecentList.filter((w) => !localRecent.some((lw) => lw.toLowerCase() === w.toLowerCase())),
+    ].slice(0, 20);
+    if (mergedRecent.length) {
+      await kvSet("recent_words", mergedRecent);
+      const { error } = await sb.from("recent_words")
+        .upsert({ user_id: cloudUserId, words: mergedRecent, updated_at: new Date().toISOString() });
+      if (error) throw error;
+    }
+
+    setSyncStatus("☁️ 同期済み");
+    renderBookList();
+    renderRecentChips();
+  } catch (err) {
+    console.warn("Cloud sync (pull) failed:", err);
+    setSyncStatus("同期に失敗しました。しばらくしてから再度お試しください。", "error");
+  }
+}
+
+/* 単語の保存・削除・分類のたびに呼ばれる。ローカルの書き込みは既に
+   完了しているので、クラウド側が失敗してもUIは止めずトーストで知らせる
+   だけにする（次にオンラインになった操作で改めて同期される） */
+async function syncWordUpsert(record) {
+  if (!supabaseClient || !cloudUserId) return;
+  try {
+    const { error } = await supabaseClient.from("words").upsert(localWordToCloudRow(record));
+    if (error) throw error;
+  } catch (err) {
+    console.warn("Cloud sync (word upsert) failed:", err);
+    toast("クラウドへの同期に失敗しました");
+  }
+}
+async function syncWordDelete(id) {
+  if (!supabaseClient || !cloudUserId) return;
+  try {
+    const { error } = await supabaseClient.from("words").delete().eq("user_id", cloudUserId).eq("id", id);
+    if (error) throw error;
+  } catch (err) {
+    console.warn("Cloud sync (word delete) failed:", err);
+    toast("クラウドへの同期に失敗しました");
+  }
+}
+async function syncRecentWords(list) {
+  if (!supabaseClient || !cloudUserId) return;
+  try {
+    const { error } = await supabaseClient.from("recent_words")
+      .upsert({ user_id: cloudUserId, words: list, updated_at: new Date().toISOString() });
+    if (error) throw error;
+  } catch (err) {
+    console.warn("Cloud sync (recent words) failed:", err);
+  }
+}
+
+/* ローカルの単語書き込み・削除の唯一の入口。呼び出し元は idbPut/idbDelete
+   を直接使わず、必ずこの2関数を経由すること（クラウド同期の抜け漏れを
+   防ぐため）。updated_at はここで一括して付与する */
+async function saveWordRecord(record) {
+  record.updated_at = Date.now();
+  await idbPut("words", record);
+  await syncWordUpsert(record);
+}
+async function deleteWordRecord(id) {
+  await idbDelete("words", id);
+  await syncWordDelete(id);
+}
+
+/* GoogleサインインのIDトークンをそのままSupabase Authに渡し、
+   署名検証済みのセッションを作る(signInWithIdToken)。この方式なら
+   Supabase側にGoogleのクライアントシークレットを別途登録する必要はなく、
+   GOOGLE_CLIENT_IDと同じ値を「Authorized Client IDs」に登録するだけでよい */
+async function signInToCloud(idToken) {
+  if (!cloudSyncConfigured()) return;
+  try {
+    const sb = await getSupabaseClient();
+    const { data, error } = await sb.auth.signInWithIdToken({ provider: "google", token: idToken });
+    if (error) throw error;
+    cloudUserId = data.user.id;
+    await pullAndMergeCloudData();
+  } catch (err) {
+    console.warn("Supabase sign-in failed:", err);
+    setSyncStatus("クラウド同期を開始できませんでした。", "error");
+  }
+}
+
+async function signOutFromCloud() {
+  cloudUserId = null;
+  setSyncStatus("");
+  if (!supabaseClient) return;
+  try { await supabaseClient.auth.signOut(); } catch (err) { console.warn("Supabase sign-out failed:", err); }
+}
+
+/* 起動直後、以前サインインしたブラウザならSupabaseのセッションが
+   localStorageに残っているので、それを使って静かに同期を復元する。
+   google_user(表示用)が端末に残っていてもSupabase側のセッションが
+   切れていることがあるため、判定はSupabase側のセッションだけで行う */
+async function restoreCloudSession() {
+  if (!cloudSyncConfigured()) return;
+  try {
+    const sb = await getSupabaseClient();
+    const { data } = await sb.auth.getSession();
+    if (data?.session?.user) {
+      cloudUserId = data.session.user.id;
+      await pullAndMergeCloudData();
+    }
+  } catch (err) {
+    console.warn("Failed to restore Supabase session:", err);
+  }
+}
 
 /* ------------------------------------------------------------------ *
  * 13. テーマカラー
@@ -3711,6 +3940,7 @@ if ("serviceWorker" in navigator) {
 
 renderRecentChips();
 applyThemeMode();
+restoreCloudSession();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
