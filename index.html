@@ -213,7 +213,28 @@
       </div>
     </div>
 
-    <div class="section-label">利用する生成AI</div>
+    <div class="section-label">Google アカウント</div>
+    <div class="form-row" id="google-client-id-row">
+      <label for="google-client-id-input">Google クライアントID</label>
+      <div class="form-field">
+        <input id="google-client-id-input" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+        <button id="clear-google-client-id" type="button" aria-label="入力をクリア"><svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+    </div>
+    <button class="btn-solid" id="save-google-client-id-btn">クライアントIDを保存</button>
+    <div class="google-signin-slot" id="google-signin-btn"></div>
+    <div class="google-profile" id="google-profile" hidden>
+      <img class="google-avatar" id="google-avatar" alt="" referrerpolicy="no-referrer">
+      <div class="google-profile-text">
+        <div class="google-profile-name" id="google-name"></div>
+        <div class="google-profile-email" id="google-email"></div>
+      </div>
+      <button class="btn-ghost" id="google-signout-btn" type="button">サインアウト</button>
+    </div>
+    <div class="settings-status" id="google-status"></div>
+    <div class="lockrow">🔒 EnGoloydはサーバを持たないため、サインインは端末内でアカウントを表示するためだけに使われます。学習データは引き続きこの端末にのみ保存されます。</div>
+
+    <div class="section-label" style="margin-top:6px;">利用する生成AI</div>
     <div class="provider-row" id="provider-row">
       <button class="provider-pill on" data-provider="groq">Groq</button>
       <button class="provider-pill" data-provider="sakura">さくらのAI</button>
@@ -238,6 +259,13 @@
 
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
+
+    <div class="section-label" style="margin-top:6px;">音声入力</div>
+    <div class="provider-row" id="voice-engine-row">
+      <button class="mode-pill on" data-voice-engine="auto">高精度 (Whisper)</button>
+      <button class="mode-pill" data-voice-engine="browser">ブラウザ標準</button>
+    </div>
+    <div class="usage-note" id="voice-engine-note"></div>
 
     <div class="section-label" style="margin-top:6px;">表示モード</div>
     <div class="provider-row" id="mode-row">
