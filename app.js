@@ -202,7 +202,7 @@ const DECOMPOSE_SYS = [
   "例: competition → com(接頭辞、共に) / pet(語根、求める) / ition(接尾辞、〜すること) のように、接尾辞を除いた語根候補 compet がさらに一覧の接頭辞 com で始まっている場合は、com も分離して3つ以上の要素に分割してください。",
 ].join("\n");
 
-function goroSystemPrompt(word, morphemes, wordMeaning) {
+function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   return [
     "あなたは日本語の語呂合わせ作家です。",
@@ -211,7 +211,10 @@ function goroSystemPrompt(word, morphemes, wordMeaning) {
     "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にして、音が似た日本語表現を組み合わせ、意味の通る一文の語呂合わせを作ってください。",
     "例: dict(ジクト)/ion(イオン)/ary(アリー) → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)」",
     wordMeaning
-      ? "重要な条件として、一文が描く情景・オチは、単語全体の意味（上記）を連想できる内容にしてください。読みの音を成立させるためだけのこじつけの情景ではなく、音と意味の両方を一度に思い出せる一文にしてください。"
+      ? "重要な条件として、一文が描く情景・オチは、単語全体の意味（上記）を連想できる内容にしてください。読みの音を成立させるためだけのこじつけの情景ではなく、音と意味の両方を一度に思い出せる一文にしてください。ただし、接辞の意味の日本語訳をそのまま文中にカッコ書きなどで併記するのは禁止します（例:「セイシェイション（飽食）して」のように、読みをもとにした語のすぐ後ろに元の意味を注釈のように書き込むのは不可）。意味は情景・文脈そのもので自然に伝わるようにし、辞書的な言い換えを直接書き込まないでください。"
+      : "",
+    (avoidTexts && avoidTexts.length)
+      ? `この単語では既に次の語呂合わせ候補が使われましたが、ユーザーが気に入らず作り直しを求めています。同じような言い回し・情景・オチの焼き直しは不可です。読みの活かし方・情景・オチの方向性を意図的に変え、明確に異なる新しい一文を考えてください:\n${avoidTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}`
       : "",
     "最優先事項として、生成する一文は日本語として文法的に自然で、一つの筋が通った情景・出来事を描写する文にしてください。読みを詰め込むために言葉を無理やり羅列しただけの、意味のつながらない不自然な文は不可とします。誰が読んでも情景がすっと思い浮かぶ、破綻のない一文にしてください。",
     "読み以外の部分を、音を似せるためだけの不自然なカタカナ語（外来語）で無理やり埋めるのは禁止します。読み自体以外はできるだけふつうの日本語（和語・漢語）で自然に構成してください。",
@@ -487,6 +490,7 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
     "③各接辞の読みをそのまま隣接させて並べただけの箇所がないこと（例: inter(インター)+act(アクト)を単純に繋げて「インターアクト」のように対象単語自体や既存のカタカナ外来語をなぞるだけの手抜きになっていないこと）。読みは互いに離し、それぞれ別々の日本語表現の一部として組み込まれていること。",
     "④簡潔であること（20〜35文字程度、長くても40文字までが目安。冗長な修飾語や説明がないこと）。",
     wordMeaning ? "⑤一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
+    "⑥接辞の意味の日本語訳を、そのままカッコ書きなどで文中に注釈として併記していないこと（例:「セイシェイション（飽食）して」のように、読みをもとにした語のすぐ後ろに元の意味を書き込むのは不可）。意味は情景・文脈そのもので自然に伝わるようにし、辞書的な言い換えを直接書き込んではいけません。",
     "いずれかを満たしていない候補は、対象接辞の読みをすべて維持したまま書き直してください。すべて満たしている候補はそのまま使ってください。",
     candList,
     "書き直した場合も含め、必ず1件を出力してください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
@@ -512,8 +516,8 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
   }
 }
 
-async function generateGoro(word, morphemes, provider, apiKey, wordMeaning) {
-  const sys = goroSystemPrompt(word, morphemes, wordMeaning);
+async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts) {
+  const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts);
   const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
   let candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
   if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
@@ -1124,6 +1128,9 @@ async function startDecompose(rawWord) {
      再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない。
      デモ単語(APIキー未登録時)は、あらかじめ用意した語呂合わせをそのまま使う */
   document.getElementById("regen-btn").disabled = true;
+  /* 新しい単語の初回生成では、別の単語の候補を「避けるべき前回の候補」として
+     引き継いでしまわないようにリセットする */
+  currentCandidates = [];
   let goroDone = false;
   let goroPromise;
   if (demo) {
@@ -1990,8 +1997,11 @@ async function renderResultScreen() {
 
 /* ---- 語呂合わせ候補（タップ=読み上げ / 保存） ---- */
 async function loadGoroCandidates(provider, apiKey) {
+  /* 再生成の場合、直前の候補は気に入らなかったということなので、
+     同じような内容を繰り返さないようAIに明示的に伝える */
+  const previousTexts = currentCandidates.map((c) => c.text).filter(Boolean);
   try {
-    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning);
+    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts);
   } catch (err) {
     const list = document.getElementById("goro-list");
     list.innerHTML = "";
@@ -2359,7 +2369,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
   document.getElementById("word-detail-goro").innerHTML = `<div class="empty-note">作り直しています…</div>`;
 
   try {
-    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning);
+    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean));
     const c = candidates[0];
     record.goro_text = c.text;
     record.goro_highlight = c.highlight || [];
@@ -2699,7 +2709,8 @@ function renderMemorizeCard() {
 
   emptyEl.style.display = "none";
   swipeEl.style.display = "block";
-  hintEl.style.display = "block";
+  /* 自動再生中はタップ/スワイプ操作の説明文は不要なので表示しない */
+  hintEl.style.display = memorizeAutoPlay ? "none" : "block";
   progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}`;
 
   const record = memorizeQueue[memorizeIndex];
