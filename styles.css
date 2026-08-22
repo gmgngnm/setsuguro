@@ -12,6 +12,7 @@
   --accent-2:#E2622F;
   --line:#D6DBCF;
   --danger:#C74B3F;
+  --letter-fix-red:#B3140C;
   --brand-blue:#2F6FED;
   --brand-purple:#8B5CF6;
   --shadow: 0 1px 2px rgba(23,33,28,0.06), 0 8px 24px rgba(23,33,28,0.08);
@@ -21,7 +22,7 @@
     --bg:#101711; --surface:#182019; --surface-2:#202A21;
     --ink:#ECF1E8; --ink-soft:#AAB6A4; --ink-faint:#7E8B80;
     --accent:#4FBFA8; --accent-ink:#BEEFE1; --accent-2:#F0855A;
-    --line:#2A342A; --danger:#E27B70; --brand-blue:#7CA2FF; --brand-purple:#B49CFF;
+    --line:#2A342A; --danger:#E27B70; --letter-fix-red:#FF453A; --brand-blue:#7CA2FF; --brand-purple:#B49CFF;
     --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.4);
   }
   :root:not([data-theme="light"]) .logo-img{filter:invert(1);}
@@ -161,7 +162,7 @@ button{font-family:inherit;cursor:pointer;}
 }
 .morph.card-flip-out{ animation:cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
 .morph.card-flip-in{ animation:cardFlipIn .25s ease-out forwards; }
-.letter-fix{ color:var(--danger); animation:letterFixBlink .34s ease-in-out 3; }
+.letter-fix{ color:var(--letter-fix-red); animation:letterFixBlink .34s ease-in-out 3; }
 .morph.trash-shake{ animation:trashShake .4s ease; border-color:var(--danger); }
 .morph.trash-toss{ animation:trashToss .6s cubic-bezier(.55,0,.85,.35) forwards; border-color:var(--danger); }
 .trash-can{
@@ -415,7 +416,7 @@ button{font-family:inherit;cursor:pointer;}
   to{ transform:perspective(600px) rotateY(0deg); }
 }
 @keyframes letterFixBlink{
-  0%,100%{ color:var(--danger); }
+  0%,100%{ color:var(--letter-fix-red); }
   50%{ color:var(--ink-faint); }
 }
 @keyframes trashShake{
