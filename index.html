@@ -28,7 +28,7 @@
       </button>
     </div>
     <div class="s-input-row">
-      <input id="word-input" type="text" placeholder="単語を入力" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input id="word-input" type="text" placeholder="英単語を入力" autocomplete="off" autocapitalize="off" spellcheck="false">
       <button class="enter-hint" id="word-submit-btn" type="button" aria-label="単語を分解する">⏎</button>
     </div>
     <div class="home-error" id="home-error"></div>
@@ -71,6 +71,16 @@
       </div>
     </div>
     <div class="word-meaning" id="word-meaning"></div>
+    <div class="word-related-card" id="word-related-card" style="display:none;">
+      <div class="word-related-row" id="word-synonyms-row" style="display:none;">
+        <span class="word-related-label">同義語</span>
+        <div class="word-related-chips" id="word-synonyms-chips"></div>
+      </div>
+      <div class="word-related-row" id="word-related-words-row" style="display:none;">
+        <span class="word-related-label">関連語</span>
+        <div class="word-related-chips" id="word-related-words-chips"></div>
+      </div>
+    </div>
     <div class="section-label"><span id="result-word-label">の接辞</span></div>
     <div class="affix-list" id="affix-list"></div>
     <div class="memory-tip" id="memory-tip" style="display:none;"></div>
@@ -84,7 +94,10 @@
       <input id="add-goro-input" type="text" placeholder="自分で考えた語呂合わせを入力" autocomplete="off">
       <button id="add-goro-submit" class="btn-solid">追加</button>
     </div>
-    <button class="save-word-btn" id="save-word-btn">💾 単語を保存</button>
+    <div class="bottom-actions" id="result-bottom-actions">
+      <button class="bottom-back-btn" data-nav="home" title="ホームへ戻る" aria-label="ホームへ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+      <button class="save-word-btn" id="save-word-btn">💾 単語を保存</button>
+    </div>
   </section>
 
   <!-- ============ SCREEN 04: 単語帳 ============ -->

@@ -193,8 +193,9 @@ const DECOMPOSE_SYS = [
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
+  "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、関連語（related_words、同じ語根からの派生語や意味的に近い実在する一般的な英単語。corrected_word自体は含めない）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"related_words":["investigate","investigator","investigative"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
 ].join("\n");
 
@@ -379,11 +380,26 @@ function mergeMissingMeanings(morphemes, betterMorphemes) {
   });
 }
 
+function sanitizeWordList(list, excludeWord) {
+  const excludeLower = (excludeWord || "").toLowerCase();
+  const seen = new Set();
+  return (Array.isArray(list) ? list : [])
+    .map((w) => (typeof w === "string" ? w.trim() : ""))
+    .filter((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w))
+    .filter((w) => {
+      const lower = w.toLowerCase();
+      if (lower === excludeLower || seen.has(lower)) return false;
+      seen.add(lower);
+      return true;
+    })
+    .slice(0, 5);
+}
+
 async function decomposeWord(word, provider, apiKey) {
   try {
     const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
     if (json.word_exists === false) {
-      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", morphemes: [] };
+      return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], relatedWords: [], morphemes: [] };
     }
     let morphemes = reconcileWithLocalDict(json.morphemes);
     if (!morphemes.length) throw new Error("empty");
@@ -408,13 +424,15 @@ async function decomposeWord(word, provider, apiKey) {
     const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
     const correctedWord = validCorrection ? json.corrected_word : word;
     const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
+    const synonyms = sanitizeWordList(json.synonyms, correctedWord);
+    const relatedWords = sanitizeWordList(json.related_words, correctedWord).filter((w) => !synonyms.some((s) => s.toLowerCase() === w.toLowerCase()));
 
     morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey);
 
-    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, morphemes };
+    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, relatedWords, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], relatedWords: [], morphemes: fallbackDecompose(word) };
   }
 }
 
@@ -556,7 +574,9 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
       /* 語呂合わせ画面などで単語を保存/削除した直後に戻ってくる場合があるため、
          履歴チップの保存マークを常に最新の状態へ更新しておく */
       renderRecentChips();
-      document.getElementById("word-input").focus();
+      /* スマホ版では自動フォーカスするとキーボードが開いてしまい使い勝手が悪いため、
+         テキストボックスの自動フォーカスはPC版のみで行う */
+      if (window.innerWidth >= 860) document.getElementById("word-input").focus();
     }
     if (target === "book") { showScreen("screen-book"); renderBookList(); }
     if (target === "settings") { showScreen("screen-settings"); refreshUsageDisplay(); }
@@ -996,6 +1016,8 @@ let currentWord = "";
 let currentWordMeaning = "";
 let currentWordPhonetic = "";
 let currentMemoryTip = "";
+let currentSynonyms = [];
+let currentRelatedWords = [];
 let currentMorphemes = [];
 let currentCandidates = [];
 
@@ -1050,6 +1072,8 @@ async function startDecompose(rawWord) {
     currentWordMeaning = demo.meaning;
     currentWordPhonetic = demo.phonetic;
     currentMemoryTip = demo.memoryTip;
+    currentSynonyms = [];
+    currentRelatedWords = [];
   } else {
     try {
       const decomposed = await decomposeWord(word, provider, apiKey);
@@ -1061,6 +1085,8 @@ async function startDecompose(rawWord) {
       currentWordMeaning = decomposed.meaning;
       currentWordPhonetic = decomposed.phonetic;
       currentMemoryTip = decomposed.memoryTip;
+      currentSynonyms = decomposed.synonyms || [];
+      currentRelatedWords = decomposed.relatedWords || [];
       if (decomposed.wasCorrected) {
         await playSpellingFix(placeholder, word, decomposed.correctedWord);
         currentWord = decomposed.correctedWord;
@@ -2094,6 +2120,34 @@ function affixCardHtml(m) {
       <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
 }
 
+/* 単語の意味カードの下に、同義語・関連語をタップ可能なチップとして表示する */
+function buildWordRelatedChip(word) {
+  const chip = document.createElement("button");
+  chip.className = "word-related-chip";
+  chip.type = "button";
+  chip.textContent = word;
+  chip.addEventListener("click", () => startDecompose(word));
+  return chip;
+}
+
+function renderWordRelatedCard(synonyms, relatedWords) {
+  const cardEl = document.getElementById("word-related-card");
+  const synonymsRow = document.getElementById("word-synonyms-row");
+  const synonymsChips = document.getElementById("word-synonyms-chips");
+  const relatedRow = document.getElementById("word-related-words-row");
+  const relatedChips = document.getElementById("word-related-words-chips");
+
+  synonymsChips.innerHTML = "";
+  (synonyms || []).forEach((w) => synonymsChips.appendChild(buildWordRelatedChip(w)));
+  synonymsRow.style.display = synonyms && synonyms.length ? "flex" : "none";
+
+  relatedChips.innerHTML = "";
+  (relatedWords || []).forEach((w) => relatedChips.appendChild(buildWordRelatedChip(w)));
+  relatedRow.style.display = relatedWords && relatedWords.length ? "flex" : "none";
+
+  cardEl.style.display = (synonyms && synonyms.length) || (relatedWords && relatedWords.length) ? "flex" : "none";
+}
+
 /* ---- 接辞カード（タップで同じ接辞を含む単語一覧へ） ---- */
 async function renderResultScreen() {
   const wordMeaningEl = document.getElementById("word-meaning");
@@ -2115,6 +2169,7 @@ async function renderResultScreen() {
     wordMeaningEl.innerHTML = "";
     wordMeaningEl.style.display = "none";
   }
+  renderWordRelatedCard(currentSynonyms, currentRelatedWords);
 
   const memoryTipEl = document.getElementById("memory-tip");
   memoryTipEl.textContent = currentMemoryTip || "";
@@ -2943,9 +2998,8 @@ function hideMemorizeDetail() {
   resizeMemorizeCard(document.getElementById("memorize-face-front-content"));
   document.getElementById("memorize-card").classList.remove("flipped");
 
-  const extraEl = document.getElementById("memorize-extra");
-  extraEl.classList.remove("show");
-  extraEl.style.display = "none";
+  /* 接辞を踏まえた一文・語呂合わせは、一度裏返して表示させたら
+     表に戻しても表示したままにしておく */
 
   if (memorizeSpeechOn) speak(record.word, null, "en-US");
 
@@ -3218,5 +3272,6 @@ if ("serviceWorker" in navigator) {
 
 renderRecentChips();
 applyThemeMode();
-/* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく */
-wordInput.focus();
+/* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
+   (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
+if (window.innerWidth >= 860) wordInput.focus();
