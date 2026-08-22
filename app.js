@@ -3484,6 +3484,14 @@ document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
  *   利用にはGoogle Cloudで発行したOAuthクライアントIDと、そこへの
  *   このアプリのオリジンの登録が必要。
  * ------------------------------------------------------------------ */
+/* OAuthクライアントIDはリポジトリのオーナーが Google Cloud で発行し、
+   ここに直接記入する。利用者ごとに設定画面から入れさせる形は取らない
+   (クライアントIDはアプリ固有の値で、利用者が用意するものではないため)。
+   空のままなら、サインインUIは出さず未設定である旨だけを表示する。
+   発行時は、このアプリを配信するオリジンを対象クライアントの
+   Authorized JavaScript origins に登録すること */
+const GOOGLE_CLIENT_ID = "";
+
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 let gsiLoadPromise = null;
 let gsiInitializedFor = null;
@@ -3558,10 +3566,7 @@ async function handleGoogleCredential(response) {
 async function initGoogleAuth() {
   const status = document.getElementById("google-status");
   const slot = document.getElementById("google-signin-btn");
-  const input = document.getElementById("google-client-id-input");
-
-  const clientId = await kvGet("google_client_id", "");
-  input.value = clientId;
+  const clientId = GOOGLE_CLIENT_ID;
 
   const user = await kvGet("google_user", null);
   renderGoogleUser(user);
@@ -3569,7 +3574,7 @@ async function initGoogleAuth() {
 
   slot.innerHTML = "";
   if (!clientId) {
-    status.textContent = "Google Cloudで発行したクライアントIDを設定するとサインインできます。";
+    status.textContent = "Googleサインインは未設定です。";
     return;
   }
 
@@ -3596,22 +3601,6 @@ async function initGoogleAuth() {
     status.textContent = err.message || "Googleサインインを初期化できませんでした。";
   }
 }
-
-document.getElementById("clear-google-client-id").addEventListener("click", () => {
-  const input = document.getElementById("google-client-id-input");
-  input.value = "";
-  input.focus();
-  document.getElementById("google-status").textContent = "";
-});
-
-document.getElementById("save-google-client-id-btn").addEventListener("click", async () => {
-  const clientId = document.getElementById("google-client-id-input").value.trim();
-  await kvSet("google_client_id", clientId);
-  /* クライアントIDが変わったらGSIを初期化し直す必要がある */
-  gsiInitializedFor = null;
-  document.getElementById("google-status").textContent = clientId ? "保存しました。" : "クライアントIDを消去しました。";
-  await initGoogleAuth();
-});
 
 document.getElementById("google-signout-btn").addEventListener("click", async () => {
   if (window.google?.accounts?.id) window.google.accounts.id.disableAutoSelect();
