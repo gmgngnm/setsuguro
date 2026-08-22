@@ -69,12 +69,13 @@ button{font-family:inherit;cursor:pointer;}
 .logo-goloyd{color:var(--brand-blue);}
 .logo-wave{color:var(--brand-blue);}
 #screen-home .appbar{justify-content:flex-end;}
-.build-tag{
-  font-size:9px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;
-  align-self:center;margin-right:8px;opacity:.55;user-select:none;
-}
 .home-logo{display:flex;justify-content:center;margin-top:11vh;}
-.logo-img-btn{background:none;border:none;padding:0;cursor:pointer;line-height:0;}
+.logo-img-btn{background:none;border:none;padding:0;cursor:pointer;line-height:0;position:relative;display:inline-block;}
+.build-tag{
+  position:absolute;right:4px;bottom:2px;
+  font-size:9px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;
+  opacity:.55;user-select:none;pointer-events:none;
+}
 .logo-img{display:block;width:240px;max-width:78vw;height:auto;}
 .nav-icons{display:flex;gap:8px;}
 .icon-btn{
