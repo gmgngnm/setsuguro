@@ -749,11 +749,12 @@ const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRec
 
 const MIC_HINT_IDLE = "長押しで入力";
 
-/* Whisper の文字起こしエンドポイント。どちらも OpenAI 互換で
-   multipart/form-data の file + model を受け付ける */
+/* Whisper の文字起こしエンドポイント。OpenAI 互換で
+   multipart/form-data の file + model を受け付ける。
+   対応プロバイダを増やす場合はここに足せば、選択可否の判定も
+   フォールバックもこのマップの有無だけで動く */
 const WHISPER_ENDPOINTS = {
   sakura: { url: "https://api.ai.sakura.ad.jp/v1/audio/transcriptions", model: "whisper-large-v3-turbo" },
-  groq: { url: "https://api.groq.com/openai/v1/audio/transcriptions", model: "whisper-large-v3-turbo" },
 };
 
 /* ほぼ無音の録音を渡すと、Whisper が学習データ由来の定型句を
@@ -3399,21 +3400,32 @@ async function refreshUsageDisplay() {
  * ------------------------------------------------------------------ */
 async function refreshVoiceEngineUI() {
   const mode = await kvGet("voice_engine", "auto");
+  const provider = await kvGet("provider", "groq");
+  const whisperSupported = !!WHISPER_ENDPOINTS[provider];
+  const selectable = whisperSupported && canRecord;
+  const hasKey = whisperSupported && !!(await loadApiKey(provider));
+
+  /* Whisperを選べない構成では、実際に動く「ブラウザ標準」の方を
+     選択済みとして見せる。保存された設定自体は書き換えないので、
+     さくらのAIに戻せば元の選択が復活する */
+  const shown = selectable ? mode : "browser";
   document.querySelectorAll("#voice-engine-row .mode-pill").forEach((p) => {
-    p.classList.toggle("on", p.dataset.voiceEngine === mode);
+    const isWhisper = p.dataset.voiceEngine === "auto";
+    p.classList.toggle("on", p.dataset.voiceEngine === shown);
+    p.disabled = isWhisper && !selectable;
   });
 
-  const provider = await kvGet("provider", "groq");
-  const hasKey = !!WHISPER_ENDPOINTS[provider] && !!(await loadApiKey(provider));
   const note = document.getElementById("voice-engine-note");
-  if (mode === "browser") {
-    note.textContent = "ブラウザ内蔵の音声認識を使います。APIキーを消費しません。";
-  } else if (!canRecord) {
+  if (!canRecord) {
     note.textContent = "このブラウザは録音に対応していないため、ブラウザ内蔵の音声認識を使います。";
+  } else if (!whisperSupported) {
+    note.textContent = `Whisperによる音声認識はさくらのAIを選んでいるときだけ使えます。現在は${PROVIDER_LABELS[provider]}のため、ブラウザ内蔵の音声認識を使います。`;
+  } else if (mode === "browser") {
+    note.textContent = "ブラウザ内蔵の音声認識を使います。APIキーを消費しません。";
   } else if (!hasKey) {
-    note.textContent = "APIキーが未設定のため、当面はブラウザ内蔵の音声認識を使います。";
+    note.textContent = "さくらのAIのAPIキーが未設定のため、当面はブラウザ内蔵の音声認識を使います。";
   } else {
-    note.textContent = `押している間の音声を${PROVIDER_LABELS[provider]}のWhisperで認識します。1回の発話をまとめて送るため、長い単語でも途中で切れません。`;
+    note.textContent = "押している間の音声をさくらのAIのWhisperで認識します。1回の発話をまとめて送るため、長い単語でも途中で切れません。";
   }
 }
 

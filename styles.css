@@ -513,6 +513,7 @@ button{font-family:inherit;cursor:pointer;}
   font-family:'JetBrains Mono',monospace;border:1.5px solid var(--line);color:var(--ink-faint);background:var(--surface);
 }
 .provider-pill.on, .anim-pill.on, .mode-pill.on{border-color:var(--accent);color:var(--accent-ink);background:color-mix(in srgb, var(--accent) 10%, var(--surface));font-weight:700;}
+.provider-pill:disabled, .anim-pill:disabled, .mode-pill:disabled{opacity:.4;}
 .theme-swatch-row{display:flex;gap:10px;flex-wrap:wrap;}
 .theme-swatch{
   width:34px;height:34px;border-radius:50%;border:2px solid transparent;
