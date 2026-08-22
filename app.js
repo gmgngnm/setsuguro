@@ -553,6 +553,10 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
       showScreen("screen-home");
       document.getElementById("word-input").value = "";
       document.getElementById("home-error").textContent = "";
+      /* 語呂合わせ画面などで単語を保存/削除した直後に戻ってくる場合があるため、
+         履歴チップの保存マークを常に最新の状態へ更新しておく */
+      renderRecentChips();
+      document.getElementById("word-input").focus();
     }
     if (target === "book") { showScreen("screen-book"); renderBookList(); }
     if (target === "settings") { showScreen("screen-settings"); refreshUsageDisplay(); }
@@ -970,9 +974,9 @@ async function renderRecentChips() {
   const savedFlags = await Promise.all(words.map((w) => idbGet("words", w.toLowerCase())));
   words.forEach((w, i) => {
     const chip = document.createElement("button");
-    chip.className = "chip";
-    const savedIconHtml = savedFlags[i] ? '<span class="chip-saved" title="保存済み">💾</span>' : "";
-    chip.innerHTML = `${escapeHtml(w)}${savedIconHtml}`;
+    chip.className = savedFlags[i] ? "chip chip-saved" : "chip";
+    if (savedFlags[i]) chip.title = "保存済み";
+    chip.textContent = w;
     chip.addEventListener("click", () => startDecompose(w));
     wrap.appendChild(chip);
   });
@@ -1024,11 +1028,9 @@ async function startDecompose(rawWord) {
   const decomposeWordMeaningEl = document.getElementById("decompose-word-meaning");
   decomposeWordMeaningEl.innerHTML = "";
   decomposeWordMeaningEl.classList.remove("show");
-  decomposeWordMeaningEl.style.display = "none";
   const decomposeMemoryTipEl = document.getElementById("decompose-memory-tip");
   decomposeMemoryTipEl.textContent = "";
   decomposeMemoryTipEl.classList.remove("show");
-  decomposeMemoryTipEl.style.display = "none";
   const errorMsgEl = document.getElementById("word-error-msg");
   errorMsgEl.textContent = "";
   errorMsgEl.classList.remove("show");
@@ -1076,6 +1078,19 @@ async function startDecompose(rawWord) {
   }
   currentMorphemes = morphemes;
 
+  /* 単語の意味・接辞を踏まえた一文は、後で表示するタイミングより先にここで
+     コンテンツを流し込んでおく（要素自体はopacity:0/visibility:hiddenで
+     レイアウト上の高さだけ確保された状態）。こうすることで、実際に表示する
+     瞬間はopacityのフェードだけで済み、接辞カードなどが後から押し上げられる
+     ようなレイアウトのずれが起きない */
+  if (currentWordMeaning) {
+    const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
+    decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+  }
+  if (currentMemoryTip) {
+    decomposeMemoryTipEl.textContent = currentMemoryTip;
+  }
+
   /* Stage2(語呂合わせ生成)は接辞が確定した時点で先行開始し、分解アニメーションの
      再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない。
      デモ単語(APIキー未登録時)は、あらかじめ用意した語呂合わせをそのまま使う */
@@ -1092,7 +1107,7 @@ async function startDecompose(rawWord) {
     goroPromise = loadGoroCandidates(provider, apiKey).then(() => { goroDone = true; });
   }
 
-  const animStyle = DECOMPOSE_ANIM_STYLES[await kvGet("decompose_anim", "crack")] || DECOMPOSE_ANIM_STYLES.crack;
+  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "crack"));
   /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
      分割演出そのものが意味を持たないため省略する */
   if (morphemes.length > 1) {
@@ -1101,9 +1116,6 @@ async function startDecompose(rawWord) {
   placeholder.remove();
 
   if (currentWordMeaning) {
-    const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
-    decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
-    decomposeWordMeaningEl.style.display = "block";
     requestAnimationFrame(() => decomposeWordMeaningEl.classList.add("show"));
   }
 
@@ -1140,8 +1152,6 @@ async function startDecompose(rawWord) {
 
   if (currentMemoryTip) {
     setTimeout(() => {
-      decomposeMemoryTipEl.textContent = currentMemoryTip;
-      decomposeMemoryTipEl.style.display = "block";
       requestAnimationFrame(() => decomposeMemoryTipEl.classList.add("show"));
     }, lastMeaningDelay);
   }
@@ -2070,6 +2080,15 @@ const DECOMPOSE_ANIM_STYLES = {
   },
 };
 
+/* 設定で「ランダム」が選ばれている場合、実行のたびに実在のスタイルから1つ抽選する */
+function resolveAnimStyle(key) {
+  if (key === "random") {
+    const keys = Object.keys(DECOMPOSE_ANIM_STYLES);
+    return DECOMPOSE_ANIM_STYLES[keys[Math.floor(Math.random() * keys.length)]];
+  }
+  return DECOMPOSE_ANIM_STYLES[key] || DECOMPOSE_ANIM_STYLES.crack;
+}
+
 function affixCardHtml(m) {
   return `<div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
       <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.reading)} / ${escapeHtml(m.origin)}）</div>`;
@@ -2273,7 +2292,7 @@ async function renderBookList() {
   if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
   rows.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
-    const row = buildBookRow(title, "", r.created_at, () => openWordDetail(r), async () => {
+    const row = buildBookRow(title, r.word_phonetic || "", r.word_meaning || "", r.created_at, () => openWordDetail(r), async () => {
       await idbDelete("words", r.id);
       renderBookList();
     });
@@ -2624,16 +2643,17 @@ document.getElementById("affix-words-back-btn").addEventListener("click", () => 
   showScreen(affixWordsReturnScreen);
 });
 
-function buildBookRow(title, sub, createdAt, onTap, onDelete) {
+function buildBookRow(title, phonetic, sub, createdAt, onTap, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
   const date = new Date(createdAt);
   const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
+  const phoneticHtml = phonetic ? `<span class="phonetic">[${escapeHtml(phonetic)}]</span>` : "";
   const subHtml = sub ? `<div class="g">${escapeHtml(sub)}</div>` : "";
   wrap.innerHTML = `
     <div class="del-reveal">🗑 削除</div>
     <div class="row-body">
-      <div><div class="w">${escapeHtml(title)}</div>${subHtml}</div>
+      <div><div class="w">${escapeHtml(title)}${phoneticHtml}</div>${subHtml}</div>
       <div class="date">${dateStr}</div>
     </div>`;
   const body = wrap.querySelector(".row-body");
@@ -2689,8 +2709,27 @@ document.getElementById("memorize-speech-toggle").addEventListener("click", asyn
   renderMemorizeSpeechToggle();
 });
 
+let memorizeRandomOrder = true;
+async function loadMemorizeRandomSetting() {
+  memorizeRandomOrder = await kvGet("memorize_random", true);
+}
+loadMemorizeRandomSetting();
+
+function renderMemorizeRandomToggle() {
+  const btn = document.getElementById("memorize-random-toggle");
+  btn.textContent = memorizeRandomOrder ? "オン" : "オフ";
+  btn.classList.toggle("on", memorizeRandomOrder);
+}
+document.getElementById("memorize-random-toggle").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  memorizeRandomOrder = !memorizeRandomOrder;
+  await kvSet("memorize_random", memorizeRandomOrder);
+  renderMemorizeRandomToggle();
+});
+
 const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
 document.getElementById("memorize-entry-btn").addEventListener("click", () => {
+  renderMemorizeRandomToggle();
   memorizeModeSheet.style.display = "flex";
 });
 document.getElementById("memorize-mode-close").addEventListener("click", () => {
@@ -2716,7 +2755,7 @@ function clearMemorizeAutoTimer() {
 async function startMemorizeMode(mode = "all") {
   const words = await idbGetAll("words");
   const pool = mode === "unlearned" ? words.filter((w) => !w.memorized) : words;
-  memorizeQueue = pool.sort(() => Math.random() - 0.5);
+  memorizeQueue = memorizeRandomOrder ? pool.sort(() => Math.random() - 0.5) : pool.sort((a, b) => b.created_at - a.created_at);
   memorizeIndex = 0;
   memorizeAutoPlay = mode === "auto";
   memorizeEmptyMessage = mode === "unlearned"
@@ -2775,27 +2814,46 @@ function renderMemorizeCard() {
   memorizeRevealed = false;
 
   const card = document.getElementById("memorize-card");
+  const cardInner = document.getElementById("memorize-card-inner");
   card.classList.toggle("memorized-tag", !!record.memorized);
+  /* 新しいカードに切り替える瞬間は、直前のカードのスワイプ/裏返しの状態を
+     アニメーションなしで一旦リセットする */
   card.style.transition = "none";
+  cardInner.style.transition = "none";
   card.style.transform = "translateX(0)";
   card.style.opacity = "1";
+  card.classList.remove("flipped");
   document.getElementById("memorize-reveal").classList.remove("reveal-left", "reveal-right");
 
   const wordEl = document.getElementById("memorize-word");
   wordEl.textContent = record.word;
-  wordEl.style.display = "";
 
   const detailEl = document.getElementById("memorize-detail");
   detailEl.innerHTML = "";
-  detailEl.style.display = "none";
 
   const extraEl = document.getElementById("memorize-extra");
   extraEl.innerHTML = "";
+  extraEl.classList.remove("show");
   extraEl.style.display = "none";
+
+  resizeMemorizeCard(document.getElementById("memorize-face-front"));
+  /* リセット直後に transition を戻し、以降の裏返し操作はアニメーションさせる */
+  requestAnimationFrame(() => {
+    card.style.transition = "";
+    cardInner.style.transition = "";
+  });
 
   if (memorizeSpeechOn) speak(record.word, null, "en-US");
 
   scheduleMemorizeAutoPlay();
+}
+
+/* カードの高さを表示中の面の実際のコンテンツ高さに合わせる。
+   表と裏で高さが異なっても、裏返しアニメーションと同時に滑らかに
+   高さも変化するため、周囲の要素が瞬間的にずれることがない */
+function resizeMemorizeCard(faceEl) {
+  const card = document.getElementById("memorize-card");
+  card.style.height = `${Math.max(320, faceEl.offsetHeight)}px`;
 }
 
 function scheduleMemorizeAutoPlay() {
@@ -2817,8 +2875,6 @@ function revealMemorizeDetail() {
   if (!record) return;
   memorizeRevealed = true;
 
-  document.getElementById("memorize-word").style.display = "none";
-
   const detailEl = document.getElementById("memorize-detail");
   detailEl.innerHTML = "";
   if (record.word_meaning) {
@@ -2838,7 +2894,6 @@ function revealMemorizeDetail() {
     splitEl.appendChild(tile);
   });
   detailEl.appendChild(splitEl);
-  detailEl.style.display = "";
 
   const extraEl = document.getElementById("memorize-extra");
   extraEl.innerHTML = "";
@@ -2860,7 +2915,13 @@ function revealMemorizeDetail() {
     });
     extraEl.appendChild(goroCard);
   }
-  extraEl.style.display = extraEl.children.length ? "flex" : "none";
+  const hasExtra = extraEl.children.length > 0;
+  extraEl.style.display = hasExtra ? "flex" : "none";
+
+  /* 裏面のコンテンツ高さに合わせてカードの高さを変化させつつ、裏返す */
+  resizeMemorizeCard(document.getElementById("memorize-face-back"));
+  document.getElementById("memorize-card").classList.add("flipped");
+  if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
   if (memorizeSpeechOn && record.word_meaning) {
     speak(record.word_meaning);
@@ -2879,9 +2940,12 @@ function hideMemorizeDetail() {
   memorizeRevealed = false;
   clearMemorizeAutoTimer();
 
-  document.getElementById("memorize-word").style.display = "";
-  document.getElementById("memorize-detail").style.display = "none";
-  document.getElementById("memorize-extra").style.display = "none";
+  resizeMemorizeCard(document.getElementById("memorize-face-front"));
+  document.getElementById("memorize-card").classList.remove("flipped");
+
+  const extraEl = document.getElementById("memorize-extra");
+  extraEl.classList.remove("show");
+  extraEl.style.display = "none";
 
   if (memorizeSpeechOn) speak(record.word, null, "en-US");
 
@@ -3154,3 +3218,5 @@ if ("serviceWorker" in navigator) {
 
 renderRecentChips();
 applyThemeMode();
+/* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく */
+wordInput.focus();
