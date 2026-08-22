@@ -709,6 +709,313 @@ function pickSampleWords(count, exclude = []) {
   return picked;
 }
 
+/* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
+   SAMPLE_WORDS全単語ぶんの分解結果・語呂合わせをあらかじめ用意したデモ用データ。
+   AI応答(decomposeWord/generateGoroの戻り値)と同じ形に揃えてある */
+const DEMO_WORD_DATA = {
+  presentation: {
+    meaning: "発表・提示すること", phonetic: "prɛzənˈteɪʃən",
+    memoryTip: "pre(前もって)+sent(示す)+ation(すること)で、前もって示すこと=発表、と覚える。",
+    morphemes: [
+      { part: "pre", reading: "プリ", meaning: "前もって", origin: "ラテン語 prae-", phonetic: "priː" },
+      { part: "sent", reading: "セント", meaning: "感じる・示す", origin: "ラテン語 sentire", phonetic: "sɛnt" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "プリンにセント硬貨を飾り、エーション会場で発表するちょっと変わったプレゼンだ",
+  },
+  reincarnation: {
+    meaning: "生まれ変わり・輪廻転生", phonetic: "ˌriːɪnkɑːrˈneɪʃən",
+    memoryTip: "re(再び)+in(中へ)+carn(肉体)+ation(すること)で、再び肉体の中へ入ること=生まれ変わり、と覚える。",
+    morphemes: [
+      { part: "re", reading: "リ", meaning: "再び・戻す", origin: "ラテン語 re-", phonetic: "riː" },
+      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
+      { part: "carn", reading: "カーン", meaning: "肉体・肉", origin: "ラテン語 caro/carnis", phonetic: "kɑːrn" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "「リ」と唱えインへ進むと、カーンと鐘が鳴りエーションの地で新しい体に生まれ変わった",
+  },
+  visualization: {
+    meaning: "視覚化すること・可視化", phonetic: "ˌvɪʒuəlaɪˈzeɪʃən",
+    memoryTip: "vis(見る)+ual(〜の)+ization(〜化すること)で、見えるようにすること=視覚化、と覚える。",
+    morphemes: [
+      { part: "vis", reading: "ヴィス", meaning: "見る", origin: "ラテン語 videre", phonetic: "vɪs" },
+      { part: "ual", reading: "アル", meaning: "〜に関する", origin: "ラテン語 -alis", phonetic: "əl" },
+      { part: "ization", reading: "ゼーション", meaning: "〜化すること", origin: "ラテン語 -izatio", phonetic: "zeɪʃən" },
+    ],
+    goroText: "ヴィスの視力訓練でアルバムをゼーション処理して、見えなかった図がくっきり浮かんだ",
+  },
+  immortality: {
+    meaning: "不死・不滅", phonetic: "ˌɪmɔːrˈtæləti",
+    memoryTip: "im(〜でない)+mort(死)+al(〜の)+ity(〜性)で、死なない性質=不死、と覚える。",
+    morphemes: [
+      { part: "im", reading: "イム", meaning: "〜でない", origin: "ラテン語 in- の異形", phonetic: "ɪm" },
+      { part: "mort", reading: "モート", meaning: "死", origin: "ラテン語 mors/mortis", phonetic: "mɔːrt" },
+      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
+      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
+    ],
+    goroText: "イムキャラがモートの谷でアルバムを開くと、イティと輝く不死の力が宿った",
+  },
+  reconstruction: {
+    meaning: "再建・再構築", phonetic: "ˌriːkənˈstrʌkʃən",
+    memoryTip: "re(再び)+con(共に)+struct(組み立てる)+ion(すること)で、再び共に組み立てること=再建、と覚える。",
+    morphemes: [
+      { part: "re", reading: "リ", meaning: "再び・戻す", origin: "ラテン語 re-", phonetic: "riː" },
+      { part: "con", reading: "コン", meaning: "共に", origin: "ラテン語 com- の異形", phonetic: "kən" },
+      { part: "struct", reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
+      { part: "ion", reading: "イオン", meaning: "名詞化（〜すること）", origin: "ラテン語 -io", phonetic: "ən" },
+    ],
+    goroText: "リフォーム班がコンビでストラクトの柱をイオンのように組み直し、街を再建した",
+  },
+  architecture: {
+    meaning: "建築・構造", phonetic: "ˈɑːrkɪtektʃər",
+    memoryTip: "archi(主要な)+tect(建てる)+ure(こと)で、中心となって建てること=建築、と覚える。",
+    morphemes: [
+      { part: "archi", reading: "アーキ", meaning: "主要な・第一の", origin: "ギリシャ語 arkhi-", phonetic: "ɑːrki" },
+      { part: "tect", reading: "テクト", meaning: "建てる", origin: "ギリシャ語 tekton", phonetic: "tɛkt" },
+      { part: "ure", reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
+    ],
+    goroText: "アーキ隊長がテクト班にユアの設計図を渡し、壮大な建築が始まった",
+  },
+  transformation: {
+    meaning: "変形・変化", phonetic: "ˌtrænsfərˈmeɪʃən",
+    memoryTip: "trans(越えて)+form(形)+ation(すること)で、形を越えて変わること=変形、と覚える。",
+    morphemes: [
+      { part: "trans", reading: "トランス", meaning: "越えて・移す", origin: "ラテン語 trans-", phonetic: "trænz" },
+      { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "トランス状態でフォームを変え、エーションの光とともに姿がガラリと変形した",
+  },
+  disqualification: {
+    meaning: "資格取り消し・失格", phonetic: "ˌdɪskwɒlɪfɪˈkeɪʃən",
+    memoryTip: "dis(否定)+quali(資格)+fication(〜化すること)で、資格を無くすこと=失格、と覚える。",
+    morphemes: [
+      { part: "dis", reading: "ディス", meaning: "否定・分離", origin: "ラテン語 dis-", phonetic: "dɪs" },
+      { part: "quali", reading: "クオリ", meaning: "質・資格", origin: "ラテン語 qualis", phonetic: "kwɒli" },
+      { part: "fication", reading: "フィケーション", meaning: "〜化すること", origin: "ラテン語 facere 由来", phonetic: "fɪkeɪʃən" },
+    ],
+    goroText: "ディスと審判が叫び、クオリ選手はフィケーションの書類とともに失格になった",
+  },
+  misunderstanding: {
+    meaning: "誤解", phonetic: "ˌmɪsʌndərˈstændɪŋ",
+    memoryTip: "mis(誤って)+under(下に)+stand(立つ)+ing(すること)で、誤った理解=誤解、と覚える。",
+    morphemes: [
+      { part: "mis", reading: "ミス", meaning: "誤って", origin: "古英語 mis-", phonetic: "mɪs" },
+      { part: "under", reading: "アンダー", meaning: "下に", origin: "古英語 under", phonetic: "ʌndər" },
+      { part: "stand", reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
+      { part: "ing", reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
+    ],
+    goroText: "ミスして相手のアンダーにスタンドし続けたせいで、イングとすれ違う誤解が生まれた",
+  },
+  unbelievable: {
+    meaning: "信じられない", phonetic: "ˌʌnbɪˈliːvəbl",
+    memoryTip: "un(〜でない)+believ(信じる)+able(〜できる)で、信じられない、と覚える。",
+    morphemes: [
+      { part: "un", reading: "アン", meaning: "〜でない・否定", origin: "古英語 un-", phonetic: "ʌn" },
+      { part: "believ", reading: "ビリーヴ", meaning: "信じる", origin: "古英語 belyfan", phonetic: "bɪliːv" },
+      { part: "able", reading: "アブル", meaning: "〜できる", origin: "ラテン語 -abilis", phonetic: "əbl" },
+    ],
+    goroText: "アンと驚く声とともに、ビリーヴした話がアブルほど現実離れしていた",
+  },
+  extraordinary: {
+    meaning: "並外れた・驚くべき", phonetic: "ɪkˈstrɔːrdəneri",
+    memoryTip: "extra(超えて)+ordin(順序)+ary(〜に関する)で、普通の順序を超えたこと=並外れた、と覚える。",
+    morphemes: [
+      { part: "extra", reading: "エクストラ", meaning: "外に・超えて", origin: "ラテン語 extra", phonetic: "ɛkstrə" },
+      { part: "ordin", reading: "オーディン", meaning: "順序", origin: "ラテン語 ordo", phonetic: "ɔːrdɪn" },
+      { part: "ary", reading: "アリー", meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius", phonetic: "ɛri" },
+    ],
+    goroText: "エクストラの舞台でオーディン神がアリーと舞い、並外れた光景が広がった",
+  },
+  international: {
+    meaning: "国際的な", phonetic: "ˌɪntərˈnæʃənəl",
+    memoryTip: "inter(〜の間)+nation(国家)+al(〜の)で、国家の間の=国際的な、と覚える。",
+    morphemes: [
+      { part: "inter", reading: "インター", meaning: "〜の間", origin: "ラテン語 inter-", phonetic: "ˈɪntər" },
+      { part: "nation", reading: "ネーション", meaning: "国家・国民", origin: "ラテン語 natio", phonetic: "neɪʃən" },
+      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
+    ],
+    goroText: "インターハイにネーションの旗が並び、アルな空気で国際色豊かな大会になった",
+  },
+  responsibility: {
+    meaning: "責任", phonetic: "rɪˌspɒnsəˈbɪləti",
+    memoryTip: "respons(応じる)+ibil(〜できる)+ity(〜性)で、応じられる性質=責任、と覚える。",
+    morphemes: [
+      { part: "respons", reading: "レスポンス", meaning: "応じる", origin: "ラテン語 respondere", phonetic: "rɪspɒns" },
+      { part: "ibil", reading: "イビル", meaning: "〜できる", origin: "ラテン語 -ibilis", phonetic: "ɪbɪl" },
+      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
+    ],
+    goroText: "レスポンスが遅れた部長はイビルな表情のままイティと頭を下げ、責任を認めた",
+  },
+  communication: {
+    meaning: "伝達・意思疎通", phonetic: "kəˌmjuːnɪˈkeɪʃən",
+    memoryTip: "com(共に)+muni(共有する)+cation(〜化すること)で、共に分かち合うこと=伝達、と覚える。",
+    morphemes: [
+      { part: "com", reading: "コム", meaning: "共に", origin: "ラテン語 com-", phonetic: "kəm" },
+      { part: "muni", reading: "ミューニ", meaning: "共有する", origin: "ラテン語 munis", phonetic: "mjuːni" },
+      { part: "cation", reading: "ケーション", meaning: "〜化すること", origin: "ラテン語 -catio", phonetic: "keɪʃən" },
+    ],
+    goroText: "コムジャーからミューニ信号が届き、ケーションの塔を通じて仲間と意思疎通できた",
+  },
+  appreciation: {
+    meaning: "感謝・鑑賞", phonetic: "əˌpriːʃiˈeɪʃən",
+    memoryTip: "ap(〜へ)+preci(価値)+ation(すること)で、価値を認めること=感謝、と覚える。",
+    morphemes: [
+      { part: "ap", reading: "アプ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad-", phonetic: "æp" },
+      { part: "preci", reading: "プレシ", meaning: "価値", origin: "ラテン語 pretium", phonetic: "prɛsi" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "アプと手を挙げプレシ品の価値を見抜き、エーション式典で感謝を伝えた",
+  },
+  imagination: {
+    meaning: "想像力", phonetic: "ɪˌmædʒɪˈneɪʃən",
+    memoryTip: "imagin(心に描く)+ation(すること)で、想像すること=想像力、と覚える。",
+    morphemes: [
+      { part: "imagin", reading: "イマジン", meaning: "心に描く", origin: "ラテン語 imaginari", phonetic: "ɪmædʒɪn" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "イマジンの国でエーションの光が広がり、子どもたちの想像力が羽ばたいた",
+  },
+  popularity: {
+    meaning: "人気", phonetic: "ˌpɒpjuˈlærəti",
+    memoryTip: "popul(民衆)+ar(〜の)+ity(〜性)で、民衆に好かれる性質=人気、と覚える。",
+    morphemes: [
+      { part: "popul", reading: "ポピュル", meaning: "民衆", origin: "ラテン語 populus", phonetic: "pɒpjʊl" },
+      { part: "ar", reading: "アー", meaning: "〜の", origin: "ラテン語 -aris", phonetic: "ər" },
+      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
+    ],
+    goroText: "ポピュルという歌姫がアーな衣装でイティと登場し、一気に人気者になった",
+  },
+  opportunity: {
+    meaning: "好機・機会", phonetic: "ˌɒpərˈtjuːnəti",
+    memoryTip: "op(〜へ)+portun(港へ向いた)+ity(〜性)で、港へ向かう好い頃合い=好機、と覚える。",
+    morphemes: [
+      { part: "op", reading: "オプ", meaning: "〜へ向かって（ob-の異形）", origin: "ラテン語 ob-", phonetic: "ɒp" },
+      { part: "portun", reading: "ポーチュン", meaning: "港へ向いた・好機の", origin: "ラテン語 portus 由来", phonetic: "pɔːrtjuːn" },
+      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
+    ],
+    goroText: "オプと号令がかかりポーチュン号がイティと出港、絶好の好機が訪れた",
+  },
+  personality: {
+    meaning: "個性・人格", phonetic: "ˌpɜːrsəˈnæləti",
+    memoryTip: "person(人)+al(〜の)+ity(〜性)で、人としての性質=個性、と覚える。",
+    morphemes: [
+      { part: "person", reading: "パーソン", meaning: "人", origin: "ラテン語 persona", phonetic: "pɜːrsən" },
+      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
+      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
+    ],
+    goroText: "パーソン先輩がアルバムを開き、イティと語る姿ににじみ出る強い個性があった",
+  },
+  information: {
+    meaning: "情報", phonetic: "ˌɪnfərˈmeɪʃən",
+    memoryTip: "in(中へ)+form(形)+ation(すること)で、中に形作られたもの=情報、と覚える。",
+    morphemes: [
+      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
+      { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "インした部屋でフォームに記入すると、エーション画面に最新情報が表示された",
+  },
+  application: {
+    meaning: "申請・応用・アプリ", phonetic: "ˌæplɪˈkeɪʃən",
+    memoryTip: "ap(〜へ)+plic(重ねる)+ation(すること)で、重ねて当てはめること=応用・申請、と覚える。",
+    morphemes: [
+      { part: "ap", reading: "アプ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad-", phonetic: "æp" },
+      { part: "plic", reading: "プリク", meaning: "重ねる・折りたたむ", origin: "ラテン語 plicare", phonetic: "plɪk" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "アプと声をかけプリクを重ね、エーション窓口で応募申請を済ませた",
+  },
+  organization: {
+    meaning: "組織・団体", phonetic: "ˌɔːrɡənaɪˈzeɪʃən",
+    memoryTip: "organ(組織)+iz(〜化する)+ation(すること)で、組織化すること=組織、と覚える。",
+    morphemes: [
+      { part: "organ", reading: "オーガン", meaning: "器官・組織", origin: "ギリシャ語 organon", phonetic: "ɔːrgən" },
+      { part: "iz", reading: "アイズ", meaning: "〜化する", origin: "ギリシャ語 -izein", phonetic: "aɪz" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "オーガン奏者がアイズを合図にエーションホールへ集まり、新しい組織が生まれた",
+  },
+  illustration: {
+    meaning: "説明図・イラスト", phonetic: "ˌɪləˈstreɪʃən",
+    memoryTip: "il(〜の中へ)+lustr(輝かせる)+ation(すること)で、中を輝かせて示すこと=説明図、と覚える。",
+    morphemes: [
+      { part: "il", reading: "イル", meaning: "〜の中へ・〜の上に", origin: "ラテン語 in- の異形（否定ではない用法）", phonetic: "ɪl" },
+      { part: "lustr", reading: "ラストル", meaning: "輝かせる", origin: "ラテン語 lustrare", phonetic: "lʌstər" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "イルカがラストルの光で照らされ、エーションの紙面に美しいイラストが描かれた",
+  },
+  examination: {
+    meaning: "試験・検査", phonetic: "ɪɡˌzæmɪˈneɪʃən",
+    memoryTip: "ex(外へ)+amin(調べる)+ation(すること)で、外に調べ出すこと=試験、と覚える。",
+    morphemes: [
+      { part: "ex", reading: "エクス", meaning: "外へ", origin: "ラテン語 ex-", phonetic: "ɛks" },
+      { part: "amin", reading: "アミン", meaning: "調べる", origin: "ラテン語 examinare", phonetic: "æmɪn" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "エクスと呼ばれた受験生がアミン先生の前でエーション試験に挑んだ",
+  },
+  celebration: {
+    meaning: "祝賀・お祝い", phonetic: "ˌsɛlɪˈbreɪʃən",
+    memoryTip: "celebr(祝う)+ation(すること)で、祝うこと=お祝い、と覚える。",
+    morphemes: [
+      { part: "celebr", reading: "セレブル", meaning: "祝う", origin: "ラテン語 celebrare", phonetic: "sɛləbr" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "セレブルな面々が集まり、エーション会場は盛大なお祝いムードに包まれた",
+  },
+  inspiration: {
+    meaning: "ひらめき・霊感", phonetic: "ˌɪnspəˈreɪʃən",
+    memoryTip: "in(中へ)+spir(息をする)+ation(すること)で、中に息を吹き込むこと=ひらめき、と覚える。",
+    morphemes: [
+      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
+      { part: "spir", reading: "スピル", meaning: "息をする", origin: "ラテン語 spirare", phonetic: "spɪr" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "インした瞬間スピルと深呼吸すると、エーションのごとくひらめきが降ってきた",
+  },
+  exploration: {
+    meaning: "探検・探査", phonetic: "ˌɛkspləˈreɪʃən",
+    memoryTip: "ex(外へ)+plor(探し求める)+ation(すること)で、外へ探し求めること=探検、と覚える。",
+    morphemes: [
+      { part: "ex", reading: "エクス", meaning: "外へ", origin: "ラテン語 ex-", phonetic: "ɛks" },
+      { part: "plor", reading: "プロール", meaning: "叫ぶ・探し求める", origin: "ラテン語 plorare", phonetic: "plɔːr" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "エクス隊がプロールの森を進み、エーションの奥地で未知の遺跡を探検した",
+  },
+  observation: {
+    meaning: "観察", phonetic: "ˌɒbzərˈveɪʃən",
+    memoryTip: "ob(〜に向かって)+serv(見張る)+ation(すること)で、見張ること=観察、と覚える。",
+    morphemes: [
+      { part: "ob", reading: "オブ", meaning: "〜に向かって", origin: "ラテン語 ob-", phonetic: "ɒb" },
+      { part: "serv", reading: "サーヴ", meaning: "仕える・保つ", origin: "ラテン語 servare", phonetic: "sɜːrv" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "オブと望遠鏡を構えサーヴ班がエーション星を一晩じっくり観察した",
+  },
+  publication: {
+    meaning: "出版・公表", phonetic: "ˌpʌblɪˈkeɪʃən",
+    memoryTip: "publ(民衆の)+ic(〜の)+ation(すること)で、公にすること=出版、と覚える。",
+    morphemes: [
+      { part: "publ", reading: "パブル", meaning: "民衆の", origin: "ラテン語 publicus", phonetic: "pʌbl" },
+      { part: "ic", reading: "イク", meaning: "〜の（形容詞化）", origin: "ラテン語 -icus", phonetic: "ɪk" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "パブルな広場でイクつもの原稿がエーション印刷され、新刊が出版された",
+  },
+  graduation: {
+    meaning: "卒業", phonetic: "ˌɡrædʒuˈeɪʃən",
+    memoryTip: "gradu(段階を踏む)+ation(すること)で、段階を踏み終えること=卒業、と覚える。",
+    morphemes: [
+      { part: "gradu", reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
+      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+    ],
+    goroText: "グラジュ坂を上りきった生徒たちが、エーション式典で晴れやかに卒業した",
+  },
+};
+
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
   const words = recent.length < 6 ? [...recent, ...pickSampleWords(6 - recent.length, recent)] : recent;
@@ -751,7 +1058,8 @@ async function startDecompose(rawWord) {
 
   const provider = await kvGet("provider", "openai");
   const apiKey = await loadApiKey(provider);
-  if (!apiKey) {
+  const demo = !apiKey ? DEMO_WORD_DATA[word.toLowerCase()] : null;
+  if (!apiKey && !demo) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
     showScreen("screen-settings");
     refreshUsageDisplay();
@@ -784,35 +1092,52 @@ async function startDecompose(rawWord) {
   splitEl.appendChild(placeholder);
 
   let morphemes;
-  try {
-    const decomposed = await decomposeWord(word, provider, apiKey);
-    if (decomposed.wordExists === false) {
-      await playNotFoundError(placeholder, word);
+  if (demo) {
+    morphemes = demo.morphemes;
+    currentWordMeaning = demo.meaning;
+    currentWordPhonetic = demo.phonetic;
+    currentMemoryTip = demo.memoryTip;
+  } else {
+    try {
+      const decomposed = await decomposeWord(word, provider, apiKey);
+      if (decomposed.wordExists === false) {
+        await playNotFoundError(placeholder, word);
+        return;
+      }
+      morphemes = decomposed.morphemes;
+      currentWordMeaning = decomposed.meaning;
+      currentWordPhonetic = decomposed.phonetic;
+      currentMemoryTip = decomposed.memoryTip;
+      if (decomposed.wasCorrected) {
+        await playSpellingFix(placeholder, word, decomposed.correctedWord);
+        currentWord = decomposed.correctedWord;
+      }
+    } catch (err) {
+      placeholder.remove();
+      spinnerRow.style.display = "flex";
+      document.getElementById("decompose-appbar").style.display = "flex";
+      document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
+      console.error(err);
       return;
     }
-    morphemes = decomposed.morphemes;
-    currentWordMeaning = decomposed.meaning;
-    currentWordPhonetic = decomposed.phonetic;
-    currentMemoryTip = decomposed.memoryTip;
-    if (decomposed.wasCorrected) {
-      await playSpellingFix(placeholder, word, decomposed.correctedWord);
-      currentWord = decomposed.correctedWord;
-    }
-  } catch (err) {
-    placeholder.remove();
-    spinnerRow.style.display = "flex";
-    document.getElementById("decompose-appbar").style.display = "flex";
-    document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
-    console.error(err);
-    return;
   }
   currentMorphemes = morphemes;
 
   /* Stage2(語呂合わせ生成)は接辞が確定した時点で先行開始し、分解アニメーションの
-     再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない */
+     再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない。
+     デモ単語(APIキー未登録時)は、あらかじめ用意した語呂合わせをそのまま使う */
   document.getElementById("regen-btn").disabled = true;
   let goroDone = false;
-  const goroPromise = loadGoroCandidates(provider, apiKey).then(() => { goroDone = true; });
+  let goroPromise;
+  if (demo) {
+    currentCandidates = [{ text: demo.goroText, highlight: [] }];
+    renderGoroList();
+    goroDone = true;
+    goroPromise = Promise.resolve();
+    document.getElementById("regen-btn").disabled = false;
+  } else {
+    goroPromise = loadGoroCandidates(provider, apiKey).then(() => { goroDone = true; });
+  }
 
   const animStyle = DECOMPOSE_ANIM_STYLES[await kvGet("decompose_anim", "crack")] || DECOMPOSE_ANIM_STYLES.crack;
   await animStyle.intro(placeholder, currentWord, morphemes);
@@ -1445,6 +1770,12 @@ document.getElementById("save-word-btn").addEventListener("click", toggleSaveWor
 document.getElementById("regen-btn").addEventListener("click", async () => {
   const provider = await kvGet("provider", "openai");
   const apiKey = await loadApiKey(provider);
+  if (!apiKey) {
+    homeError.textContent = "設定画面でAPIキーを登録してください";
+    showScreen("screen-settings");
+    refreshUsageDisplay();
+    return;
+  }
   document.getElementById("regen-btn").disabled = true;
   document.getElementById("goro-list").innerHTML = `<div class="empty-note">作り直しています…</div>`;
   await loadGoroCandidates(provider, apiKey);
