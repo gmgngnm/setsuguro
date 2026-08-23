@@ -595,6 +595,15 @@ button{font-family:inherit;cursor:pointer;}
 .btn-solid:disabled{opacity:.5;}
 .settings-status{font-size:12px;text-align:center;min-height:16px;color:var(--ink-soft);}
 
+/* 読み上げの声 */
+.tts-voice-row{display:flex;gap:8px;align-items:center;}
+#tts-speaker-select{
+  flex:1;min-width:0;border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;
+  font-family:'JetBrains Mono',monospace;font-size:12.5px;
+  background:var(--surface);color:var(--ink);
+}
+#tts-speaker-select:disabled{opacity:.5;}
+
 /* Google サインイン */
 .google-signin-slot{display:flex;justify-content:center;min-height:0;}
 .google-signin-slot:empty{display:none;}
