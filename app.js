@@ -786,17 +786,116 @@ async function bumpUsage(tokens) {
 }
 
 /* ------------------------------------------------------------------ *
- * 5. 読み上げ (Web Speech API)
+ * 5. 読み上げ
+ *    日本語(語呂合わせ・単語の意味)はさくらのAIのTTS(VOICEVOX)で読み、
+ *    英単語そのものと、TTSが使えない場合はブラウザ内蔵の音声合成に戻す。
  * ------------------------------------------------------------------ */
-function speak(text, onEnd, lang = "ja-JP") {
+
+/* OpenAIのTTS API互換で、model / voice / input を渡すと音声バイナリが
+   返る。対応プロバイダを増やす場合はここに足せば、利用可否の判定も
+   フォールバックもこのマップの有無だけで動く */
+const TTS_ENDPOINTS = {
+  sakura: { url: "https://api.ai.sakura.ad.jp/v1/audio/speech", model: "voicevox" },
+};
+/* さくらのAI Engineが提供するVOICEVOXの話者名。読み上げに使う声を
+   変えたい場合はここを別の話者名に差し替える */
+const TTS_VOICE = "VOICEVOX:東北きりたん";
+
+/* 同じ語呂合わせを繰り返し聞くことが多いので、生成済みの音声は
+   使い回す。青天井に持たないよう、古いものから捨てる */
+const TTS_CACHE_LIMIT = 30;
+const ttsCache = new Map();
+
+function putTtsCache(key, url) {
+  if (ttsCache.size >= TTS_CACHE_LIMIT) {
+    const oldest = ttsCache.keys().next().value;
+    URL.revokeObjectURL(ttsCache.get(oldest));
+    ttsCache.delete(oldest);
+  }
+  ttsCache.set(key, url);
+}
+
+let currentTtsAudio = null;
+/* 音声の取得中に次の読み上げが始まることがあるので、世代を持たせて
+   古い方の再生を捨てる（そのままだと2つ同時に鳴る） */
+let ttsGeneration = 0;
+
+function stopSpeaking() {
+  ttsGeneration++;
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  if (currentTtsAudio) {
+    currentTtsAudio.pause();
+    currentTtsAudio.onended = null;
+    currentTtsAudio.onerror = null;
+    currentTtsAudio = null;
+  }
+}
+
+/* カッコ書きの注釈は読み上げても分かりにくいだけなので落とす */
+function spokenTextOf(text) {
+  const raw = String(text || "");
+  return raw.replace(/[（(][^）)]*[）)]/g, "").replace(/\s{2,}/g, " ").trim() || raw.trim();
+}
+
+function speakWithBrowser(spoken, onEnd, lang) {
   if (!("speechSynthesis" in window)) { if (onEnd) onEnd(); return; }
-  window.speechSynthesis.cancel();
-  const spoken = text.replace(/[（(][^）)]*[）)]/g, "").replace(/\s{2,}/g, " ").trim() || text;
   const u = new SpeechSynthesisUtterance(spoken);
   u.lang = lang;
   u.rate = 1.0;
   if (onEnd) u.onend = onEnd;
   window.speechSynthesis.speak(u);
+}
+
+async function fetchTtsAudioUrl(endpoint, apiKey, spoken) {
+  const key = `${endpoint.model}\n${TTS_VOICE}\n${spoken}`;
+  const cached = ttsCache.get(key);
+  if (cached) return cached;
+
+  const res = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: endpoint.model, voice: TTS_VOICE, input: spoken, response_format: "mp3" }),
+  });
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new Error(`TTS API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  putTtsCache(key, url);
+  return url;
+}
+
+/* 読み上げが完全に止まるより、声が変わってでも読まれる方がよいので、
+   キー未設定・通信失敗・再生失敗のいずれでもブラウザ内蔵の合成に戻す。
+   onEndは自動再生の進行に使われるため、どの経路でも必ず呼ぶ */
+async function speak(text, onEnd, lang = "ja-JP") {
+  stopSpeaking();
+  const gen = ttsGeneration;
+  const spoken = spokenTextOf(text);
+  if (!spoken) { if (onEnd) onEnd(); return; }
+
+  const provider = await getActiveProvider();
+  const endpoint = TTS_ENDPOINTS[provider];
+  const apiKey = endpoint && lang === "ja-JP" ? await loadApiKey(provider) : "";
+  if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
+  if (!apiKey) { speakWithBrowser(spoken, onEnd, lang); return; }
+
+  try {
+    const url = await fetchTtsAudioUrl(endpoint, apiKey, spoken);
+    if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
+    const audio = new Audio(url);
+    currentTtsAudio = audio;
+    audio.onended = () => { if (currentTtsAudio === audio) currentTtsAudio = null; if (onEnd) onEnd(); };
+    audio.onerror = () => {
+      if (currentTtsAudio === audio) currentTtsAudio = null;
+      speakWithBrowser(spoken, onEnd, lang);
+    };
+    await audio.play();
+  } catch (err) {
+    console.warn("TTS playback failed, falling back to the browser voice:", err);
+    if (currentTtsAudio) currentTtsAudio = null;
+    speakWithBrowser(spoken, onEnd, lang);
+  }
 }
 
 /* ------------------------------------------------------------------ *
