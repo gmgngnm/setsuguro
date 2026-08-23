@@ -250,6 +250,13 @@
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
 
+    <div class="section-label" style="margin-top:6px;">RAGによる精度向上</div>
+    <div class="provider-row" id="rag-toggle-row">
+      <button class="mode-pill" data-rag-toggle="on">オン</button>
+      <button class="mode-pill on" data-rag-toggle="off">オフ</button>
+    </div>
+    <div class="usage-note">語呂合わせの例文検索・意味整合チェック・接辞表記の統一にembeddingsを使用します。さくらのAIの無料枠に含まれないため、有効にすると別途課金が発生する場合があります。</div>
+
     <div class="section-label" style="margin-top:6px;">音声入力</div>
     <div class="provider-row" id="voice-engine-row">
       <button class="mode-pill on" data-voice-engine="auto">Whisper (さくらのAI)</button>
