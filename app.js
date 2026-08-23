@@ -321,8 +321,16 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
        造語を生む「圧力弁」になっていたため） */
     [
       "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にしてください。読みはひとまとまりの単語として丸ごと使おうとせず、1〜2音程度の断片に分解し、実在する別々の日本語表現の中に散りばめてください。",
-      "全ての音を一字も欠かさず再現することより、日本語として自然な一文になることを優先してください。音を無理に全部詰め込んで不自然になるくらいなら、一部の音を省略したり、近い音に崩したりして構いません。",
-      "例: dict(ジクト)/ion(イオン)/ary(アリー) → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)」",
+      /* 音の扱い。「省略してよい」と書いていたら接辞の音がごっそり
+         抜け落ちるようになったため、崩すのは自由・省略は不可、と
+         はっきり分ける */
+      "【重要】どの接辞も省略せず、全ての接辞の音を必ず一文の中に登場させてください。ただし元の発音に忠実である必要はまったくありません。pre(プレ)を「プリッ」、sent(セント)を「せんと」、ation(エーション)を「A賞」のように、日本語として面白く自然になるなら大胆に音を崩して構いません。崩すのは自由、省略は不可です。",
+      /* 出力書式。どの音がどの接辞に対応するかを読み手に示すため、
+         音の直後に接辞の綴りをカッコで添えさせる。この注釈は表示上の
+         補助であって本文ではないので、文字数には数えない */
+      "音を担っている箇所の直後に、対応する接辞の綴りを半角カッコで添えてください（例:「プリッ(pre)と」）。カッコに入れてよいのは接辞の綴りだけで、意味の日本語訳を書いてはいけません。このカッコは表示上の補助なので、文字数には数えません。",
+      "お手本: pre(プレ)/sent(セント)/ation(エーション)、意味「発表」 → 「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」",
+      "お手本: dict(ジクト)/ion(イオン)/ary(アリー)、意味「辞書」 → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)」",
     ].join("\n"),
 
     wordMeaning
@@ -334,7 +342,7 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
        Rule 1の断片化を徹底すれば自然に避けられる、という繋がりを示す */
     [
       "次のパターンは日本語として不自然になるため禁止します。いずれも「読みを丸ごと・注釈として使う」ことが原因なので、上の断片化の指示を徹底すれば避けられます。",
-      "✗ 意味をカッコ書きで注釈する:「セイシェイション（飽食）して」「エーター（刑務所）へ」 → ○ 意味は情景そのもので伝え、カッコ書きは一切使わない。",
+      "✗ 意味の日本語訳をカッコ書きで注釈する:「セイシェイション（飽食）して」「エーター（刑務所）へ」 → ○ カッコに入れるのは接辞の綴りだけ。意味は情景そのもので伝える。",
       "✗ 隣り合う接辞の読みをそのまま連結し、対象単語や既存の外来語をなぞる:「インター」+「アクト」→「インターアクト」 → ○ 読みは互いに離し、それぞれ別の日本語表現の一部にする。",
       "✗ 読みをそのまま実在しない一単語として使い、助詞を付けて主語・修飾語にする:「オクシールは」「イアリーな」「オノミが」 → ○ 読みの音は、実在する日本語の言葉の一部分の音として溶け込ませる。",
       "✗ 読みを人名・人物のように扱う。「〜さん」「〜くん」といった呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせることも含む:「オノミが分類法を教えた」 → ○ 人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）の実在する言葉で表現する。",
@@ -354,16 +362,21 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
          という具体的な合格条件に落とした方が守られやすい */
       "出力する前に必ず自分で読み返し、この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられるか確認してください。思い浮かべられないなら、音を諦めてでも、日常にありふれた分かりやすい出来事に書き直してください。",
       "描くのは一つの出来事だけにしてください。関係のない場面を「〜したら、〜」「〜して、〜」でつなげて複数並べないでください。",
-      "目安として12〜22文字程度、長くても26文字までに収め、冗長な修飾語や説明は削ってください。短く言い切るほど覚えやすくなります。",
-      "文法的な自然さを保った上で、思わずクスッと笑えるようなユーモアのある内容にしてください。意外な組み合わせ、ズッコケるようなオチ、大げさな展開などを取り入れつつも、あくまで一つの筋の通った話として成立させてください。擬音語・擬態語（ドカン、ワクワク、ニヤリ など）も、自然に使える場合は取り入れてください。下品・差別的な表現は避けてください。",
+      "接辞の注釈を除いて12〜22文字程度、長くても26文字までに収め、冗長な修飾語や説明は削ってください。短く言い切るほど覚えやすくなります。",
+      /* ユーモアと文体。「面白く」とだけ言うと、どれも
+         「〜して、〜した」の淡々とした説明文になりがちなので、
+         具体的な笑いの作り方と、使ってよい文末の型を並べて示す */
+      "【重要】覚えやすさは面白さから生まれます。読んだ人が思わずニヤリとする一文にしてください。大げさな誇張、ばかばかしい取り合わせ、身も蓋もない本音、ずっこけるオチ、あるあるネタなどを積極的に使ってください。擬音語・擬態語（ドカン、ジンジン、ぐらぐら など）も歓迎です。下品・差別的な表現は避けてください。",
+      "【重要】文体を毎回変えてください。「〜して、〜した」という淡々とした説明調ばかりにならないよう、次のような型から、その単語に合うものを選んでください: 呼びかけ・警告（「〜せんと〜ないぞ！」）、感嘆（「〜だ！」）、疑問・ツッコミ（「〜なのか!?」）、ぼやき（「〜、あーあ」）、伝聞（「〜だってさ」）、体言止め、セリフ調。",
     ].join("\n"),
 
     (rejectedNotes && rejectedNotes.length)
       ? `【重要】直前の試行で作った次の候補は、機械的なチェックで不合格になりました。指摘された点を必ず直し、同じ失敗を繰り返さないでください:\n${rejectedNotes.map((n, i) => `${i + 1}. 「${n.text}」\n   → 不合格の理由: ${n.reasons.join(" / ")}`).join("\n")}`
       : "",
     "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
+    "出力前に最後の確認: (1)全ての接辞の綴りがカッコで登場しているか (2)注釈を除いた本文が26文字以内か (3)読んだ人が情景を思い浮かべられるか (4)説明調になっていないか。",
     "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
-    '{"candidates":[{"text":"軸にイオンがぶつかり電気あり、なんとも愉快な実験だ","highlight":[{"part":"dict","in_text":"軸に"}]}]}',
+    '{"candidates":[{"text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！","highlight":[{"part":"dict","in_text":"軸"}]}]}',
   ].filter(Boolean).join("\n");
 }
 
@@ -840,8 +853,18 @@ const GORO_SURU_FORMS = "(する|すれ|します|した|して|しろ|しよう
 
 /* 語呂合わせの長さの上限。プロンプトでは26文字までを目安として指示している
    ので、そこから少しだけ余裕を持たせた値をコード側の不合格ラインとする
-   （毎回きっちり26文字で弾くと再生成ばかりになり実用に耐えないため） */
+   （毎回きっちり26文字で弾くと再生成ばかりになり実用に耐えないため）。
+   接辞の注釈「(pre)」は読み手への補助表示であって本文ではないため、
+   長さを数えるときは取り除いてから数える */
 const GORO_MAX_LENGTH = 30;
+
+/* 「プリッ(pre)とせんと(sent)」のように、音を担っている箇所の直後に
+   対応する接辞の綴りを添える書式。注釈は必ず半角英字のみとする */
+const GORO_ANNOTATION_RE = /[（(]\s*([A-Za-z][A-Za-z'-]*)\s*[）)]/g;
+
+function stripGoroAnnotations(text) {
+  return String(text || "").replace(GORO_ANNOTATION_RE, "");
+}
 
 /* 語呂合わせ一文を機械的に検査し、不良箇所を返す。
    戻り値は {code, reason} の配列（空配列なら合格）。
@@ -850,13 +873,30 @@ function goroViolations(text, morphemes) {
   const violations = [];
   if (!text) return violations;
   const readings = (morphemes || []).map((m) => (m.reading || "").trim()).filter(Boolean);
+  const parts = (morphemes || []).map((m) => (m.part || "").trim().toLowerCase()).filter(Boolean);
+  const partSet = new Set(parts);
 
-  /* ①意味のカッコ書き併記（例:「エーター（刑務所）へ」） */
-  const paren = /[（(]([^）)]{0,20})[）)]/.exec(text);
-  if (paren) {
+  /* ①カッコの中身。接辞の綴りを添えるのは必須の書式なので許可し、
+       意味の日本語訳を注釈しているもの（例:「エーター（刑務所）へ」）や、
+       実際には存在しない接辞名を書いているものだけを弾く */
+  for (const m of text.matchAll(/[（(]([^）)]{0,20})[）)]/g)) {
+    const inner = m[1].trim();
+    if (/^[A-Za-z][A-Za-z'-]*$/.test(inner) && partSet.has(inner.toLowerCase())) continue;
     violations.push({
       code: "gloss-in-parens",
-      reason: `「（${paren[1]}）」のように、カッコ書きで意味の注釈を文中に書き込んでいます。カッコとその中身は一切使わず、意味は情景そのもので伝えてください。`,
+      reason: `「（${inner}）」というカッコ書きは使えません。カッコの中に書いてよいのは、その直前の音が対応する接辞の綴り（${parts.join(" / ") || "対象の接辞"}）だけです。意味の日本語訳をカッコで注釈しないでください。`,
+    });
+  }
+
+  /* ②全ての接辞の音が使われているか。カッコ注釈が接辞ごとに1つずつ
+       付いているかで判定する（音は元の発音から崩してよいが、どの接辞も
+       省略せず一文の中に登場させる必要がある） */
+  const annotated = new Set([...text.matchAll(GORO_ANNOTATION_RE)].map((m) => m[1].toLowerCase()));
+  const missing = parts.filter((p) => !annotated.has(p));
+  if (missing.length) {
+    violations.push({
+      code: "missing-morpheme",
+      reason: `接辞 ${missing.join(" / ")} の音が一文の中に見当たりません。全ての接辞について、その音を担う箇所を作り、直後に ${missing.map((p) => `(${p})`).join(" ")} のように綴りを添えてください。音は元の発音どおりでなくてよく、崩して構いません。`,
     });
   }
 
@@ -899,11 +939,13 @@ function goroViolations(text, morphemes) {
   }
 
   /* ⑤長すぎる候補。プロンプトの目安だけでは守られないことが多く、
-       長い候補は説明的になって覚えにくいため、コード側でも足切りする */
-  if (text.length > GORO_MAX_LENGTH) {
+       長い候補は説明的になって覚えにくいため、コード側でも足切りする。
+       接辞の注釈は表示上の補助なので、長さには数えない */
+  const visibleLength = stripGoroAnnotations(text).length;
+  if (visibleLength > GORO_MAX_LENGTH) {
     violations.push({
       code: "too-long",
-      reason: `${text.length}文字と長すぎます。12〜22文字程度に収まるよう、描く出来事を一つに絞り、冗長な修飾語や説明を削ってください。`,
+      reason: `接辞の注釈を除いて${visibleLength}文字と長すぎます。12〜22文字程度に収まるよう、描く出来事を一つに絞り、冗長な修飾語や説明を削ってください。`,
     });
   }
 
@@ -920,16 +962,18 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
     "以下は語呂合わせ候補の一文です。各文について、次の基準をすべて満たしているか厳しく確認してください。",
     [
       "①自然さ: 日本語として文法的に自然で、一つの筋が通った意味のある文になっていること。読みを詰め込むための不自然な言い回しや、音を似せるためだけの不自然なカタカナ語（外来語）がないこと。",
-      "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)接辞の意味の日本語訳をカッコ書きで注釈していない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよく、全ての音を完全に再現できていなくても構いません。",
+      "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)カッコの中に接辞の綴り以外のもの、特に意味の日本語訳を書いていない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよい。",
+      "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合は、その音を足して書き直すこと。書き直す際もこのカッコの書式は必ず保つこと。",
       "③人名化していないこと: 「〜さん」「〜くん」といった明示的な呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせているパターンも不可。人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）で表現されていること。また、実在の外来語以外のカタカナ語に「する」を付けて動詞にしていないこと（例:「マッシュしたら」は不可）。",
-      "④簡潔であること（12〜22文字程度、長くても26文字までが目安。冗長な修飾語や説明がないこと）。",
+      "④簡潔であること（接辞の注釈を除いて12〜22文字程度、長くても26文字までが目安。冗長な修飾語や説明がないこと）。",
+      "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
       "⑤読み手に伝わること: この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられること。関係のない出来事を「〜したら、〜」で並べただけの、何を言っているのか分からない文は不可（例:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」）。描かれている出来事は一つに絞られていること。",
       wordMeaning ? "⑥一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
     ].filter(Boolean).join("\n"),
     "いずれかを満たしていない候補は、対象接辞の読みの音を活かしたまま書き直してください（①〜③を満たすためであれば、音の一部を省略・近似しても構いません）。すべて満たしている候補はそのまま使ってください。",
     candList,
-    "書き直した場合も含め、必ず1件を出力してください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-    '{"candidates":[{"text":"（最終テキスト）"}]}',
+    "書き直した場合も含め、必ず1件を出力してください。接辞の綴りを添えるカッコの書式は必ず保ってください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"candidates":[{"text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！"}]}',
   ].filter(Boolean).join("\n");
 }
 
@@ -958,8 +1002,8 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
  *   ユーザーの作風に寄っていく。すべてローカルのみでクラウド同期はしない。
  * ------------------------------------------------------------------ */
 /* 種データの本文を書き換えるたびに再シードが必要なため、ここを上げる
-   （v2: styleOkの付与 / v3: 種データ30件を新しい品質基準で書き直し） */
-const GORO_SEED_VERSION = "v3";
+   （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し） */
+const GORO_SEED_VERSION = "v4";
 const GORO_EXAMPLE_TOPK = 4;
 /* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
    使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
@@ -1662,7 +1706,7 @@ const DEMO_WORD_DATA = {
       { part: "sent", reading: "セント", meaning: "感じる・示す", origin: "ラテン語 sentire", phonetic: "sɛnt" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "プリントを千枚配り、堂々と発表した",
+    goroText: "プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！",
   },
   reincarnation: {
     meaning: "生まれ変わり・輪廻転生", phonetic: "ˌriːɪnkɑːrˈneɪʃən",
@@ -1673,7 +1717,7 @@ const DEMO_WORD_DATA = {
       { part: "carn", reading: "カーン", meaning: "肉体・肉", origin: "ラテン語 caro/carnis", phonetic: "kɑːrn" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "鈴が鳴り、棺から生まれ変わって出てきた",
+    goroText: "霊(re)が印(in)を結び缶(carn)の前で詠唱(ation)、生まれ変わり成功！",
   },
   visualization: {
     meaning: "視覚化すること・可視化", phonetic: "ˌvɪʒuəlaɪˈzeɪʃən",
@@ -1683,7 +1727,7 @@ const DEMO_WORD_DATA = {
       { part: "ual", reading: "アル", meaning: "〜に関する", origin: "ラテン語 -alis", phonetic: "əl" },
       { part: "ization", reading: "ゼーション", meaning: "〜化すること", origin: "ラテン語 -izatio", phonetic: "zeɪʃən" },
     ],
-    goroText: "ビスの緩みを図に表し、全体を可視化した",
+    goroText: "美(vis)人ある(ual)ある、税収(ization)グラフで可視化したら大爆笑",
   },
   immortality: {
     meaning: "不死・不滅", phonetic: "ˌɪmɔːrˈtæləti",
@@ -1694,7 +1738,7 @@ const DEMO_WORD_DATA = {
       { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "今も燃える炎に触れ、不死の体を得た",
+    goroText: "芋(im)もっと(mort)ある(al)ぞ、一(ity)生食える不死の体！",
   },
   reconstruction: {
     meaning: "再建・再構築", phonetic: "ˌriːkənˈstrʌkʃən",
@@ -1705,7 +1749,7 @@ const DEMO_WORD_DATA = {
       { part: "struct", reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
       { part: "ion", reading: "イオン", meaning: "名詞化（〜すること）", origin: "ラテン語 -io", phonetic: "ən" },
     ],
-    goroText: "離れた根元に柱を立て直し、家を再建した",
+    goroText: "離(re)婚(con)したがトラクター(struct)一台で家を再建、以(ion)上！",
   },
   architecture: {
     meaning: "建築・構造", phonetic: "ˈɑːrkɪtektʃər",
@@ -1715,7 +1759,7 @@ const DEMO_WORD_DATA = {
       { part: "tect", reading: "テクト", meaning: "建てる", origin: "ギリシャ語 tekton", phonetic: "tɛkt" },
       { part: "ure", reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
     ],
-    goroText: "空き地に手早く湯屋を建てる工事が始まった",
+    goroText: "空き(archi)地に手作(tect)りの湯屋(ure)、これぞ建築の極み！",
   },
   transformation: {
     meaning: "変形・変化", phonetic: "ˌtrænsfərˈmeɪʃən",
@@ -1725,7 +1769,7 @@ const DEMO_WORD_DATA = {
       { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "トラックの形が伸びて、船へと変形した",
+    goroText: "トランス(trans)状態のホーム(form)で、え〜っ(ation)電車が変形！",
   },
   disqualification: {
     meaning: "資格取り消し・失格", phonetic: "ˌdɪskwɒlɪfɪˈkeɪʃən",
@@ -1735,7 +1779,7 @@ const DEMO_WORD_DATA = {
       { part: "quali", reading: "クオリ", meaning: "質・資格", origin: "ラテン語 qualis", phonetic: "kwɒli" },
       { part: "fication", reading: "フィケーション", meaning: "〜化すること", origin: "ラテン語 facere 由来", phonetic: "fɪkeɪʃən" },
     ],
-    goroText: "弟子が狂った走りで反則を犯し、失格になった",
+    goroText: "弟子(dis)がクオリティ(quali)低い引っ掛け(fication)技で失格、あーあ",
   },
   misunderstanding: {
     meaning: "誤解", phonetic: "ˌmɪsʌndərˈstændɪŋ",
@@ -1746,7 +1790,7 @@ const DEMO_WORD_DATA = {
       { part: "stand", reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
       { part: "ing", reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
     ],
-    goroText: "見過ごした暗がりの立ち話が、誤解を生んだ",
+    goroText: "ミス(mis)で安(under)いスタンプ(stand)を押され、言(ing)い分は誤解",
   },
   unbelievable: {
     meaning: "信じられない", phonetic: "ˌʌnbɪˈliːvəbl",
@@ -1756,7 +1800,7 @@ const DEMO_WORD_DATA = {
       { part: "believ", reading: "ビリーヴ", meaning: "信じる", origin: "古英語 belyfan", phonetic: "bɪliːv" },
       { part: "able", reading: "アブル", meaning: "〜できる", origin: "ラテン語 -abilis", phonetic: "əbl" },
     ],
-    goroText: "暗い壁がびりびり光り、信じられない眺めだ",
+    goroText: "餡(un)がびりびり(believ)アブラ(able)ゼミに化けた、信じられん！",
   },
   extraordinary: {
     meaning: "並外れた・驚くべき", phonetic: "ɪkˈstrɔːrdəneri",
@@ -1766,7 +1810,7 @@ const DEMO_WORD_DATA = {
       { part: "ordin", reading: "オーディン", meaning: "順序", origin: "ラテン語 ordo", phonetic: "ɔːrdɪn" },
       { part: "ary", reading: "アリー", meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius", phonetic: "ɛri" },
     ],
-    goroText: "駅前の大通りを走る馬の速さは並外れていた",
+    goroText: "エキストラ(extra)が大どん(ordin)引きの蟻(ary)役、並外れた演技だ",
   },
   international: {
     meaning: "国際的な", phonetic: "ˌɪntərˈnæʃənəl",
@@ -1776,7 +1820,7 @@ const DEMO_WORD_DATA = {
       { part: "nation", reading: "ネーション", meaning: "国家・国民", origin: "ラテン語 natio", phonetic: "neɪʃən" },
       { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
     ],
-    goroText: "インターホン越しの挨拶が国際的な友情を生んだ",
+    goroText: "インターホン(inter)に「ねえ(nation)ある(al)?」国際的な注文が届く",
   },
   responsibility: {
     meaning: "責任", phonetic: "rɪˌspɒnsəˈbɪləti",
@@ -1786,7 +1830,7 @@ const DEMO_WORD_DATA = {
       { part: "ibil", reading: "イビル", meaning: "〜できる", origin: "ラテン語 -ibilis", phonetic: "ɪbɪl" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "レストランの主人が責任を取って深く謝った",
+    goroText: "レストラン(respons)の意地悪(ibil)店主、一(ity)応は責任を取った",
   },
   communication: {
     meaning: "伝達・意思疎通", phonetic: "kəˌmjuːnɪˈkeɪʃən",
@@ -1796,7 +1840,7 @@ const DEMO_WORD_DATA = {
       { part: "muni", reading: "ミューニ", meaning: "共有する", origin: "ラテン語 munis", phonetic: "mjuːni" },
       { part: "cation", reading: "ケーション", meaning: "〜化すること", origin: "ラテン語 -catio", phonetic: "keɪʃən" },
     ],
-    goroText: "込み入った合図で、離れた仲間と意思疎通できた",
+    goroText: "込(com)み合う無(muni)人島、ケータイ(cation)なしで意思疎通できた！",
   },
   appreciation: {
     meaning: "感謝・鑑賞", phonetic: "əˌpriːʃiˈeɪʃən",
@@ -1806,7 +1850,7 @@ const DEMO_WORD_DATA = {
       { part: "preci", reading: "プレシ", meaning: "価値", origin: "ラテン語 pretium", phonetic: "prɛsi" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "アプリで届いた贈り物に、心から感謝した",
+    goroText: "アプリ(ap)のプレゼント(preci)に、え〜っ(ation)と叫ぶほど感謝！",
   },
   imagination: {
     meaning: "想像力", phonetic: "ɪˌmædʒɪˈneɪʃən",
@@ -1815,7 +1859,7 @@ const DEMO_WORD_DATA = {
       { part: "imagin", reading: "イマジン", meaning: "心に描く", origin: "ラテン語 imaginari", phonetic: "ɪmædʒɪn" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "今も陣地を思い描く子の想像力は豊かだ",
+    goroText: "今ジン(imagin)と来る映写(ation)で、子の想像力が爆発！",
   },
   popularity: {
     meaning: "人気", phonetic: "ˌpɒpjuˈlærəti",
@@ -1825,7 +1869,7 @@ const DEMO_WORD_DATA = {
       { part: "ar", reading: "アー", meaning: "〜の", origin: "ラテン語 -aris", phonetic: "ər" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "ポプリの香りが評判を呼び、店は人気になった",
+    goroText: "ポプリ(popul)がアート(ar)作品に、一(ity)夜で人気爆発だってさ",
   },
   opportunity: {
     meaning: "好機・機会", phonetic: "ˌɒpərˈtjuːnəti",
@@ -1835,7 +1879,7 @@ const DEMO_WORD_DATA = {
       { part: "portun", reading: "ポーチュン", meaning: "港へ向いた・好機の", origin: "ラテン語 portus 由来", phonetic: "pɔːrtjuːn" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "落ちたポーチを拾った縁が、好機を運んできた",
+    goroText: "落(op)ちたポーチ(portun)を拾ったら、一(ity)生分の好機が来た！",
   },
   personality: {
     meaning: "個性・人格", phonetic: "ˌpɜːrsəˈnæləti",
@@ -1845,7 +1889,7 @@ const DEMO_WORD_DATA = {
       { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "派手なパーカー姿に、その人の個性がにじんだ",
+    goroText: "パーカー(person)にアル(al)ミ箔、一(ity)目でわかる強烈な個性",
   },
   information: {
     meaning: "情報", phonetic: "ˌɪnfərˈmeɪʃən",
@@ -1855,7 +1899,7 @@ const DEMO_WORD_DATA = {
       { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "駅のホームの掲示が、最新の情報を伝えていた",
+    goroText: "インク(in)切れのホーム(form)掲示、え〜っ(ation)情報が読めない！",
   },
   application: {
     meaning: "申請・応用・アプリ", phonetic: "ˌæplɪˈkeɪʃən",
@@ -1865,7 +1909,7 @@ const DEMO_WORD_DATA = {
       { part: "plic", reading: "プリク", meaning: "重ねる・折りたたむ", origin: "ラテン語 plicare", phonetic: "plɪk" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "分厚い書類を窓口に出し、補助金を申請した",
+    goroText: "アプリ(ap)からプリクラ(plic)写真を添え、A判(ation)で申請完了！",
   },
   organization: {
     meaning: "組織・団体", phonetic: "ˌɔːrɡənaɪˈzeɪʃən",
@@ -1875,7 +1919,7 @@ const DEMO_WORD_DATA = {
       { part: "iz", reading: "アイズ", meaning: "〜化する", origin: "ギリシャ語 -izein", phonetic: "aɪz" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "大きな鐘の合図で人が集まり、組織ができた",
+    goroText: "オルガン(organ)の合図(iz)で集合、え〜(ation)謎の組織が誕生",
   },
   illustration: {
     meaning: "説明図・イラスト", phonetic: "ˌɪləˈstreɪʃən",
@@ -1885,7 +1929,7 @@ const DEMO_WORD_DATA = {
       { part: "lustr", reading: "ラストル", meaning: "輝かせる", origin: "ラテン語 lustrare", phonetic: "lʌstər" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "いるかを描き足し、分かりやすい説明図になった",
+    goroText: "いる(il)かをラスト(lustr)に足し、映(ation)える説明図が完成",
   },
   examination: {
     meaning: "試験・検査", phonetic: "ɪɡˌzæmɪˈneɪʃən",
@@ -1895,7 +1939,7 @@ const DEMO_WORD_DATA = {
       { part: "amin", reading: "アミン", meaning: "調べる", origin: "ラテン語 examinare", phonetic: "æmɪn" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "駅前で編み物の腕を競う試験が始まった",
+    goroText: "駅(ex)前の編み(amin)物試験、え〜(ation)こんなに難しいの!?",
   },
   celebration: {
     meaning: "祝賀・お祝い", phonetic: "ˌsɛlɪˈbreɪʃən",
@@ -1904,7 +1948,7 @@ const DEMO_WORD_DATA = {
       { part: "celebr", reading: "セレブル", meaning: "祝う", origin: "ラテン語 celebrare", phonetic: "sɛləbr" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "競り落とした鯛を囲み、みんなでお祝いした",
+    goroText: "セレブ(celebr)が栄光(ation)を祝い、鯛まで踊り出すお祝い",
   },
   inspiration: {
     meaning: "ひらめき・霊感", phonetic: "ˌɪnspəˈreɪʃən",
@@ -1914,7 +1958,7 @@ const DEMO_WORD_DATA = {
       { part: "spir", reading: "スピル", meaning: "息をする", origin: "ラテン語 spirare", phonetic: "spɪr" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "深く息を吸うと、良い案がふとひらめいた",
+    goroText: "息(in)を吸(spir)った途端、映画(ation)のようなひらめきが降臨！",
   },
   exploration: {
     meaning: "探検・探査", phonetic: "ˌɛkspləˈreɪʃən",
@@ -1924,7 +1968,7 @@ const DEMO_WORD_DATA = {
       { part: "plor", reading: "プロール", meaning: "叫ぶ・探し求める", origin: "ラテン語 plorare", phonetic: "plɔːr" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "駅を離れ、プロの案内で洞窟を探検した",
+    goroText: "駅(ex)を出てプロ(plor)と洞窟へ、え〜っ(ation)遺跡発見の大探検！",
   },
   observation: {
     meaning: "観察", phonetic: "ˌɒbzərˈveɪʃən",
@@ -1934,7 +1978,7 @@ const DEMO_WORD_DATA = {
       { part: "serv", reading: "サーヴ", meaning: "仕える・保つ", origin: "ラテン語 servare", phonetic: "sɜːrv" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "帯を締め直し、皿の中の虫を丁寧に観察した",
+    goroText: "帯(ob)を締めた皿(serv)洗いが、衛生(ation)状態をじっくり観察",
   },
   publication: {
     meaning: "出版・公表", phonetic: "ˌpʌblɪˈkeɪʃən",
@@ -1944,7 +1988,7 @@ const DEMO_WORD_DATA = {
       { part: "ic", reading: "イク", meaning: "〜の（形容詞化）", origin: "ラテン語 -icus", phonetic: "ɪk" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "パブの片隅で書いた話が、ついに出版された",
+    goroText: "パブ(publ)で幾(ic)晩も書いた話が、A賞(ation)取って出版された！",
   },
   graduation: {
     meaning: "卒業", phonetic: "ˌɡrædʒuˈeɪʃən",
@@ -1953,7 +1997,7 @@ const DEMO_WORD_DATA = {
       { part: "gradu", reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "ぐらつく足で壇上に立ち、無事に卒業した",
+    goroText: "グラグラ(gradu)の足で壇上へ、え〜ん(ation)と泣いて卒業した",
   },
 };
 
