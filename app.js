@@ -164,6 +164,131 @@ const AFFIX_SUFFIXES = {
 
 const LOCAL_AFFIX_DICT = { ...AFFIX_PREFIXES, ...AFFIX_ROOTS, ...AFFIX_SUFFIXES };
 
+/* demo_words.csv の語呂合わせ本文にだけ登場する接辞（LOCAL_AFFIX_DICTに
+   収録の無いもの）の読み・意味・語源・発音記号。DEMO_WORD_DATAをCSVから
+   組み立てる際、goroText中の(part)注釈をここと LOCAL_AFFIX_DICT で解決する。
+   isKnownAffix()の判定には使わない（＝これらは常に「新しく調べた接辞」の
+   オレンジ色で表示される。実際、辞書未収録の語根として扱うのが正しい） */
+const DEMO_CUSTOM_MORPHEMES = {
+  "ation":  { reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+  "or":     { reading: "オア", meaning: "〜する人・もの", origin: "ラテン語 -or", phonetic: "ɔːr" },
+  "ure":    { reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
+  "ing":    { reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
+  "lock":   { reading: "ロック", meaning: "錠・閉じる", origin: "古英語 loc", phonetic: "lɒk" },
+  "build":  { reading: "ビルド", meaning: "建てる", origin: "古英語 byldan", phonetic: "bɪld" },
+  "order":  { reading: "オーダー", meaning: "順序・命令", origin: "ラテン語 ordo", phonetic: "ˈɔːrdər" },
+  "view":   { reading: "ヴュー", meaning: "見る・眺め", origin: "ラテン語 videre", phonetic: "vjuː" },
+  "gradu":  { reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
+  "cult":   { reading: "カルト", meaning: "耕す・育てる", origin: "ラテン語 colere", phonetic: "kʌlt" },
+  "lat":    { reading: "ラト", meaning: "運ぶ・移す", origin: "ラテン語 latus", phonetic: "leɪt" },
+  "clud":   { reading: "クルード", meaning: "閉じる", origin: "ラテン語 claudere", phonetic: "kluːd" },
+  "oper":   { reading: "オペル", meaning: "働く", origin: "ラテン語 operari", phonetic: "ˈɒpər" },
+  "nect":   { reading: "ネクト", meaning: "結ぶ", origin: "ラテン語 nectere", phonetic: "nɛkt" },
+  "pact":   { reading: "パクト", meaning: "締める・固める", origin: "ラテン語 pangere", phonetic: "pækt" },
+  "leg":    { reading: "レグ", meaning: "法律", origin: "ラテン語 lex/legis", phonetic: "liːg" },
+  "poss":   { reading: "ポッス", meaning: "できる・力", origin: "ラテン語 posse", phonetic: "pɒs" },
+  "regul":  { reading: "レギュル", meaning: "規則・定める", origin: "ラテン語 regula", phonetic: "ˈregjʊl" },
+  "friend": { reading: "フレンド", meaning: "友", origin: "古英語 freond", phonetic: "frɛnd" },
+  "frost":  { reading: "フロスト", meaning: "霜・凍る", origin: "古英語 forst", phonetic: "frɒst" },
+  "sens":   { reading: "センス", meaning: "感じる", origin: "ラテン語 sentire", phonetic: "sɛns" },
+  "mat":    { reading: "マト", meaning: "自ら動く", origin: "ギリシャ語 -matos", phonetic: "mæt" },
+  "come":   { reading: "カム", meaning: "来る", origin: "古英語 cuman", phonetic: "kʌm" },
+  "estim":  { reading: "エスティム", meaning: "見積もる", origin: "ラテン語 aestimare", phonetic: "ˈɛstɪm" },
+  "vis":    { reading: "ヴィス", meaning: "見る", origin: "ラテン語 videre", phonetic: "vɪs" },
+  "fin":    { reading: "フィン", meaning: "終わり・限り", origin: "ラテン語 finis", phonetic: "fɪn" },
+  "ply":    { reading: "プライ", meaning: "折る・重ねる", origin: "ラテン語 plicare", phonetic: "plaɪ" },
+  "cast":   { reading: "キャスト", meaning: "投げる", origin: "古ノルド語 kasta", phonetic: "kæst" },
+  "norm":   { reading: "ノーム", meaning: "基準・規範", origin: "ラテン語 norma", phonetic: "nɔːrm" },
+  "vent":   { reading: "ヴェント", meaning: "来る", origin: "ラテン語 venire", phonetic: "vɛnt" },
+  "noon":   { reading: "ヌーン", meaning: "正午", origin: "ラテン語 nona", phonetic: "nuːn" },
+  "grade":  { reading: "グレード", meaning: "段階", origin: "ラテン語 gradus", phonetic: "greɪd" },
+  "act":    { reading: "アクト", meaning: "行う", origin: "ラテン語 agere", phonetic: "ækt" },
+  "road":   { reading: "ロード", meaning: "道", origin: "古英語 rad", phonetic: "roʊd" },
+  "load":   { reading: "ロード", meaning: "積む・荷", origin: "古英語 lad", phonetic: "loʊd" },
+  "system": { reading: "システム", meaning: "組織・体系", origin: "ギリシャ語 systema", phonetic: "ˈsɪstəm" },
+  "brace":  { reading: "ブレース", meaning: "腕・締める", origin: "ラテン語 bracchium", phonetic: "breɪs" },
+  "gene":   { reading: "ジーン", meaning: "生まれ・種", origin: "ギリシャ語 genos", phonetic: "dʒiːn" },
+  "struct": { reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
+  "scop":   { reading: "スコープ", meaning: "見る道具", origin: "ギリシャ語 skopein", phonetic: "skoʊp" },
+  "night":  { reading: "ナイト", meaning: "夜", origin: "古英語 niht", phonetic: "naɪt" },
+  "nat":    { reading: "ナト", meaning: "生まれる", origin: "ラテン語 nasci", phonetic: "næt" },
+  "stand":  { reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
+  "dox":    { reading: "ドクス", meaning: "意見・信条", origin: "ギリシャ語 doxa", phonetic: "dɒks" },
+  "fect":   { reading: "フェクト", meaning: "作る・行う", origin: "ラテン語 facere", phonetic: "fɛkt" },
+  "nym":    { reading: "ニム", meaning: "名前", origin: "ギリシャ語 onyma", phonetic: "nɪm" },
+  "chron":  { reading: "クロン", meaning: "時間", origin: "ギリシャ語 chronos", phonetic: "krɒn" },
+  "cycl":   { reading: "サイクル", meaning: "輪・円", origin: "ギリシャ語 kyklos", phonetic: "ˈsaɪkl" },
+  "viol":   { reading: "ヴァイオ", meaning: "紫・すみれ", origin: "ラテン語 viola", phonetic: "ˈvaɪə" },
+  "form":   { reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
+  "roy":    { reading: "ロイ", meaning: "王", origin: "ラテン語 rex/regis", phonetic: "rɔɪ" },
+  "milit":  { reading: "ミリト", meaning: "兵士", origin: "ラテン語 miles/militis", phonetic: "ˈmɪlɪt" },
+  "power":  { reading: "パワー", meaning: "力", origin: "ラテン語 posse", phonetic: "ˈpaʊər" },
+  "care":   { reading: "ケア", meaning: "気づかい", origin: "古英語 caru", phonetic: "kɛr" },
+  "equip":  { reading: "イクイプ", meaning: "備える", origin: "古フランス語 equiper", phonetic: "ɪˈkwɪp" },
+  "kind":   { reading: "カインド", meaning: "親切な・種類", origin: "古英語 gecynde", phonetic: "kaɪnd" },
+  "art":    { reading: "アート", meaning: "技・芸術", origin: "ラテン語 ars/artis", phonetic: "ɑːrt" },
+  "abil":   { reading: "アビル", meaning: "できる・力", origin: "ラテン語 habilis", phonetic: "əˈbɪl" },
+  "pack":   { reading: "パック", meaning: "包む", origin: "中世オランダ語 pak", phonetic: "pæk" },
+  "tour":   { reading: "ツアー", meaning: "巡る", origin: "ラテン語 tornus", phonetic: "tʊər" },
+  "simpl":  { reading: "シンプル", meaning: "単純な", origin: "ラテン語 simplex", phonetic: "ˈsɪmpl" },
+  "quick":  { reading: "クイック", meaning: "素早い", origin: "古英語 cwic", phonetic: "kwɪk" },
+  "child":  { reading: "チャイルド", meaning: "子ども", origin: "古英語 cild", phonetic: "tʃaɪld" },
+  "man":    { reading: "マン", meaning: "手", origin: "ラテン語 manus", phonetic: "mæn" },
+  "photo":  { reading: "フォト", meaning: "光", origin: "ギリシャ語 phos/photos", phonetic: "ˈfoʊtoʊ" },
+  "phon":   { reading: "フォン", meaning: "音・声", origin: "ギリシャ語 phone", phonetic: "foʊn" },
+  "audi":   { reading: "オーディ", meaning: "聞く", origin: "ラテン語 audire", phonetic: "ˈɔːdi" },
+  "path":   { reading: "パス", meaning: "感じる・苦しむ", origin: "ギリシャ語 pathos", phonetic: "pæθ" },
+  "sign":   { reading: "サイン", meaning: "印・しるし", origin: "ラテン語 signum", phonetic: "saɪn" },
+  "solu":   { reading: "ソル", meaning: "解く・ゆるめる", origin: "ラテン語 solvere", phonetic: "sɒl" },
+  "main":   { reading: "メイン", meaning: "手・主要な", origin: "ラテン語 manus", phonetic: "meɪn" },
+  "tain":   { reading: "テイン", meaning: "保つ", origin: "ラテン語 tenere", phonetic: "teɪn" },
+  "valu":   { reading: "ヴァル", meaning: "価値", origin: "ラテン語 valere", phonetic: "ˈvælju" },
+  "ver":    { reading: "ヴェル", meaning: "真実", origin: "ラテン語 verus", phonetic: "vɛr" },
+  "vinc":   { reading: "ヴィンク", meaning: "打ち勝つ", origin: "ラテン語 vincere", phonetic: "vɪns" },
+  "voc":    { reading: "ヴォク", meaning: "声・呼ぶ", origin: "ラテン語 vox/vocis", phonetic: "voʊk" },
+  "terr":   { reading: "テル", meaning: "土地", origin: "ラテン語 terra", phonetic: "tɛr" },
+  "ain":    { reading: "アイン", meaning: "〜に関する", origin: "ラテン語 -anus", phonetic: "eɪn" },
+  "mem":    { reading: "メモ", meaning: "記憶", origin: "ラテン語 memor", phonetic: "mɛm" },
+  "nov":    { reading: "ノヴ", meaning: "新しい", origin: "ラテン語 novus", phonetic: "nɒv" },
+  "prim":   { reading: "プリム", meaning: "最初の", origin: "ラテン語 primus", phonetic: "praɪm" },
+  "it":     { reading: "イト", meaning: "行く", origin: "ラテン語 ire", phonetic: "ɪt" },
+  "cor":    { reading: "コル", meaning: "共に（com-の異形）", origin: "ラテン語 com- の異形", phonetic: "kɔːr" },
+  "rupt":   { reading: "ラプト", meaning: "破る", origin: "ラテン語 rumpere", phonetic: "rʌpt" },
+  "sect":   { reading: "セクト", meaning: "切る", origin: "ラテン語 secare", phonetic: "sɛkt" },
+  "sequ":   { reading: "セク", meaning: "続く", origin: "ラテン語 sequi", phonetic: "siːkw" },
+  "son":    { reading: "ソン", meaning: "音", origin: "ラテン語 sonus", phonetic: "sɒn" },
+  "tact":   { reading: "タクト", meaning: "触れる", origin: "ラテン語 tangere", phonetic: "tækt" },
+  "ile":    { reading: "イル", meaning: "〜しやすい", origin: "ラテン語 -ilis", phonetic: "aɪl" },
+  "urb":    { reading: "ウルブ", meaning: "都市", origin: "ラテン語 urbs", phonetic: "ɜːrb" },
+  "an":     { reading: "アン", meaning: "〜に関する", origin: "ラテン語 -anus", phonetic: "ən" },
+  "sur":    { reading: "サー", meaning: "上に・超えて", origin: "ラテン語 super", phonetic: "sɜːr" },
+  "viv":    { reading: "ヴィヴ", meaning: "生きる", origin: "ラテン語 vivere", phonetic: "vɪv" },
+  "cap":    { reading: "キャプ", meaning: "取る・つかむ", origin: "ラテン語 capere", phonetic: "kæp" },
+  "af":     { reading: "アフ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad- の異形", phonetic: "əf" },
+  "flu":    { reading: "フル", meaning: "流れる", origin: "ラテン語 fluere", phonetic: "fluː" },
+  "fund":   { reading: "ファンド", meaning: "底・基礎", origin: "ラテン語 fundus", phonetic: "fʌnd" },
+  "col":    { reading: "コル", meaning: "共に（com-の異形）", origin: "ラテン語 com- の異形", phonetic: "kɒl" },
+  "lect":   { reading: "レクト", meaning: "集める・選ぶ", origin: "ラテン語 legere", phonetic: "lɛkt" },
+  "ar":     { reading: "アー", meaning: "〜の・〜に関する", origin: "ラテン語 -aris", phonetic: "ər" },
+  "as":     { reading: "アス", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad- の異形", phonetic: "əs" },
+  "at":     { reading: "アト", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad- の異形", phonetic: "æt" },
+  "dif":    { reading: "ディフ", meaning: "分離・異なる方向へ", origin: "ラテン語 dis- の異形", phonetic: "dɪf" },
+  "fer":    { reading: "ファー", meaning: "運ぶ", origin: "ラテン語 ferre", phonetic: "fɜːr" },
+  "sist":   { reading: "シスト", meaning: "立つ", origin: "ラテン語 sistere", phonetic: "sɪst" },
+  "duct":   { reading: "ダクト", meaning: "導く", origin: "ラテン語 ducere", phonetic: "dʌkt" },
+  "graph":  { reading: "グラフ", meaning: "書く・描く", origin: "ギリシャ語 graphein", phonetic: "græf" },
+  "lead":   { reading: "リード", meaning: "導く", origin: "古英語 lædan", phonetic: "liːd" },
+  "loc":    { reading: "ロク", meaning: "場所", origin: "ラテン語 locus", phonetic: "loʊk" },
+  "lumin":  { reading: "ルミン", meaning: "光", origin: "ラテン語 lumen", phonetic: "ˈluːmɪn" },
+  "mot":    { reading: "モート", meaning: "動く", origin: "ラテン語 movere", phonetic: "moʊt" },
+  "pend":   { reading: "ペンド", meaning: "ぶら下がる・重さを量る", origin: "ラテン語 pendere", phonetic: "pɛnd" },
+  "plic":   { reading: "プリク", meaning: "折る・重ねる", origin: "ラテン語 plicare", phonetic: "plɪk" },
+  "tens":   { reading: "テンス", meaning: "張る", origin: "ラテン語 tendere", phonetic: "tɛns" },
+  "test":   { reading: "テスト", meaning: "証言する", origin: "ラテン語 testis", phonetic: "tɛst" },
+  "funct":  { reading: "ファンクト", meaning: "働く・機能", origin: "ラテン語 fungi", phonetic: "fʌŋkt" },
+  "velop":  { reading: "ヴェロプ", meaning: "包む", origin: "古フランス語 voloper", phonetic: "ˈvɛləp" },
+};
+
 /* ------------------------------------------------------------------ *
  * 1. IndexedDB ラッパー
  * ------------------------------------------------------------------ */
@@ -1117,8 +1242,9 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
  *   ユーザーの作風に寄っていく。すべてローカルのみでクラウド同期はしない。
  * ------------------------------------------------------------------ */
 /* 種データの本文を書き換えるたびに再シードが必要なため、ここを上げる
-   （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し） */
-const GORO_SEED_VERSION = "v4";
+   （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し /
+    v5: demo_words.csv化・126件に拡充） */
+const GORO_SEED_VERSION = "v5";
 const GORO_EXAMPLE_TOPK = 4;
 /* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
    使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
@@ -1148,6 +1274,7 @@ async function ensureGoroCorpusReady(provider, apiKey) {
   if (provider !== "sakura" || !apiKey) return;
   if ((await kvGet("goro_seed_version", null)) === GORO_SEED_VERSION) return;
   try {
+    await demoWordDataReady;
     const seeds = buildGoroSeedCorpus();
     if (!seeds.length) return;
     const [meaningPassageVecs, meaningQueryVecs, goroVecs] = await Promise.all([
@@ -1792,20 +1919,95 @@ if (!SpeechRecognitionCtor && !canRecord) {
      録音が切れてしまい、長い単語の途中で終わる原因になる */
 }
 
-/* 単語履歴が少ない(初回起動時・6件に満たない間)に埋め合わせで表示する、
-   接辞分解しがいのある長め単語のサンプル */
-const SAMPLE_WORDS = [
-  "presentation", "reincarnation", "visualization", "immortality", "reconstruction",
-  "architecture", "transformation", "disqualification", "misunderstanding", "unbelievable",
-  "extraordinary", "international", "responsibility", "communication", "appreciation",
-  "imagination", "popularity", "opportunity", "personality", "information",
-  "application", "organization", "illustration", "examination", "celebration",
-  "inspiration", "exploration", "observation", "publication", "graduation",
-];
+/* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
+   デモ用の分解結果・語呂合わせを実行時に demo_words.csv から読み込んで
+   組み立てる（AI応答(decomposeWord/generateGoroの戻り値)と同じ形に揃える）。
+   単語を増やしたい・語呂を直したい場合はこのJSファイルを触らずに、
+   GitHub上で demo_words.csv （word, meaning, goroText の3列）を編集
+   するだけでよいようにするための仕組み。
+   goroText中の(part)注釈から使われている接辞を割り出し、
+   LOCAL_AFFIX_DICT → DEMO_CUSTOM_MORPHEMES の順で読み・意味・語源・
+   発音記号を引く。phonetic（単語全体の発音）とmemoryTipは、その接辞情報
+   から機械的に組み立てる（多少大まかだが、デモ表示としては十分） */
+let DEMO_WORD_DATA = {};
+
+/* RFC4180ふうの簡易CSVパーサ。ダブルクォートで囲んだフィールド内の
+   カンマ・改行・エスケープされたクォート("" )に対応する */
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field); field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      rows.push(row); row = [];
+    } else {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((f) => f.trim() !== ""));
+}
+
+function morphemesFromGoroText(goroText) {
+  const seen = [];
+  for (const m of goroText.matchAll(/[（(]([A-Za-z][A-Za-z'-]*)[）)]/g)) {
+    const part = m[1].toLowerCase();
+    if (!seen.includes(part)) seen.push(part);
+  }
+  return seen.map((part) => {
+    const d = LOCAL_AFFIX_DICT[part] || DEMO_CUSTOM_MORPHEMES[part];
+    if (!d) {
+      console.warn(`demo_words.csv: 接辞 "${part}" の辞書定義が見つかりません（このデモ単語では表示に空欄が出ます）`);
+      return { part, reading: "", meaning: "", origin: "", phonetic: "" };
+    }
+    return { part, ...d };
+  });
+}
+
+async function loadDemoWordData() {
+  try {
+    const res = await fetch("./demo_words.csv");
+    if (!res.ok) throw new Error(`demo_words.csv の取得に失敗しました (${res.status})`);
+    const rows = parseCsv(await res.text());
+    const [header, ...body] = rows;
+    const idx = {
+      word: header.indexOf("word"),
+      meaning: header.indexOf("meaning"),
+      goroText: header.indexOf("goroText"),
+    };
+    const data = {};
+    for (const r of body) {
+      const word = (r[idx.word] || "").trim().toLowerCase();
+      const meaning = (r[idx.meaning] || "").trim();
+      const goroText = (r[idx.goroText] || "").trim();
+      if (!word || !meaning || !goroText) continue;
+      const morphemes = morphemesFromGoroText(goroText);
+      const memoryTip = `${morphemes.map((m) => `${m.part}(${m.meaning})`).join("+")}で、${meaning}、と覚える。`;
+      const phonetic = morphemes.map((m) => m.phonetic).join("");
+      data[word] = { meaning, phonetic, memoryTip, morphemes, goroText };
+    }
+    DEMO_WORD_DATA = data;
+  } catch (err) {
+    console.warn("デモ単語データ(demo_words.csv)の読み込みに失敗しました（デモ体験なしで続行します）:", err);
+  }
+}
+const demoWordDataReady = loadDemoWordData();
 
 function pickSampleWords(count, exclude = []) {
   const excludeLower = new Set(exclude.map((w) => w.toLowerCase()));
-  const pool = SAMPLE_WORDS.filter((w) => !excludeLower.has(w.toLowerCase()));
+  const pool = Object.keys(DEMO_WORD_DATA).filter((w) => !excludeLower.has(w.toLowerCase()));
   const picked = [];
   while (picked.length < count && pool.length) {
     const idx = Math.floor(Math.random() * pool.length);
@@ -1814,314 +2016,8 @@ function pickSampleWords(count, exclude = []) {
   return picked;
 }
 
-/* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
-   SAMPLE_WORDS全単語ぶんの分解結果・語呂合わせをあらかじめ用意したデモ用データ。
-   AI応答(decomposeWord/generateGoroの戻り値)と同じ形に揃えてある */
-const DEMO_WORD_DATA = {
-  presentation: {
-    meaning: "発表・提示すること", phonetic: "prɛzənˈteɪʃən",
-    memoryTip: "pre(前もって)+sent(示す)+ation(すること)で、前もって示すこと=発表、と覚える。",
-    morphemes: [
-      { part: "pre", reading: "プリ", meaning: "前もって", origin: "ラテン語 prae-", phonetic: "priː" },
-      { part: "sent", reading: "セント", meaning: "感じる・示す", origin: "ラテン語 sentire", phonetic: "sɛnt" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！",
-  },
-  reincarnation: {
-    meaning: "生まれ変わり・輪廻転生", phonetic: "ˌriːɪnkɑːrˈneɪʃən",
-    memoryTip: "re(再び)+in(中へ)+carn(肉体)+ation(すること)で、再び肉体の中へ入ること=生まれ変わり、と覚える。",
-    morphemes: [
-      { part: "re", reading: "リ", meaning: "再び・戻す", origin: "ラテン語 re-", phonetic: "riː" },
-      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
-      { part: "carn", reading: "カーン", meaning: "肉体・肉", origin: "ラテン語 caro/carnis", phonetic: "kɑːrn" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "霊(re)が印(in)を結び缶(carn)の前で詠唱(ation)、生まれ変わり成功！",
-  },
-  visualization: {
-    meaning: "視覚化すること・可視化", phonetic: "ˌvɪʒuəlaɪˈzeɪʃən",
-    memoryTip: "vis(見る)+ual(〜の)+ization(〜化すること)で、見えるようにすること=視覚化、と覚える。",
-    morphemes: [
-      { part: "vis", reading: "ヴィス", meaning: "見る", origin: "ラテン語 videre", phonetic: "vɪs" },
-      { part: "ual", reading: "アル", meaning: "〜に関する", origin: "ラテン語 -alis", phonetic: "əl" },
-      { part: "ization", reading: "ゼーション", meaning: "〜化すること", origin: "ラテン語 -izatio", phonetic: "zeɪʃən" },
-    ],
-    goroText: "美(vis)人ある(ual)ある、税収(ization)グラフで可視化したら大爆笑",
-  },
-  immortality: {
-    meaning: "不死・不滅", phonetic: "ˌɪmɔːrˈtæləti",
-    memoryTip: "im(〜でない)+mort(死)+al(〜の)+ity(〜性)で、死なない性質=不死、と覚える。",
-    morphemes: [
-      { part: "im", reading: "イム", meaning: "〜でない", origin: "ラテン語 in- の異形", phonetic: "ɪm" },
-      { part: "mort", reading: "モート", meaning: "死", origin: "ラテン語 mors/mortis", phonetic: "mɔːrt" },
-      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "芋(im)もっと(mort)ある(al)ぞ、一(ity)生食える不死の体！",
-  },
-  reconstruction: {
-    meaning: "再建・再構築", phonetic: "ˌriːkənˈstrʌkʃən",
-    memoryTip: "re(再び)+con(共に)+struct(組み立てる)+ion(すること)で、再び共に組み立てること=再建、と覚える。",
-    morphemes: [
-      { part: "re", reading: "リ", meaning: "再び・戻す", origin: "ラテン語 re-", phonetic: "riː" },
-      { part: "con", reading: "コン", meaning: "共に", origin: "ラテン語 com- の異形", phonetic: "kən" },
-      { part: "struct", reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
-      { part: "ion", reading: "イオン", meaning: "名詞化（〜すること）", origin: "ラテン語 -io", phonetic: "ən" },
-    ],
-    goroText: "離(re)婚(con)したがトラクター(struct)一台で家を再建、以(ion)上！",
-  },
-  architecture: {
-    meaning: "建築・構造", phonetic: "ˈɑːrkɪtektʃər",
-    memoryTip: "archi(主要な)+tect(建てる)+ure(こと)で、中心となって建てること=建築、と覚える。",
-    morphemes: [
-      { part: "archi", reading: "アーキ", meaning: "主要な・第一の", origin: "ギリシャ語 arkhi-", phonetic: "ɑːrki" },
-      { part: "tect", reading: "テクト", meaning: "建てる", origin: "ギリシャ語 tekton", phonetic: "tɛkt" },
-      { part: "ure", reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
-    ],
-    goroText: "空き(archi)地に手作(tect)りの湯屋(ure)、これぞ建築の極み！",
-  },
-  transformation: {
-    meaning: "変形・変化", phonetic: "ˌtrænsfərˈmeɪʃən",
-    memoryTip: "trans(越えて)+form(形)+ation(すること)で、形を越えて変わること=変形、と覚える。",
-    morphemes: [
-      { part: "trans", reading: "トランス", meaning: "越えて・移す", origin: "ラテン語 trans-", phonetic: "trænz" },
-      { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "トランス(trans)状態のホーム(form)で、え〜っ(ation)電車が変形！",
-  },
-  disqualification: {
-    meaning: "資格取り消し・失格", phonetic: "ˌdɪskwɒlɪfɪˈkeɪʃən",
-    memoryTip: "dis(否定)+quali(資格)+fication(〜化すること)で、資格を無くすこと=失格、と覚える。",
-    morphemes: [
-      { part: "dis", reading: "ディス", meaning: "否定・分離", origin: "ラテン語 dis-", phonetic: "dɪs" },
-      { part: "quali", reading: "クオリ", meaning: "質・資格", origin: "ラテン語 qualis", phonetic: "kwɒli" },
-      { part: "fication", reading: "フィケーション", meaning: "〜化すること", origin: "ラテン語 facere 由来", phonetic: "fɪkeɪʃən" },
-    ],
-    goroText: "弟子(dis)がクオリティ(quali)低い引っ掛け(fication)技で失格、あーあ",
-  },
-  misunderstanding: {
-    meaning: "誤解", phonetic: "ˌmɪsʌndərˈstændɪŋ",
-    memoryTip: "mis(誤って)+under(下に)+stand(立つ)+ing(すること)で、誤った理解=誤解、と覚える。",
-    morphemes: [
-      { part: "mis", reading: "ミス", meaning: "誤って", origin: "古英語 mis-", phonetic: "mɪs" },
-      { part: "under", reading: "アンダー", meaning: "下に", origin: "古英語 under", phonetic: "ʌndər" },
-      { part: "stand", reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
-      { part: "ing", reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
-    ],
-    goroText: "ミス(mis)で安(under)いスタンプ(stand)を押され、言(ing)い分は誤解",
-  },
-  unbelievable: {
-    meaning: "信じられない", phonetic: "ˌʌnbɪˈliːvəbl",
-    memoryTip: "un(〜でない)+believ(信じる)+able(〜できる)で、信じられない、と覚える。",
-    morphemes: [
-      { part: "un", reading: "アン", meaning: "〜でない・否定", origin: "古英語 un-", phonetic: "ʌn" },
-      { part: "believ", reading: "ビリーヴ", meaning: "信じる", origin: "古英語 belyfan", phonetic: "bɪliːv" },
-      { part: "able", reading: "アブル", meaning: "〜できる", origin: "ラテン語 -abilis", phonetic: "əbl" },
-    ],
-    goroText: "餡(un)がびりびり(believ)アブラ(able)ゼミに化けた、信じられん！",
-  },
-  extraordinary: {
-    meaning: "並外れた・驚くべき", phonetic: "ɪkˈstrɔːrdəneri",
-    memoryTip: "extra(超えて)+ordin(順序)+ary(〜に関する)で、普通の順序を超えたこと=並外れた、と覚える。",
-    morphemes: [
-      { part: "extra", reading: "エクストラ", meaning: "外に・超えて", origin: "ラテン語 extra", phonetic: "ɛkstrə" },
-      { part: "ordin", reading: "オーディン", meaning: "順序", origin: "ラテン語 ordo", phonetic: "ɔːrdɪn" },
-      { part: "ary", reading: "アリー", meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius", phonetic: "ɛri" },
-    ],
-    goroText: "エキストラ(extra)が大どん(ordin)引きの蟻(ary)役、並外れた演技だ",
-  },
-  international: {
-    meaning: "国際的な", phonetic: "ˌɪntərˈnæʃənəl",
-    memoryTip: "inter(〜の間)+nation(国家)+al(〜の)で、国家の間の=国際的な、と覚える。",
-    morphemes: [
-      { part: "inter", reading: "インター", meaning: "〜の間", origin: "ラテン語 inter-", phonetic: "ˈɪntər" },
-      { part: "nation", reading: "ネーション", meaning: "国家・国民", origin: "ラテン語 natio", phonetic: "neɪʃən" },
-      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
-    ],
-    goroText: "インターホン(inter)に「ねえ(nation)ある(al)?」国際的な注文が届く",
-  },
-  responsibility: {
-    meaning: "責任", phonetic: "rɪˌspɒnsəˈbɪləti",
-    memoryTip: "respons(応じる)+ibil(〜できる)+ity(〜性)で、応じられる性質=責任、と覚える。",
-    morphemes: [
-      { part: "respons", reading: "レスポンス", meaning: "応じる", origin: "ラテン語 respondere", phonetic: "rɪspɒns" },
-      { part: "ibil", reading: "イビル", meaning: "〜できる", origin: "ラテン語 -ibilis", phonetic: "ɪbɪl" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "レストラン(respons)の意地悪(ibil)店主、一(ity)応は責任を取った",
-  },
-  communication: {
-    meaning: "伝達・意思疎通", phonetic: "kəˌmjuːnɪˈkeɪʃən",
-    memoryTip: "com(共に)+muni(共有する)+cation(〜化すること)で、共に分かち合うこと=伝達、と覚える。",
-    morphemes: [
-      { part: "com", reading: "コム", meaning: "共に", origin: "ラテン語 com-", phonetic: "kəm" },
-      { part: "muni", reading: "ミューニ", meaning: "共有する", origin: "ラテン語 munis", phonetic: "mjuːni" },
-      { part: "cation", reading: "ケーション", meaning: "〜化すること", origin: "ラテン語 -catio", phonetic: "keɪʃən" },
-    ],
-    goroText: "込(com)み合う無(muni)人島、ケータイ(cation)なしで意思疎通できた！",
-  },
-  appreciation: {
-    meaning: "感謝・鑑賞", phonetic: "əˌpriːʃiˈeɪʃən",
-    memoryTip: "ap(〜へ)+preci(価値)+ation(すること)で、価値を認めること=感謝、と覚える。",
-    morphemes: [
-      { part: "ap", reading: "アプ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad-", phonetic: "æp" },
-      { part: "preci", reading: "プレシ", meaning: "価値", origin: "ラテン語 pretium", phonetic: "prɛsi" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "アプリ(ap)のプレゼント(preci)に、え〜っ(ation)と叫ぶほど感謝！",
-  },
-  imagination: {
-    meaning: "想像力", phonetic: "ɪˌmædʒɪˈneɪʃən",
-    memoryTip: "imagin(心に描く)+ation(すること)で、想像すること=想像力、と覚える。",
-    morphemes: [
-      { part: "imagin", reading: "イマジン", meaning: "心に描く", origin: "ラテン語 imaginari", phonetic: "ɪmædʒɪn" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "今ジン(imagin)と来る映写(ation)で、子の想像力が爆発！",
-  },
-  popularity: {
-    meaning: "人気", phonetic: "ˌpɒpjuˈlærəti",
-    memoryTip: "popul(民衆)+ar(〜の)+ity(〜性)で、民衆に好かれる性質=人気、と覚える。",
-    morphemes: [
-      { part: "popul", reading: "ポピュル", meaning: "民衆", origin: "ラテン語 populus", phonetic: "pɒpjʊl" },
-      { part: "ar", reading: "アー", meaning: "〜の", origin: "ラテン語 -aris", phonetic: "ər" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "ポプリ(popul)がアート(ar)作品に、一(ity)夜で人気爆発だってさ",
-  },
-  opportunity: {
-    meaning: "好機・機会", phonetic: "ˌɒpərˈtjuːnəti",
-    memoryTip: "op(〜へ)+portun(港へ向いた)+ity(〜性)で、港へ向かう好い頃合い=好機、と覚える。",
-    morphemes: [
-      { part: "op", reading: "オプ", meaning: "〜へ向かって（ob-の異形）", origin: "ラテン語 ob-", phonetic: "ɒp" },
-      { part: "portun", reading: "ポーチュン", meaning: "港へ向いた・好機の", origin: "ラテン語 portus 由来", phonetic: "pɔːrtjuːn" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "落(op)ちたポーチ(portun)を拾ったら、一(ity)生分の好機が来た！",
-  },
-  personality: {
-    meaning: "個性・人格", phonetic: "ˌpɜːrsəˈnæləti",
-    memoryTip: "person(人)+al(〜の)+ity(〜性)で、人としての性質=個性、と覚える。",
-    morphemes: [
-      { part: "person", reading: "パーソン", meaning: "人", origin: "ラテン語 persona", phonetic: "pɜːrsən" },
-      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "パーカー(person)にアル(al)ミ箔、一(ity)目でわかる強烈な個性",
-  },
-  information: {
-    meaning: "情報", phonetic: "ˌɪnfərˈmeɪʃən",
-    memoryTip: "in(中へ)+form(形)+ation(すること)で、中に形作られたもの=情報、と覚える。",
-    morphemes: [
-      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
-      { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "インク(in)切れのホーム(form)掲示、え〜っ(ation)情報が読めない！",
-  },
-  application: {
-    meaning: "申請・応用・アプリ", phonetic: "ˌæplɪˈkeɪʃən",
-    memoryTip: "ap(〜へ)+plic(重ねる)+ation(すること)で、重ねて当てはめること=応用・申請、と覚える。",
-    morphemes: [
-      { part: "ap", reading: "アプ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad-", phonetic: "æp" },
-      { part: "plic", reading: "プリク", meaning: "重ねる・折りたたむ", origin: "ラテン語 plicare", phonetic: "plɪk" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "アプリ(ap)からプリクラ(plic)写真を添え、A判(ation)で申請完了！",
-  },
-  organization: {
-    meaning: "組織・団体", phonetic: "ˌɔːrɡənaɪˈzeɪʃən",
-    memoryTip: "organ(組織)+iz(〜化する)+ation(すること)で、組織化すること=組織、と覚える。",
-    morphemes: [
-      { part: "organ", reading: "オーガン", meaning: "器官・組織", origin: "ギリシャ語 organon", phonetic: "ɔːrgən" },
-      { part: "iz", reading: "アイズ", meaning: "〜化する", origin: "ギリシャ語 -izein", phonetic: "aɪz" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "オルガン(organ)の合図(iz)で集合、え〜(ation)謎の組織が誕生",
-  },
-  illustration: {
-    meaning: "説明図・イラスト", phonetic: "ˌɪləˈstreɪʃən",
-    memoryTip: "il(〜の中へ)+lustr(輝かせる)+ation(すること)で、中を輝かせて示すこと=説明図、と覚える。",
-    morphemes: [
-      { part: "il", reading: "イル", meaning: "〜の中へ・〜の上に", origin: "ラテン語 in- の異形（否定ではない用法）", phonetic: "ɪl" },
-      { part: "lustr", reading: "ラストル", meaning: "輝かせる", origin: "ラテン語 lustrare", phonetic: "lʌstər" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "いる(il)かをラスト(lustr)に足し、映(ation)える説明図が完成",
-  },
-  examination: {
-    meaning: "試験・検査", phonetic: "ɪɡˌzæmɪˈneɪʃən",
-    memoryTip: "ex(外へ)+amin(調べる)+ation(すること)で、外に調べ出すこと=試験、と覚える。",
-    morphemes: [
-      { part: "ex", reading: "エクス", meaning: "外へ", origin: "ラテン語 ex-", phonetic: "ɛks" },
-      { part: "amin", reading: "アミン", meaning: "調べる", origin: "ラテン語 examinare", phonetic: "æmɪn" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "駅(ex)前の編み(amin)物試験、え〜(ation)こんなに難しいの!?",
-  },
-  celebration: {
-    meaning: "祝賀・お祝い", phonetic: "ˌsɛlɪˈbreɪʃən",
-    memoryTip: "celebr(祝う)+ation(すること)で、祝うこと=お祝い、と覚える。",
-    morphemes: [
-      { part: "celebr", reading: "セレブル", meaning: "祝う", origin: "ラテン語 celebrare", phonetic: "sɛləbr" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "セレブ(celebr)が栄光(ation)を祝い、鯛まで踊り出すお祝い",
-  },
-  inspiration: {
-    meaning: "ひらめき・霊感", phonetic: "ˌɪnspəˈreɪʃən",
-    memoryTip: "in(中へ)+spir(息をする)+ation(すること)で、中に息を吹き込むこと=ひらめき、と覚える。",
-    morphemes: [
-      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
-      { part: "spir", reading: "スピル", meaning: "息をする", origin: "ラテン語 spirare", phonetic: "spɪr" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "息(in)を吸(spir)った途端、映画(ation)のようなひらめきが降臨！",
-  },
-  exploration: {
-    meaning: "探検・探査", phonetic: "ˌɛkspləˈreɪʃən",
-    memoryTip: "ex(外へ)+plor(探し求める)+ation(すること)で、外へ探し求めること=探検、と覚える。",
-    morphemes: [
-      { part: "ex", reading: "エクス", meaning: "外へ", origin: "ラテン語 ex-", phonetic: "ɛks" },
-      { part: "plor", reading: "プロール", meaning: "叫ぶ・探し求める", origin: "ラテン語 plorare", phonetic: "plɔːr" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "駅(ex)を出てプロ(plor)と洞窟へ、え〜っ(ation)遺跡発見の大探検！",
-  },
-  observation: {
-    meaning: "観察", phonetic: "ˌɒbzərˈveɪʃən",
-    memoryTip: "ob(〜に向かって)+serv(見張る)+ation(すること)で、見張ること=観察、と覚える。",
-    morphemes: [
-      { part: "ob", reading: "オブ", meaning: "〜に向かって", origin: "ラテン語 ob-", phonetic: "ɒb" },
-      { part: "serv", reading: "サーヴ", meaning: "仕える・保つ", origin: "ラテン語 servare", phonetic: "sɜːrv" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "帯(ob)を締めた皿(serv)洗いが、衛生(ation)状態をじっくり観察",
-  },
-  publication: {
-    meaning: "出版・公表", phonetic: "ˌpʌblɪˈkeɪʃən",
-    memoryTip: "publ(民衆の)+ic(〜の)+ation(すること)で、公にすること=出版、と覚える。",
-    morphemes: [
-      { part: "publ", reading: "パブル", meaning: "民衆の", origin: "ラテン語 publicus", phonetic: "pʌbl" },
-      { part: "ic", reading: "イク", meaning: "〜の（形容詞化）", origin: "ラテン語 -icus", phonetic: "ɪk" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "パブ(publ)で幾(ic)晩も書いた話が、A賞(ation)取って出版された！",
-  },
-  graduation: {
-    meaning: "卒業", phonetic: "ˌɡrædʒuˈeɪʃən",
-    memoryTip: "gradu(段階を踏む)+ation(すること)で、段階を踏み終えること=卒業、と覚える。",
-    morphemes: [
-      { part: "gradu", reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "グラグラ(gradu)の足で壇上へ、え〜ん(ation)と泣いて卒業した",
-  },
-};
-
 async function renderRecentChips() {
+  await demoWordDataReady;
   const recent = await kvGet("recent_words", []);
   /* チップは.chip-row側のCSSで3行分の高さに収まるようにしているので、
      ここでは行数に関わらず十分な数を用意しておけばよい */
@@ -2171,6 +2067,7 @@ async function startDecompose(rawWord) {
 
   const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
+  if (!apiKey) await demoWordDataReady;
   const demo = !apiKey ? DEMO_WORD_DATA[word.toLowerCase()] : null;
   if (!apiKey && !demo) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
