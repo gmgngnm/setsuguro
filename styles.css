@@ -238,7 +238,7 @@ button{font-family:inherit;cursor:pointer;}
 @media (prefers-reduced-motion: reduce){
   .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
-  .trash-can.show, .spinner,
+  .trash-can.show, .spinner, .goro-loading-dots::after,
   .letter-fix{animation:none;}
   .morph-meaning{transition:none;}
 }
@@ -317,17 +317,31 @@ button{font-family:inherit;cursor:pointer;}
 .affix-card .mean{font-size:13px;color:var(--ink-soft);margin-top:3px;}
 
 .goro-list{display:flex;flex-direction:column;gap:12px;}
-/* 語呂合わせがまだ届いていない間の場所取り。カード1枚ぶんの高さを確保して
-   おき、届いたときにレイアウトが飛び跳ねないようにする */
-.goro-pending{display:flex;align-items:center;justify-content:center;min-height:76px;}
+
+/* 語呂合わせの生成待ち。カード1枚ぶんの高さを確保しておき、
+   届いたときにレイアウトが飛び跳ねないようにする */
+.goro-loading{
+  display:flex;align-items:center;justify-content:center;min-height:76px;
+  font-size:14px;color:var(--ink-faint);letter-spacing:.04em;
+}
+.goro-loading-suffix{margin-left:2px;}
+/* 点は0個→3個→0個を繰り返す。幅を固定しておかないと点の増減で
+   ラベルまで左右に揺れてしまうので、3つぶんの幅を先に確保する */
+.goro-loading-dots{display:inline-block;width:.95em;text-align:left;}
+.goro-loading-dots::after{content:"...";animation:goroDots 1.4s steps(1,end) infinite;}
+@keyframes goroDots{
+  0%{content:"";}
+  25%{content:".";}
+  50%{content:"..";}
+  75%{content:"...";}
+  100%{content:"";}
+}
 .goro-card{
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
   box-shadow:var(--shadow);position:relative;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
-.goro-tap{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding-right:28px;}
-.goro-tap .spk{flex-shrink:0;color:var(--accent);margin-top:1px;display:inline-flex;align-items:center;}
-.goro-tap .txt{font-size:15px;line-height:1.6;color:var(--ink);}
-.goro-tap.speaking .spk{animation:pulse .6s ease-in-out infinite;}
+.goro-body{display:flex;align-items:flex-start;padding-right:28px;}
+.goro-body .txt{font-size:15px;line-height:1.6;color:var(--ink);}
 
 /* 語呂合わせカード内の編集ボタン。読み上げのタップ領域と重ならないよう
    右上に小さく置き、本文側には余白を確保しておく */
