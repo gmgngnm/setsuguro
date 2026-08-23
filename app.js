@@ -331,6 +331,8 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
          音の直後に接辞の綴りをカッコで添えさせる。この注釈は表示上の
          補助であって本文ではないので、文字数には数えない */
       "音を担っている箇所の直後に、対応する接辞の綴りを半角カッコで添えてください（例:「プリッ(pre)と」）。カッコに入れてよいのは接辞の綴りだけで、意味の日本語訳を書いてはいけません。このカッコは表示上の補助なので、文字数には数えません。",
+      "【重要】注釈は1つの接辞につき1箇所だけです。その接辞の音はひとまとまりの箇所でまとめて担わせてください。1音ずつ区切って同じ注釈を繰り返してはいけません（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。",
+      "接辞が1つしかない単語（それ以上分解できない語）の場合も同じで、注釈は1箇所だけ付けます。",
       "お手本: pre(プレ)/sent(セント)/ation(エーション)、意味「発表」 → 「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」",
       "お手本: dict(ジクト)/ion(イオン)/ary(アリー)、意味「辞書」 → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！」",
     ].join("\n"),
@@ -939,6 +941,11 @@ function goroViolations(text, morphemes) {
   const readings = (morphemes || []).map((m) => (m.reading || "").trim()).filter(Boolean);
   const parts = (morphemes || []).map((m) => (m.part || "").trim().toLowerCase()).filter(Boolean);
   const partSet = new Set(parts);
+  /* 注釈は表示上の補助なので、日本語として自然かどうかを見る検査は
+     注釈を取り除いた本文に対して行う。生の文字列のまま調べると、
+     「ベッド(bed)して」の (bed) が語と活用語尾の間に割り込むせいで
+     サ変動詞化を見逃すなど、注釈の有無で判定が変わってしまう */
+  const bare = stripGoroAnnotations(text);
 
   /* ①カッコの中身。接辞の綴りを添えるのは必須の書式なので許可し、
        意味の日本語訳を注釈しているもの（例:「エーター（刑務所）へ」）や、
@@ -952,15 +959,29 @@ function goroViolations(text, morphemes) {
     });
   }
 
-  /* ②全ての接辞の音が使われているか。カッコ注釈が接辞ごとに1つずつ
-       付いているかで判定する（音は元の発音から崩してよいが、どの接辞も
-       省略せず一文の中に登場させる必要がある） */
-  const annotated = new Set([...text.matchAll(GORO_ANNOTATION_RE)].map((m) => m[1].toLowerCase()));
-  const missing = parts.filter((p) => !annotated.has(p));
+  /* ②全ての接辞の音が、過不足なくちょうど1回ずつ使われているか。
+       不足だけを見ていた頃は、1形態素の語で「べ(bed)ッ(bed)ド(bed)」のように
+       1音ごとに同じ注釈を振る出力が素通りしていた。接辞と注釈は1対1に
+       対応させる（同じ接辞が語中に2回現れる語では、その回数だけ必要） */
+  const expected = new Map();
+  for (const p of parts) expected.set(p, (expected.get(p) || 0) + 1);
+  const actual = new Map();
+  for (const m of text.matchAll(GORO_ANNOTATION_RE)) {
+    const k = m[1].toLowerCase();
+    actual.set(k, (actual.get(k) || 0) + 1);
+  }
+  const missing = [...expected.keys()].filter((p) => (actual.get(p) || 0) < expected.get(p));
   if (missing.length) {
     violations.push({
       code: "missing-morpheme",
       reason: `接辞 ${missing.join(" / ")} の音が一文の中に見当たりません。全ての接辞について、その音を担う箇所を作り、直後に ${missing.map((p) => `(${p})`).join(" ")} のように綴りを添えてください。音は元の発音どおりでなくてよく、崩して構いません。`,
+    });
+  }
+  const excess = [...expected.keys()].filter((p) => (actual.get(p) || 0) > expected.get(p));
+  if (excess.length) {
+    violations.push({
+      code: "duplicate-morpheme",
+      reason: `接辞 ${excess.map((p) => `(${p})`).join(" ")} の注釈を複数回付けています。1つの接辞に対して注釈は1箇所だけです。その接辞の音はひとまとまりの箇所で担わせ、1音ずつ区切って同じ注釈を繰り返さないでください（例:「べ(bed)ッ(bed)ド(bed)」は不可、「ベッド(bed)」とする）。`,
     });
   }
 
@@ -968,7 +989,7 @@ function goroViolations(text, morphemes) {
        対象単語自体をカタカナでなぞるだけの手抜きになる */
   for (let i = 0; i < readings.length - 1; i++) {
     const joined = readings[i] + readings[i + 1];
-    if (joined.length >= 3 && text.includes(joined)) {
+    if (joined.length >= 3 && bare.includes(joined)) {
       violations.push({
         code: "adjacent-readings",
         reason: `「${readings[i]}」と「${readings[i + 1]}」を隣接させて「${joined}」という実在しないカタカナ語を作っています。各接辞の読みは文中の離れた位置に、それぞれ別の実在する日本語の一部として組み込んでください。`,
@@ -977,11 +998,15 @@ function goroViolations(text, morphemes) {
   }
 
   /* ③読みをそのまま独立した一単語として使用（例:「オノミが」「オクシールは」）。
-       カタカナの連続が読みとぴったり一致する場合、実在の外来語でない限り造語とみなす */
-  for (const run of text.match(/[ァ-ヶー]+/g) || []) {
+       カタカナの連続が読みとぴったり一致する場合、実在の外来語でない限り造語とみなす。
+       ただし、それ以上分解できない1形態素の語（bed など）は、音を分散させる
+       相手の接辞がそもそも無く、読みをそのまま使うのが唯一の自然な書き方に
+       なる。ここで弾くと「ベッド(bed)」も「べ(bed)ッ(bed)ド(bed)」も不合格に
+       なり、どう書いても合格できなくなるため、接辞が2つ以上ある語に限る */
+  for (const run of readings.length >= 2 ? (bare.match(/[ァ-ヶー]+/g) || []) : []) {
     if (run.length < 3 || GORO_REAL_KATAKANA_WORDS.has(run)) continue;
     if (!readings.includes(run)) continue;
-    const withParticle = new RegExp(run + GORO_PARTICLE_CLASS).test(text);
+    const withParticle = new RegExp(run + GORO_PARTICLE_CLASS).test(bare);
     violations.push({
       code: withParticle ? "bare-reading-particle" : "bare-reading-word",
       reason: `「${run}」という読みを、そのまま実在しない一単語として文中に置いています${withParticle ? "（助詞を付けて主語や修飾語のように使っています）" : ""}。読みの音は、実在する日本語の言葉の一部分の音として溶け込ませてください。`,
@@ -993,9 +1018,9 @@ function goroViolations(text, morphemes) {
        カタカナ（読みが「マシュ」なのに「マッシュ」と書く等）をすり抜けて
        いた。動詞化は読みと一致するかに関わらず日本語として不自然なので、
        実在の外来語でないカタカナ語すべてを対象に判定する */
-  for (const run of text.match(/[ァ-ヶー]+/g) || []) {
+  for (const run of bare.match(/[ァ-ヶー]+/g) || []) {
     if (run.length < 3 || GORO_REAL_KATAKANA_WORDS.has(run)) continue;
-    if (!new RegExp(run + GORO_SURU_FORMS).test(text)) continue;
+    if (!new RegExp(run + GORO_SURU_FORMS).test(bare)) continue;
     violations.push({
       code: "katakana-suru-verb",
       reason: `「${run}」というカタカナ語に「する」を付けて動詞にしていますが、これは実在しない言い回しで意味が伝わりません。実在する日本語の動詞で動作を表してください。`,
@@ -1005,7 +1030,7 @@ function goroViolations(text, morphemes) {
   /* ⑤長すぎる候補。プロンプトの目安だけでは守られないことが多く、
        長い候補は説明的になって覚えにくいため、コード側でも足切りする。
        接辞の注釈は表示上の補助なので、長さには数えない */
-  const visibleLength = stripGoroAnnotations(text).length;
+  const visibleLength = bare.length;
   if (visibleLength > GORO_MAX_LENGTH) {
     violations.push({
       code: "too-long",
@@ -1027,7 +1052,7 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
     [
       "①自然さ: 日本語として文法的に自然で、一つの筋が通った意味のある文になっていること。読みを詰め込むための不自然な言い回しや、音を似せるためだけの不自然なカタカナ語（外来語）がないこと。",
       "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)カッコの中に接辞の綴り以外のもの、特に意味の日本語訳を書いていない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよい。",
-      "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合は、その音を足して書き直すこと。書き直す際もこのカッコの書式は必ず保つこと。",
+      "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず、かつ1接辞につきちょうど1箇所だけ登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合はその音を足し、同じ接辞の注釈が複数回付いている場合はひとまとまりに直すこと（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。書き直す際もこのカッコの書式は必ず保つこと。",
       "③人名化していないこと: 「〜さん」「〜くん」といった明示的な呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせているパターンも不可。人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）で表現されていること。また、実在の外来語以外のカタカナ語に「する」を付けて動詞にしていないこと（例:「マッシュしたら」は不可）。",
       "④簡潔であること（接辞の注釈を除いて12〜22文字程度、長くても26文字までが目安。冗長な修飾語や説明がないこと）。",
       "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
