@@ -1309,14 +1309,56 @@ const TTS_ENDPOINTS = {
 
 /* さくらのAI EngineのTTSは、modelに話者、voiceにその話者のスタイルを渡す
    （例: 春日部つむぎのノーマル → model:"kasukabetsumugi", voice:"normal"）。
-   東北きりたんの話者IDの綴りは公開情報から確定できなかったため、まず
-   既定値で試し、弾かれた場合は /v1/models の一覧から探して覚え直す。
-   TODO: 話者IDが確定したら TTS_MODEL_DEFAULT を "tohokukiritan" 系に戻す。
-   現在は疎通確認のため、確実に存在する春日部つむぎを既定値にしている */
-const TTS_MODEL_DEFAULT = "kasukabetsumugi";
-const TTS_MODEL_PATTERN = /kiritan/i;
+   話者IDは話者名のローマ字表記だが、区切り文字の有無など正確な綴りが
+   公開情報から確定できないものがある。以前これを推測で決め打ちして
+   鳴らなかったため、綴りは当てにせず、設定画面を開いた時に /v1/models の
+   実際の一覧と突き合わせて実在するIDを採用する */
+const TTS_SPEAKERS = [
+  { id: "zundamon", label: "ずんだもん" },
+  { id: "shikokumetan", label: "四国めたん" },
+  { id: "kasukabetsumugi", label: "春日部つむぎ" },
+  { id: "meimeihimari", label: "冥鳴ひまり" },
+  { id: "tohokuzunko", label: "東北ずん子" },
+  { id: "tohokukiritan", label: "東北きりたん" },
+  { id: "tohokuitako", label: "東北イタコ" },
+  { id: "ankomon", label: "あんこもん" },
+];
+/* curlの実例で実在が確認できている話者を既定にする */
+const TTS_SPEAKER_DEFAULT = "zundamon";
 const TTS_VOICE = "normal";
-let ttsModelId = TTS_MODEL_DEFAULT;
+
+/* 綴りの揺れ（ハイフンやアンダースコアの有無）を無視して突き合わせる */
+function normalizeSpeakerId(id) {
+  return String(id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+async function fetchModelIds(endpoint, apiKey) {
+  try {
+    const res = await fetch(endpoint.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.data || []).map((m) => m && m.id).filter((id) => typeof id === "string");
+  } catch (err) {
+    console.warn("Failed to list models:", err);
+    return [];
+  }
+}
+
+/* 一覧が取れた場合は、実在が確認できた話者だけを返す（IDもAPIが返した
+   綴りそのものを使う）。取れなかった場合は判断材料が無いので既知の
+   一覧をそのまま返し、実際に鳴るかは試聴で確かめてもらう */
+async function loadAvailableSpeakers(endpoint, apiKey) {
+  const ids = await fetchModelIds(endpoint, apiKey);
+  if (!ids.length) return TTS_SPEAKERS.map((s) => ({ ...s, verified: false }));
+  const byNormalized = new Map(ids.map((id) => [normalizeSpeakerId(id), id]));
+  const found = TTS_SPEAKERS
+    .map((s) => {
+      const actual = byNormalized.get(normalizeSpeakerId(s.id));
+      return actual ? { id: actual, label: s.label, verified: true } : null;
+    })
+    .filter(Boolean);
+  return found.length ? found : TTS_SPEAKERS.map((s) => ({ ...s, verified: false }));
+}
 
 /* 同じ語呂合わせを繰り返し聞くことが多いので、生成済みの音声は
    使い回す。青天井に持たないよう、古いものから捨てる */
@@ -1371,48 +1413,18 @@ function requestTtsAudio(endpoint, apiKey, model, spoken) {
   });
 }
 
-/* 既定の話者IDが弾かれた時に、実際に提供されているIDを一覧から探す。
-   見つからなければnullを返し、呼び出し側はブラウザ内蔵の合成に戻る */
-async function resolveTtsModelId(endpoint, apiKey) {
-  try {
-    const res = await fetch(endpoint.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
-    if (!res.ok) {
-      console.warn(`TTS: /v1/models が ${res.status} を返しました`, await extractErrorDetail(res));
-      return null;
-    }
-    const json = await res.json();
-    const ids = (json.data || []).map((m) => m && m.id).filter((id) => typeof id === "string");
-    console.info("TTS: 利用可能なモデル一覧", ids);
-    return ids.find((id) => TTS_MODEL_PATTERN.test(id)) || null;
-  } catch (err) {
-    console.warn("Failed to list TTS models:", err);
-    return null;
-  }
-}
-
-async function fetchTtsAudioUrl(endpoint, apiKey, spoken) {
-  const cached = ttsCache.get(`${ttsModelId}\n${spoken}`);
+async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
+  const cacheKey = `${speaker}\n${spoken}`;
+  const cached = ttsCache.get(cacheKey);
   if (cached) return cached;
 
-  let res = await requestTtsAudio(endpoint, apiKey, ttsModelId, spoken);
-  if (!res.ok) console.warn(`TTS: model="${ttsModelId}" が ${res.status} を返しました`, await extractErrorDetail(res.clone()));
-  /* 認証エラーはIDの問題ではないので探し直さない */
-  if (!res.ok && res.status !== 401 && res.status !== 403) {
-    const found = await resolveTtsModelId(endpoint, apiKey);
-    if (found && found !== ttsModelId) {
-      ttsModelId = found;
-      console.info(`TTS: model を "${ttsModelId}" に切り替えて再試行します`);
-      const hit = ttsCache.get(`${ttsModelId}\n${spoken}`);
-      if (hit) return hit;
-      res = await requestTtsAudio(endpoint, apiKey, ttsModelId, spoken);
-    }
-  }
+  const res = await requestTtsAudio(endpoint, apiKey, speaker, spoken);
   if (!res.ok) {
     const detail = await extractErrorDetail(res);
     throw new Error(`TTS API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const url = URL.createObjectURL(await res.blob());
-  putTtsCache(`${ttsModelId}\n${spoken}`, url);
+  putTtsCache(cacheKey, url);
   return url;
 }
 
@@ -1425,14 +1437,16 @@ async function speak(text, onEnd, lang = "ja-JP") {
   const spoken = spokenTextOf(text);
   if (!spoken) { if (onEnd) onEnd(); return; }
 
+  /* VOICEVOXは日本語専用なので、英単語の読み上げは常にブラウザ内蔵の合成 */
   const provider = await getActiveProvider();
-  const endpoint = TTS_ENDPOINTS[provider];
-  const apiKey = endpoint && lang === "ja-JP" ? await loadApiKey(provider) : "";
+  const endpoint = lang === "ja-JP" ? TTS_ENDPOINTS[provider] : null;
+  const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
+  const apiKey = speaker ? await loadApiKey(provider) : "";
   if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
   if (!apiKey) { speakWithBrowser(spoken, onEnd, lang); return; }
 
   try {
-    const url = await fetchTtsAudioUrl(endpoint, apiKey, spoken);
+    const url = await fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken);
     if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
     const audio = new Audio(url);
     currentTtsAudio = audio;
@@ -4130,8 +4144,81 @@ async function initSettingsScreen() {
   renderThemeSwatches(await kvGet("theme_color", "blue"));
 
   await refreshVoiceEngineUI();
+  await refreshTtsSpeakerUI();
   await initGoogleAuth();
 }
+
+/* ------------------------------------------------------------------ *
+ * 12d. 読み上げの声（さくらのAI TTS）
+ * ------------------------------------------------------------------ */
+const TTS_PREVIEW_TEXT = "軸にイオンがぶつかり電気あり。";
+
+async function refreshTtsSpeakerUI() {
+  const select = document.getElementById("tts-speaker-select");
+  const note = document.getElementById("tts-note");
+  const provider = await getActiveProvider();
+  const endpoint = TTS_ENDPOINTS[provider];
+  const apiKey = endpoint ? await loadApiKey(provider) : "";
+  const chosen = await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT);
+
+  const options = [{ id: "", label: "ブラウザ標準（APIを使わない）" }];
+  if (!apiKey) {
+    select.innerHTML = "";
+    select.appendChild(new Option(options[0].label, ""));
+    select.value = "";
+    select.disabled = true;
+    note.textContent = "APIキーを保存すると、VOICEVOXの声で読み上げられるようになります。";
+    return;
+  }
+
+  const speakers = await loadAvailableSpeakers(endpoint, apiKey);
+  select.disabled = false;
+  select.innerHTML = "";
+  for (const s of options.concat(speakers)) select.appendChild(new Option(s.label, s.id));
+  /* 保存済みの話者が一覧に無い場合は既定へ寄せる（綴り違いのIDが
+     保存されたままだと、鳴らない話者を選び続けることになる） */
+  const available = new Set(speakers.map((s) => s.id));
+  select.value = chosen && available.has(chosen) ? chosen
+    : (available.has(TTS_SPEAKER_DEFAULT) ? TTS_SPEAKER_DEFAULT : (speakers[0]?.id || ""));
+  if (select.value !== chosen) await kvSet("tts_speaker", select.value);
+
+  note.textContent = speakers.some((s) => s.verified)
+    ? "日本語の読み上げにさくらのAIのVOICEVOXを使います。英単語はブラウザ内蔵の音声のままです。"
+    : "話者一覧を取得できなかったため既知の候補を表示しています。試聴で実際に鳴るか確認してください。";
+}
+
+document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
+  await kvSet("tts_speaker", e.target.value);
+});
+
+document.getElementById("tts-preview-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("tts-preview-btn");
+  const note = document.getElementById("tts-note");
+  const speaker = document.getElementById("tts-speaker-select").value;
+  if (!speaker) { speak(TTS_PREVIEW_TEXT); return; }
+
+  const provider = await getActiveProvider();
+  const endpoint = TTS_ENDPOINTS[provider];
+  const apiKey = endpoint ? await loadApiKey(provider) : "";
+  if (!apiKey) { note.textContent = "先にAPIキーを保存してください。"; return; }
+
+  btn.disabled = true;
+  note.textContent = "試聴を生成中…";
+  try {
+    /* ここでは speak() を通さない。フォールバックが働くと、鳴った声が
+       さくらのAIのものかブラウザのものか区別できず、確認にならないため */
+    stopSpeaking();
+    const url = await fetchTtsAudioUrl(endpoint, apiKey, speaker, TTS_PREVIEW_TEXT);
+    const audio = new Audio(url);
+    currentTtsAudio = audio;
+    await audio.play();
+    note.textContent = "✓ この声で読み上げます。";
+  } catch (err) {
+    console.warn("TTS preview failed:", err);
+    note.textContent = `試聴に失敗しました（${err.message}）。別の話者を選ぶか、APIキーをご確認ください。`;
+  }
+  btn.disabled = false;
+});
 
 document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
@@ -4199,8 +4286,9 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   }
   btn.disabled = false;
   await refreshUsageDisplay();
-  /* Whisperを使えるかはキーの有無で決まるので、説明文を更新する */
+  /* Whisperの可否も話者一覧の取得もキーに依存するので、あわせて更新する */
   await refreshVoiceEngineUI();
+  await refreshTtsSpeakerUI();
 });
 
 async function refreshUsageDisplay() {
