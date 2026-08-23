@@ -6,6 +6,11 @@ function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
 
+const ICON_PENCIL = '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>';
+function pencilIconHtml() {
+  return `<svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PENCIL}</svg>`;
+}
+
 /* =========================================================================
    EnGoloyd — app.js
    仕様書 (SPEC-01) に基づくプロトタイプ実装。
@@ -366,7 +371,8 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
          という具体的な合格条件に落とした方が守られやすい */
       "出力する前に必ず自分で読み返し、この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられるか確認してください。思い浮かべられないなら、音を大胆に崩してでも、日常にありふれた分かりやすい出来事に書き直してください（崩すのは自由ですが、接辞を省略してはいけません）。",
       "描くのは一つの出来事だけにしてください。関係のない場面を「〜したら、〜」「〜して、〜」でつなげて複数並べないでください。",
-      "接辞の注釈を除いて12〜22文字程度、長くても26文字までに収め、冗長な修飾語や説明は削ってください。短く言い切るほど覚えやすくなります。",
+      "接辞の注釈を除いて10〜18文字程度、長くても22文字までに収めてください。短ければ短いほど覚えやすいので、意味が通る限り短くしてください。",
+      "【重要】書き終えたら、無くても意味が通る語を全て削ってください。特に、情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」「なんてね」など）や、飾りだけの修飾語は不要です（✗「コードが燃えるぜ、みんな！」→ ○「コードが燃えるぜ！」）。",
       /* ユーモアと文体。「面白く」とだけ言うと、どれも
          「〜して、〜した」の淡々とした説明文になりがちなので、
          具体的な笑いの作り方と、使ってよい文末の型を並べて示す */
@@ -378,7 +384,7 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
       ? `【重要】直前の試行で作った次の候補は、機械的なチェックで不合格になりました。指摘された点を必ず直し、同じ失敗を繰り返さないでください:\n${rejectedNotes.map((n, i) => `${i + 1}. 「${n.text}」\n   → 不合格の理由: ${n.reasons.join(" / ")}`).join("\n")}`
       : "",
     "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
-    "出力前に最後の確認: (1)全ての接辞の綴りがカッコで登場しているか (2)注釈を除いた本文が26文字以内か (3)読んだ人が情景を思い浮かべられるか (4)説明調になっていないか。",
+    "出力前に最後の確認: (1)全ての接辞の綴りが1回ずつカッコで登場しているか (2)注釈を除いた本文が22文字以内か (3)読んだ人が情景を思い浮かべられるか (4)説明調になっていないか (5)削れる語が残っていないか。",
     "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
     '{"candidates":[{"text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！","highlight":[{"part":"dict","in_text":"軸"}]}]}',
   ].filter(Boolean).join("\n");
@@ -917,12 +923,12 @@ const GORO_PARTICLE_CLASS = "[はがをのなにへでともや]";
    実在の外来語以外でこれをやると日本語として意味をなさない */
 const GORO_SURU_FORMS = "(する|すれ|します|した|して|しろ|しよう|しない|され|させ|せず)";
 
-/* 語呂合わせの長さの上限。プロンプトでは26文字までを目安として指示している
+/* 語呂合わせの長さの上限。プロンプトでは22文字までを目安として指示している
    ので、そこから少しだけ余裕を持たせた値をコード側の不合格ラインとする
-   （毎回きっちり26文字で弾くと再生成ばかりになり実用に耐えないため）。
+   （毎回きっちり22文字で弾くと再生成ばかりになり実用に耐えないため）。
    接辞の注釈「(pre)」は読み手への補助表示であって本文ではないため、
    長さを数えるときは取り除いてから数える */
-const GORO_MAX_LENGTH = 30;
+const GORO_MAX_LENGTH = 26;
 
 /* 「プリッ(pre)とせんと(sent)」のように、音を担っている箇所の直後に
    対応する接辞の綴りを添える書式。注釈は必ず半角英字のみとする */
@@ -1034,7 +1040,7 @@ function goroViolations(text, morphemes) {
   if (visibleLength > GORO_MAX_LENGTH) {
     violations.push({
       code: "too-long",
-      reason: `接辞の注釈を除いて${visibleLength}文字と長すぎます。12〜22文字程度に収まるよう、描く出来事を一つに絞り、冗長な修飾語や説明を削ってください。`,
+      reason: `接辞の注釈を除いて${visibleLength}文字と長すぎます。10〜18文字程度に収まるよう、描く出来事を一つに絞り、無くても意味が通る語（締めの呼びかけや飾りの修飾語）を削ってください。`,
     });
   }
 
@@ -1054,7 +1060,7 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
       "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)カッコの中に接辞の綴り以外のもの、特に意味の日本語訳を書いていない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよい。",
       "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず、かつ1接辞につきちょうど1箇所だけ登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合はその音を足し、同じ接辞の注釈が複数回付いている場合はひとまとまりに直すこと（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。書き直す際もこのカッコの書式は必ず保つこと。",
       "③人名化していないこと: 「〜さん」「〜くん」といった明示的な呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせているパターンも不可。人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）で表現されていること。また、実在の外来語以外のカタカナ語に「する」を付けて動詞にしていないこと（例:「マッシュしたら」は不可）。",
-      "④簡潔であること（接辞の注釈を除いて12〜22文字程度、長くても26文字までが目安。冗長な修飾語や説明がないこと）。",
+      "④簡潔であること（接辞の注釈を除いて10〜18文字程度、長くても22文字までが目安）。無くても意味が通る語、特に情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」など）や飾りだけの修飾語が残っていないこと。残っていれば削って短くすること。",
       "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
       "⑤読み手に伝わること: この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられること。関係のない出来事を「〜したら、〜」で並べただけの、何を言っているのか分からない文は不可（例:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」）。描かれている出来事は一つに絞られていること。",
       wordMeaning ? "⑥一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
@@ -3119,6 +3125,43 @@ async function loadGoroCandidates(provider, apiKey) {
   document.getElementById("regen-btn").disabled = false;
 }
 
+/* 語呂合わせカードを編集状態に切り替える。生成結果はだいたい良くても
+   一語だけ直したいことがあるため、作り直しや自作をやり直させるのではなく
+   その場で手を入れられるようにする */
+function startGoroEdit(card, idx) {
+  const original = currentCandidates[idx].text;
+  card.classList.add("editing");
+  card.innerHTML = `
+    <textarea class="goro-edit-input" rows="2" aria-label="語呂合わせを編集">${escapeHtml(original)}</textarea>
+    <div class="goro-edit-actions">
+      <button class="goro-edit-cancel" type="button">取消</button>
+      <button class="goro-edit-save" type="button">保存</button>
+    </div>`;
+
+  const input = card.querySelector(".goro-edit-input");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+
+  const close = async (text) => {
+    if (text !== null) {
+      currentCandidates[idx] = { text, highlight: [] };
+    }
+    renderGoroList();
+    await refreshSaveWordBtn();
+  };
+  const commit = () => {
+    const text = input.value.trim();
+    close(text && text !== original ? text : null);
+  };
+
+  card.querySelector(".goro-edit-save").addEventListener("click", commit);
+  card.querySelector(".goro-edit-cancel").addEventListener("click", () => close(null));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
+    if (e.key === "Escape") close(null);
+  });
+}
+
 function renderGoroList() {
   const list = document.getElementById("goro-list");
   list.innerHTML = "";
@@ -3128,9 +3171,15 @@ function renderGoroList() {
     card.dataset.idx = idx;
     card.innerHTML = `
       <div class="goro-tap" data-idx="${idx}">
-        <span class="spk">${speakerIconHtml()}</span><span class="txt">「${escapeHtml(c.text)}」</span>
-      </div>`;
+        <span class="spk">${speakerIconHtml()}</span><span class="txt">${escapeHtml(c.text)}</span>
+      </div>
+      <button class="goro-edit-btn" type="button" title="編集" aria-label="語呂合わせを編集">${pencilIconHtml()}</button>`;
     list.appendChild(card);
+
+    card.querySelector(".goro-edit-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      startGoroEdit(card, idx);
+    });
   });
 
   list.querySelectorAll(".goro-tap").forEach((el) => {
@@ -3412,7 +3461,7 @@ function renderWordDetailGoro(record) {
   if (record.goro_text) {
     const card = document.createElement("div");
     card.className = "goro-card";
-    card.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
+    card.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     const tap = card.querySelector(".goro-tap");
     tap.addEventListener("click", () => {
       tap.classList.add("speaking");
@@ -3931,7 +3980,7 @@ function revealMemorizeDetail() {
   if (record.goro_text) {
     const goroCard = document.createElement("div");
     goroCard.className = "goro-card";
-    goroCard.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">「${escapeHtml(record.goro_text)}」</span></div>`;
+    goroCard.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     const tap = goroCard.querySelector(".goro-tap");
     tap.addEventListener("click", () => {
       tap.classList.add("speaking");
