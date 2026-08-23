@@ -3188,7 +3188,7 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
     return;
   }
   document.getElementById("regen-btn").disabled = true;
-  document.getElementById("goro-list").innerHTML = goroLoadingHtml("推敲中", "💦");
+  document.getElementById("goro-list").innerHTML = goroLoadingHtml("推敲中");
   await loadGoroCandidates(provider, apiKey);
 });
 
@@ -3448,7 +3448,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
 
   const btn = document.getElementById("word-detail-regen-btn");
   btn.disabled = true;
-  document.getElementById("word-detail-goro").innerHTML = goroLoadingHtml("推敲中", "💦");
+  document.getElementById("word-detail-goro").innerHTML = goroLoadingHtml("推敲中");
 
   try {
     const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean));
