@@ -516,6 +516,13 @@ async function embedTexts(texts, apiKey, kind = "passage") {
   return vectors;
 }
 
+/* embeddings（/v1/embeddings）はさくらのAIの無料枠に含まれず、有効にすると
+   別途課金が発生しうるため、既定はオフ。設定画面のトグルで明示的に
+   オンにした場合のみ、RAG関連のembedding呼び出しを行う */
+async function isRagEnabled() {
+  return !!(await kvGet("rag_enabled", false));
+}
+
 function cosineSim(a, b) {
   let dot = 0, na = 0, nb = 0;
   const len = Math.min(a.length, b.length);
@@ -598,6 +605,7 @@ async function reconcileUnknownAffix(part, aiEntry, apiKey) {
 }
 
 async function reconcileWithLocalDict(morphemes, provider, apiKey) {
+  const ragOn = (provider === "sakura" && apiKey) ? await isRagEnabled() : false;
   const out = [];
   for (const m of (morphemes || [])) {
     const key = (m.part || "").toLowerCase();
@@ -613,7 +621,7 @@ async function reconcileWithLocalDict(morphemes, provider, apiKey) {
       origin: m.origin || "—",
       phonetic: m.phonetic || "",
     };
-    if (provider === "sakura" && apiKey && key && aiEntry.meaning !== MEANING_UNAVAILABLE) {
+    if (ragOn && key && aiEntry.meaning !== MEANING_UNAVAILABLE) {
       try {
         out.push(await reconcileUnknownAffix(key, aiEntry, apiKey));
         continue;
@@ -953,6 +961,7 @@ async function ensureGoroCorpusReady(provider, apiKey) {
    再保存した場合は自動的に最新の語呂合わせに上書きされる */
 async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, apiKey) {
   if (provider !== "sakura" || !apiKey || !wordMeaning || !goroText) return;
+  if (!(await isRagEnabled())) return;
   try {
     const [meaningVec] = await embedTexts([wordMeaning], apiKey, "passage");
     const [goroVec] = await embedTexts([goroText], apiKey, "passage");
@@ -979,7 +988,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
 
   /* embeddingsが使える場合のみ、①examples検索・②③の材料を用意する。
      どこかで失敗しても本筋の生成は止めず、以降の機能を静かに諦める */
-  const useEmbeddings = provider === "sakura" && !!apiKey;
+  const useEmbeddings = provider === "sakura" && !!apiKey && (await isRagEnabled());
   let examples = [];
   let corpus = [];
   let meaningQueryVec = null;
@@ -3867,6 +3876,11 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.animToggle === (animationsEnabled ? "on" : "off"));
   });
 
+  const ragOn = await isRagEnabled();
+  document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
+  });
+
   const activeAnim = await kvGet("decompose_anim", "crack");
   document.querySelectorAll(".anim-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
@@ -3884,6 +3898,13 @@ document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((pill) => {
     animationsEnabled = pill.dataset.animToggle === "on";
     await kvSet("anim_enabled", animationsEnabled);
     document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+  });
+});
+
+document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("rag_enabled", pill.dataset.ragToggle === "on");
+    document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
   });
 });
 
