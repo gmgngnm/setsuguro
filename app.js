@@ -795,11 +795,20 @@ async function bumpUsage(tokens) {
    返る。対応プロバイダを増やす場合はここに足せば、利用可否の判定も
    フォールバックもこのマップの有無だけで動く */
 const TTS_ENDPOINTS = {
-  sakura: { url: "https://api.ai.sakura.ad.jp/v1/audio/speech", model: "voicevox" },
+  sakura: {
+    speechUrl: "https://api.ai.sakura.ad.jp/v1/audio/speech",
+    modelsUrl: "https://api.ai.sakura.ad.jp/v1/models",
+  },
 };
-/* さくらのAI Engineが提供するVOICEVOXの話者名。読み上げに使う声を
-   変えたい場合はここを別の話者名に差し替える */
-const TTS_VOICE = "VOICEVOX:東北きりたん";
+
+/* さくらのAI EngineのTTSは、modelに話者、voiceにその話者のスタイルを渡す
+   （例: 春日部つむぎのノーマル → model:"kasukabetsumugi", voice:"normal"）。
+   東北きりたんの話者IDの綴りは公開情報から確定できなかったため、まず
+   既定値で試し、弾かれた場合は /v1/models の一覧から探して覚え直す */
+const TTS_MODEL_DEFAULT = "tohokukiritan";
+const TTS_MODEL_PATTERN = /kiritan/i;
+const TTS_VOICE = "normal";
+let ttsModelId = TTS_MODEL_DEFAULT;
 
 /* 同じ語呂合わせを繰り返し聞くことが多いので、生成済みの音声は
    使い回す。青天井に持たないよう、古いものから捨てる */
@@ -846,22 +855,50 @@ function speakWithBrowser(spoken, onEnd, lang) {
   window.speechSynthesis.speak(u);
 }
 
-async function fetchTtsAudioUrl(endpoint, apiKey, spoken) {
-  const key = `${endpoint.model}\n${TTS_VOICE}\n${spoken}`;
-  const cached = ttsCache.get(key);
-  if (cached) return cached;
-
-  const res = await fetch(endpoint.url, {
+function requestTtsAudio(endpoint, apiKey, model, spoken) {
+  return fetch(endpoint.speechUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: endpoint.model, voice: TTS_VOICE, input: spoken, response_format: "mp3" }),
+    body: JSON.stringify({ model, voice: TTS_VOICE, input: spoken }),
   });
+}
+
+/* 既定の話者IDが弾かれた時に、実際に提供されているIDを一覧から探す。
+   見つからなければnullを返し、呼び出し側はブラウザ内蔵の合成に戻る */
+async function resolveTtsModelId(endpoint, apiKey) {
+  try {
+    const res = await fetch(endpoint.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const ids = (json.data || []).map((m) => m && m.id).filter((id) => typeof id === "string");
+    return ids.find((id) => TTS_MODEL_PATTERN.test(id)) || null;
+  } catch (err) {
+    console.warn("Failed to list TTS models:", err);
+    return null;
+  }
+}
+
+async function fetchTtsAudioUrl(endpoint, apiKey, spoken) {
+  const cached = ttsCache.get(`${ttsModelId}\n${spoken}`);
+  if (cached) return cached;
+
+  let res = await requestTtsAudio(endpoint, apiKey, ttsModelId, spoken);
+  /* 認証エラーはIDの問題ではないので探し直さない */
+  if (!res.ok && res.status !== 401 && res.status !== 403) {
+    const found = await resolveTtsModelId(endpoint, apiKey);
+    if (found && found !== ttsModelId) {
+      ttsModelId = found;
+      const hit = ttsCache.get(`${ttsModelId}\n${spoken}`);
+      if (hit) return hit;
+      res = await requestTtsAudio(endpoint, apiKey, ttsModelId, spoken);
+    }
+  }
   if (!res.ok) {
     const detail = await extractErrorDetail(res);
     throw new Error(`TTS API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const url = URL.createObjectURL(await res.blob());
-  putTtsCache(key, url);
+  putTtsCache(`${ttsModelId}\n${spoken}`, url);
   return url;
 }
 
