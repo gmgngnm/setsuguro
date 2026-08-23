@@ -1325,6 +1325,12 @@ const TTS_SPEAKERS = [
 ];
 const TTS_VOICE = "normal";
 
+/* 規約に同意済みで、実際に鳴ることを確認できている話者。検出を一度も
+   実行していない端末でも最初から選べるようにする。検出を実行した後は
+   その結果を優先する（実測を、確認済みの決め打ちより信用する） */
+const TTS_SPEAKERS_CONFIRMED = ["zundamon"];
+const TTS_SPEAKER_DEFAULT = "zundamon";
+
 /* 綴りの揺れ（ハイフンやアンダースコアの有無）を無視して突き合わせる */
 function normalizeSpeakerId(id) {
   return String(id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1439,9 +1445,7 @@ async function speak(text, onEnd, lang = "ja-JP") {
   /* VOICEVOXは日本語専用なので、英単語の読み上げは常にブラウザ内蔵の合成 */
   const provider = await getActiveProvider();
   const endpoint = lang === "ja-JP" ? TTS_ENDPOINTS[provider] : null;
-  /* 既定はブラウザ標準。使えることを確認できた話者を設定画面で選んだ時
-     だけVOICEVOXを使う */
-  const speaker = endpoint ? await kvGet("tts_speaker", "") : "";
+  const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
   const apiKey = speaker ? await loadApiKey(provider) : "";
   if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
   if (!apiKey) { speakWithBrowser(spoken, onEnd, lang); return; }
@@ -4167,7 +4171,8 @@ const TTS_PROBE_TEXT = "テスト";
 
 async function loadKnownGoodSpeakers() {
   const saved = await kvGet("tts_speakers_ok", null);
-  return Array.isArray(saved) ? saved : [];
+  if (Array.isArray(saved)) return saved;
+  return TTS_SPEAKERS.filter((s) => TTS_SPEAKERS_CONFIRMED.includes(s.id));
 }
 
 /* 候補を1つずつ鳴らしてみて、成功したものだけを残す。規約に同意して
@@ -4210,7 +4215,7 @@ async function refreshTtsSpeakerUI() {
   const provider = await getActiveProvider();
   const endpoint = TTS_ENDPOINTS[provider];
   const apiKey = endpoint ? await loadApiKey(provider) : "";
-  const chosen = await kvGet("tts_speaker", "");
+  const chosen = await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT);
 
   if (!apiKey) {
     select.innerHTML = "";
@@ -4231,12 +4236,13 @@ async function refreshTtsSpeakerUI() {
   /* 使えなくなった話者が保存されたままだと鳴らない声を選び続けることに
      なるので、候補に無ければブラウザ標準へ戻す */
   const available = new Set(speakers.map((s) => s.id));
-  select.value = chosen && available.has(chosen) ? chosen : "";
+  select.value = chosen && available.has(chosen) ? chosen
+    : (available.has(TTS_SPEAKER_DEFAULT) ? TTS_SPEAKER_DEFAULT : "");
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
   note.textContent = speakers.length
-    ? `使える話者が${speakers.length}件見つかっています。日本語の読み上げに使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。`
-    : "使える話者がまだありません。VOICEVOXの話者は、さくらのクラウドのコントロールパネルで話者ごとに利用規約へ同意しないと使えません。同意済みの話者があれば「話者を調べる」で検出できます。";
+    ? "日本語の読み上げにVOICEVOXを使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。他の話者は、コントロールパネルで利用規約に同意したうえで「話者を調べる」を押すと追加されます。"
+    : "使える話者がありません。VOICEVOXの話者は、さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から話者ごとに利用規約へ同意しないと使えません。";
 }
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
