@@ -128,10 +128,11 @@ button{font-family:inherit;cursor:pointer;}
 .mic-section-btn.listening{background:var(--danger);animation:pulse .6s ease-in-out infinite;}
 .chip-row{
   display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:0;
-  max-height:110px;overflow:hidden;align-content:flex-start;
+  max-height:calc(3 * 34px + 2 * 8px);overflow:hidden;align-content:flex-start;
 }
 .chip{
-  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:0 14px;
+  height:34px;display:flex;align-items:center;white-space:nowrap;
   font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--ink-soft);
 }
 .chip:active{transform:scale(.96);}
