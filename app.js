@@ -768,13 +768,35 @@ function findLeftoverAffixes(morphemes) {
 }
 
 /* memory_tipは「in(中へ)+vestig(足跡を)+ation(たどること)で、…」の形で返る。
-   そこで説明されている分割が実際のmorphemesより細かい場合、AI自身が
-   自分の分割結果と矛盾したことを言っている（＝分割不足の強い証拠） */
-function findMemoryTipContradiction(word, morphemes, memoryTip) {
+   ここから分割を取り出す。連結して対象単語に一致する場合に限り、
+   AI自身が語った信頼できる分割として扱う（一致しなければ、単語の一部だけを
+   説明しているか別語に言及しているので採用しない） */
+function memoryTipSegments(word, memoryTip) {
   const segments = [...String(memoryTip || "").matchAll(/([A-Za-z]+)\s*-?\s*[(（]/g)].map((m) => m[1].toLowerCase());
-  if (segments.length <= morphemes.length) return [];
-  if (segments.join("") !== word.toLowerCase()) return [];
+  if (segments.length < 2) return null;
+  if (segments.join("") !== String(word || "").toLowerCase()) return null;
+  return segments;
+}
+
+/* memory_tipで説明されている分割が実際のmorphemesより細かい場合、AI自身が
+   自分の分割結果と矛盾したことを言っている（＝分割不足の確かな証拠）。
+   この場合はmemory_tip側が正しい分割として確定しているので、単なる指摘では
+   なく「必ずこう分割せよ」という強制の材料として使う */
+function requiredSegmentation(word, morphemes, memoryTip) {
+  const segments = memoryTipSegments(word, memoryTip);
+  if (!segments || segments.length <= morphemes.length) return null;
+  return segments;
+}
+
+function findMemoryTipContradiction(word, morphemes, memoryTip) {
+  const segments = requiredSegmentation(word, morphemes, memoryTip);
+  if (!segments) return [];
   return [`memory_tipでは "${segments.join(" + ")}" と${segments.length}分割で説明しているのに、morphemesは${morphemes.length}分割になっており矛盾しています。`];
+}
+
+function sameSegmentation(morphemes, segments) {
+  if (!segments || morphemes.length !== segments.length) return false;
+  return morphemes.every((m, i) => (m.part || "").toLowerCase() === segments[i]);
 }
 
 function findUnderSplitHints(word, morphemes, memoryTip) {
@@ -784,7 +806,7 @@ function findUnderSplitHints(word, morphemes, memoryTip) {
   ].slice(0, 4);
 }
 
-function decomposeValidationPrompt(word, morphemes, hints) {
+function decomposeValidationPrompt(word, morphemes, hints, requiredParts) {
   const partsList = morphemes
     .map((m, i) => `${i + 1}. ${m.part} - 読み:${m.reading} / 意味:${m.meaning} / 由来:${m.origin} / 発音記号:${m.phonetic}`)
     .join("\n");
@@ -800,21 +822,61 @@ function decomposeValidationPrompt(word, morphemes, hints) {
     hints && hints.length
       ? `次の点は分割不足の疑いが強いので、④として特に重点的に確認してください。\n${hints.map((h) => `- ${h}`).join("\n")}`
       : "",
+    /* memory_tipから正しい分割が確定している場合は、指摘ではなく命令として
+       渡す。「疑いがある」程度の書き方だとAIが「問題なし」と判断して
+       分割不足のまま素通りさせてしまうため */
+    (requiredParts && requiredParts.length)
+      ? `【必須】この単語の分割は ${requiredParts.join(" / ")} で確定しています。morphemesは必ずこの${requiredParts.length}要素、この順序で出力してください。要素を統合したり、これ以外の分割にしたりしてはいけません。あなたの仕事は、この分割を前提に各要素のreading・meaning・origin・phoneticを正確に埋めることです。`
+      : "",
     "いずれかに誤りが見つかった場合は、正しい分割・正しい情報にすべて書き直してください。問題がなければそのまま使ってください。",
     "出力は、書き直した場合も含め、必ず全要素を次のJSON形式のみで返してください。それ以外の文章は一切書かないでください。",
     '{"morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}',
   ].filter(Boolean).join("\n");
 }
 
+/* 確定した分割を前提に、各要素の情報だけを埋めさせる最終手段。
+   校閲パスに分割を命じてもなお統合された形で返してくる場合に使う。
+   「分割し直す」より「決まった要素の項目を埋める」ほうが遥かに易しい
+   タスクなので、ここまで来ればほぼ確実に通る */
+async function fillRequiredSegmentation(word, requiredParts, memoryTip, provider, apiKey) {
+  const sys = [
+    "あなたは英語の語源・形態素解析の専門家です。",
+    `英単語 "${word}" は ${requiredParts.join(" / ")} の${requiredParts.length}要素に分割することが既に確定しています。`,
+    memoryTip ? `参考: この単語の覚え方は「${memoryTip}」です。` : "",
+    "この分割は変更できません。要素を統合したり、分割し直したり、順序を変えたりしないでください。",
+    "各要素について、カタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・その要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を埋めてください。",
+    "語根が一般に馴染みのないものでも、meaningとoriginを空にせず、最も可能性の高い語源を推定して記入してください。",
+    `partには ${requiredParts.join(" / ")} をこの順序でそのまま入れてください。`,
+    "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}',
+  ].filter(Boolean).join("\n");
+  const json = await callAI(provider, apiKey, sys, "確定した分割のまま、各要素の情報を埋めてJSON形式で出力してください。", 0.2);
+  return reconcileWithLocalDict(json.morphemes, provider, apiKey);
+}
+
 async function validateDecomposition(word, morphemes, provider, apiKey, memoryTip) {
   if (!morphemes.length) return morphemes;
+  /* memory_tipから正しい分割が確定できる場合、校閲パスの結果が
+     それに従っているかどうかまで検証する。検出しても強制しなければ、
+     AIが「問題なし」と判断した時点で分割不足がそのまま通ってしまう */
+  const requiredParts = requiredSegmentation(word, morphemes, memoryTip);
+  const accept = (revised) => {
+    if (!revised.length) return false;
+    if (revised.map((m) => m.part).join("").toLowerCase() !== word.toLowerCase()) return false;
+    return requiredParts ? sameSegmentation(revised, requiredParts) : true;
+  };
+
   try {
-    const sys = decomposeValidationPrompt(word, morphemes, findUnderSplitHints(word, morphemes, memoryTip));
+    const sys = decomposeValidationPrompt(word, morphemes, findUnderSplitHints(word, morphemes, memoryTip), requiredParts);
     const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2);
     const revised = await reconcileWithLocalDict(json.morphemes, provider, apiKey);
-    const concatenated = revised.map((m) => m.part).join("").toLowerCase();
-    if (revised.length && concatenated === word.toLowerCase()) {
-      return revised;
+    if (accept(revised)) return revised;
+
+    if (requiredParts) {
+      console.warn(`校閲パスが確定分割 ${requiredParts.join("/")} に従わなかったため、項目のみを埋め直します`);
+      const filled = await fillRequiredSegmentation(word, requiredParts, memoryTip, provider, apiKey);
+      if (accept(filled)) return filled;
+      console.warn("確定分割の適用に失敗しました。元の分割を使います");
     }
     return morphemes;
   } catch (err) {
