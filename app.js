@@ -344,6 +344,13 @@ const AI_ADAPTERS = {
   },
 };
 
+/* 設定できる生成AIはさくらのAIのみ。以前Groqを選んでいた端末が
+   古い保存値を引きずらないよう、ここで読み替える */
+async function getActiveProvider() {
+  const provider = await kvGet("provider", "sakura");
+  return provider === "groq" ? "sakura" : provider;
+}
+
 /* 疎通確認は生成を伴わない /v1/models で行う。生成させて確かめると、
    キーが正しくてもモデルの出力揺れ (JSON検証エラーなど) で失敗し、
    キーの問題だと誤認させてしまうため */
@@ -1010,7 +1017,7 @@ if (!SpeechRecognitionCtor && !canRecord) {
     setMicState(true, "準備中…");
 
     const mode = await kvGet("voice_engine", "auto");
-    const provider = await kvGet("provider", "groq");
+    const provider = await getActiveProvider();
     const apiKey = WHISPER_ENDPOINTS[provider] ? await loadApiKey(provider) : "";
     const useWhisper = mode !== "browser" && canRecord && !!apiKey;
 
@@ -1375,8 +1382,9 @@ const DEMO_WORD_DATA = {
 
 async function renderRecentChips() {
   const recent = await kvGet("recent_words", []);
-  /* PC版は画面が広いので履歴を最大20個まで表示する */
-  const limit = window.innerWidth >= 860 ? 20 : 6;
+  /* チップは.chip-row側のCSSで3行分の高さに収まるようにしているので、
+     ここでは行数に関わらず十分な数を用意しておけばよい */
+  const limit = 20;
   const words = recent.length < limit ? [...recent, ...pickSampleWords(limit - recent.length, recent)] : recent.slice(0, limit);
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
@@ -1412,7 +1420,7 @@ let currentMorphemes = [];
 let currentCandidates = [];
 
 async function startDecompose(rawWord) {
-  const word = (rawWord || "").trim();
+  const word = (rawWord || "").trim().toLowerCase();
   if (!word) return;
   if (!/^[A-Za-z][A-Za-z'-]*$/.test(word)) {
     homeError.textContent = "英単語を入力してください（英字のみ）";
@@ -1420,7 +1428,7 @@ async function startDecompose(rawWord) {
   }
   homeError.textContent = "";
 
-  const provider = await kvGet("provider", "groq");
+  const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
   const demo = !apiKey ? DEMO_WORD_DATA[word.toLowerCase()] : null;
   if (!apiKey && !demo) {
@@ -1435,7 +1443,7 @@ async function startDecompose(rawWord) {
   const splitEl = document.getElementById("word-split");
   const spinnerRow = document.getElementById("decompose-spinner");
   splitEl.innerHTML = "";
-  spinnerRow.style.display = "none";
+  spinnerRow.style.visibility = "hidden";
   document.getElementById("decompose-appbar").style.display = "none";
   const decomposeWordMeaningEl = document.getElementById("decompose-word-meaning");
   decomposeWordMeaningEl.innerHTML = "";
@@ -1479,13 +1487,13 @@ async function startDecompose(rawWord) {
       currentAntonyms = decomposed.antonyms || [];
       if (decomposed.wasCorrected) {
         await playSpellingFix(placeholder, word, decomposed.correctedWord);
-        currentWord = decomposed.correctedWord;
+        currentWord = decomposed.correctedWord.toLowerCase();
         /* 修正後の綴りを確認する間を置いてから、亀裂などの分割アニメーションに入る */
         await sleep(1500);
       }
     } catch (err) {
       placeholder.remove();
-      spinnerRow.style.display = "flex";
+      spinnerRow.style.visibility = "visible";
       document.getElementById("decompose-appbar").style.display = "flex";
       document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
       console.error(err);
@@ -1580,9 +1588,9 @@ async function startDecompose(rawWord) {
 
   if (!goroDone) {
     document.getElementById("decompose-label").textContent = "語呂合わせを準備中…";
-    spinnerRow.style.display = "flex";
+    spinnerRow.style.visibility = "visible";
     await goroPromise;
-    spinnerRow.style.display = "none";
+    spinnerRow.style.visibility = "hidden";
   }
 
   renderResultScreen();
@@ -2454,7 +2462,7 @@ async function toggleSaveWord() {
   if (existing && existing.goro_text === newGoroText) {
     await deleteWordRecord(id);
   } else {
-    const provider = await kvGet("provider", "groq");
+    const provider = await getActiveProvider();
     await saveWordRecord({
       id,
       word: currentWord,
@@ -2475,7 +2483,7 @@ async function toggleSaveWord() {
 document.getElementById("save-word-btn").addEventListener("click", toggleSaveWord);
 
 document.getElementById("regen-btn").addEventListener("click", async () => {
-  const provider = await kvGet("provider", "groq");
+  const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
   if (!apiKey) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
@@ -2738,7 +2746,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
   const record = currentWordDetailRecord;
   if (!record) return;
 
-  const provider = await kvGet("provider", "groq");
+  const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
   if (!apiKey) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
@@ -2854,7 +2862,7 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
   const remaining = RELATED_WORDS_TARGET - localMatches.length;
   if (remaining <= 0) return;
 
-  const provider = await kvGet("provider", "groq");
+  const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
   if (requestId !== affixWordsRequestId) return;
   if (!apiKey) {
@@ -3328,10 +3336,10 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
  * 12. API設定画面
  * ------------------------------------------------------------------ */
 const PROVIDER_LABELS = { groq: "Groq", sakura: "さくらのAI" };
-let activeProvider = "groq";
+let activeProvider = "sakura";
 
 async function initSettingsScreen() {
-  activeProvider = await kvGet("provider", "groq");
+  activeProvider = await getActiveProvider();
   document.querySelectorAll(".provider-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.provider === activeProvider);
   });
@@ -3430,7 +3438,7 @@ async function refreshUsageDisplay() {
  * ------------------------------------------------------------------ */
 async function refreshVoiceEngineUI() {
   const mode = await kvGet("voice_engine", "auto");
-  const provider = await kvGet("provider", "groq");
+  const provider = await getActiveProvider();
   const whisperSupported = !!WHISPER_ENDPOINTS[provider];
   const selectable = whisperSupported && canRecord;
   const hasKey = whisperSupported && !!(await loadApiKey(provider));
@@ -3465,7 +3473,7 @@ document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
     if (pill.dataset.voiceEngine === "auto") {
       if (!canRecord) { toast("このブラウザは録音に対応していません"); return; }
-      const provider = await kvGet("provider", "groq");
+      const provider = await getActiveProvider();
       if (!WHISPER_ENDPOINTS[provider]) {
         toast("Whisperを使うには、上の「利用する生成AI」でさくらのAIを選んで保存してください");
         return;
