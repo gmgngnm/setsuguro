@@ -804,8 +804,10 @@ const TTS_ENDPOINTS = {
 /* さくらのAI EngineのTTSは、modelに話者、voiceにその話者のスタイルを渡す
    （例: 春日部つむぎのノーマル → model:"kasukabetsumugi", voice:"normal"）。
    東北きりたんの話者IDの綴りは公開情報から確定できなかったため、まず
-   既定値で試し、弾かれた場合は /v1/models の一覧から探して覚え直す */
-const TTS_MODEL_DEFAULT = "tohokukiritan";
+   既定値で試し、弾かれた場合は /v1/models の一覧から探して覚え直す。
+   TODO: 話者IDが確定したら TTS_MODEL_DEFAULT を "tohokukiritan" 系に戻す。
+   現在は疎通確認のため、確実に存在する春日部つむぎを既定値にしている */
+const TTS_MODEL_DEFAULT = "kasukabetsumugi";
 const TTS_MODEL_PATTERN = /kiritan/i;
 const TTS_VOICE = "normal";
 let ttsModelId = TTS_MODEL_DEFAULT;
@@ -868,9 +870,13 @@ function requestTtsAudio(endpoint, apiKey, model, spoken) {
 async function resolveTtsModelId(endpoint, apiKey) {
   try {
     const res = await fetch(endpoint.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`TTS: /v1/models が ${res.status} を返しました`, await extractErrorDetail(res));
+      return null;
+    }
     const json = await res.json();
     const ids = (json.data || []).map((m) => m && m.id).filter((id) => typeof id === "string");
+    console.info("TTS: 利用可能なモデル一覧", ids);
     return ids.find((id) => TTS_MODEL_PATTERN.test(id)) || null;
   } catch (err) {
     console.warn("Failed to list TTS models:", err);
@@ -883,11 +889,13 @@ async function fetchTtsAudioUrl(endpoint, apiKey, spoken) {
   if (cached) return cached;
 
   let res = await requestTtsAudio(endpoint, apiKey, ttsModelId, spoken);
+  if (!res.ok) console.warn(`TTS: model="${ttsModelId}" が ${res.status} を返しました`, await extractErrorDetail(res.clone()));
   /* 認証エラーはIDの問題ではないので探し直さない */
   if (!res.ok && res.status !== 401 && res.status !== 403) {
     const found = await resolveTtsModelId(endpoint, apiKey);
     if (found && found !== ttsModelId) {
       ttsModelId = found;
+      console.info(`TTS: model を "${ttsModelId}" に切り替えて再試行します`);
       const hit = ttsCache.get(`${ttsModelId}\n${spoken}`);
       if (hit) return hit;
       res = await requestTtsAudio(endpoint, apiKey, ttsModelId, spoken);
