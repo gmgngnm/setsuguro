@@ -1310,9 +1310,9 @@ const TTS_ENDPOINTS = {
 /* さくらのAI EngineのTTSは、modelに話者、voiceにその話者のスタイルを渡す
    （例: 春日部つむぎのノーマル → model:"kasukabetsumugi", voice:"normal"）。
    話者IDは話者名のローマ字表記だが、区切り文字の有無など正確な綴りが
-   公開情報から確定できないものがある。以前これを推測で決め打ちして
-   鳴らなかったため、綴りは当てにせず、設定画面を開いた時に /v1/models の
-   実際の一覧と突き合わせて実在するIDを採用する */
+   公開情報から確定できないものがある。ここにあるのはあくまで確認の
+   出発点で、綴りは /v1/models の実際の一覧で上書きし、使えるかどうかは
+   実際に鳴らして判断する（この一覧をそのまま選択肢として見せない） */
 const TTS_SPEAKERS = [
   { id: "zundamon", label: "ずんだもん" },
   { id: "shikokumetan", label: "四国めたん" },
@@ -1323,8 +1323,6 @@ const TTS_SPEAKERS = [
   { id: "tohokuitako", label: "東北イタコ" },
   { id: "ankomon", label: "あんこもん" },
 ];
-/* curlの実例で実在が確認できている話者を既定にする */
-const TTS_SPEAKER_DEFAULT = "zundamon";
 const TTS_VOICE = "normal";
 
 /* 綴りの揺れ（ハイフンやアンダースコアの有無）を無視して突き合わせる */
@@ -1347,19 +1345,6 @@ async function fetchModelIds(endpoint, apiKey) {
 /* 一覧が取れた場合は、実在が確認できた話者だけを返す（IDもAPIが返した
    綴りそのものを使う）。取れなかった場合は判断材料が無いので既知の
    一覧をそのまま返し、実際に鳴るかは試聴で確かめてもらう */
-async function loadAvailableSpeakers(endpoint, apiKey) {
-  const ids = await fetchModelIds(endpoint, apiKey);
-  if (!ids.length) return TTS_SPEAKERS.map((s) => ({ ...s, verified: false }));
-  const byNormalized = new Map(ids.map((id) => [normalizeSpeakerId(id), id]));
-  const found = TTS_SPEAKERS
-    .map((s) => {
-      const actual = byNormalized.get(normalizeSpeakerId(s.id));
-      return actual ? { id: actual, label: s.label, verified: true } : null;
-    })
-    .filter(Boolean);
-  return found.length ? found : TTS_SPEAKERS.map((s) => ({ ...s, verified: false }));
-}
-
 /* 同じ語呂合わせを繰り返し聞くことが多いので、生成済みの音声は
    使い回す。青天井に持たないよう、古いものから捨てる */
 const TTS_CACHE_LIMIT = 30;
@@ -1454,7 +1439,9 @@ async function speak(text, onEnd, lang = "ja-JP") {
   /* VOICEVOXは日本語専用なので、英単語の読み上げは常にブラウザ内蔵の合成 */
   const provider = await getActiveProvider();
   const endpoint = lang === "ja-JP" ? TTS_ENDPOINTS[provider] : null;
-  const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
+  /* 既定はブラウザ標準。使えることを確認できた話者を設定画面で選んだ時
+     だけVOICEVOXを使う */
+  const speaker = endpoint ? await kvGet("tts_speaker", "") : "";
   const apiKey = speaker ? await loadApiKey(provider) : "";
   if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
   if (!apiKey) { speakWithBrowser(spoken, onEnd, lang); return; }
@@ -4171,45 +4158,113 @@ async function initSettingsScreen() {
  * ------------------------------------------------------------------ */
 const TTS_PREVIEW_TEXT = "軸にイオンがぶつかり電気あり。";
 
+/* 実際に鳴った話者だけを候補として残す。/v1/models に載っていることも、
+   IDの綴りが正しいことも、その話者を使える保証にはならない（規約に
+   同意していない話者は 400 "This model is not available." になる）ため、
+   一度鳴らしてみた結果だけを信用する */
+const BROWSER_VOICE_OPTION = { id: "", label: "ブラウザ標準（APIを使わない）" };
+const TTS_PROBE_TEXT = "テスト";
+
+async function loadKnownGoodSpeakers() {
+  const saved = await kvGet("tts_speakers_ok", null);
+  return Array.isArray(saved) ? saved : [];
+}
+
+/* 候補を1つずつ鳴らしてみて、成功したものだけを残す。規約に同意して
+   いない話者は弾かれるので、結果がそのまま「今使える話者」になる */
+async function detectUsableSpeakers(endpoint, apiKey, onProgress) {
+  const ids = await fetchModelIds(endpoint, apiKey);
+  const byNormalized = new Map(ids.map((id) => [normalizeSpeakerId(id), id]));
+  /* 一覧が取れた場合はそこに載っているIDを優先し、取れなければ
+     既知の綴りをそのまま試す */
+  const candidates = TTS_SPEAKERS.map((s) => ({
+    id: byNormalized.get(normalizeSpeakerId(s.id)) || s.id,
+    label: s.label,
+  }));
+
+  const usable = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    if (onProgress) onProgress(i + 1, candidates.length, c.label);
+    try {
+      const res = await requestTtsAudio(endpoint, apiKey, c.id, TTS_PROBE_TEXT);
+      if (res.ok) {
+        /* 鳴らせることの確認が目的なので、音声そのものは捨てる */
+        await res.arrayBuffer().catch(() => {});
+        usable.push(c);
+      } else {
+        console.info(`TTS: ${c.label}(${c.id}) は利用できません`, await extractErrorDetail(res));
+      }
+    } catch (err) {
+      console.warn(`TTS: ${c.label}(${c.id}) の確認に失敗しました`, err);
+    }
+  }
+  await kvSet("tts_speakers_ok", usable);
+  return usable;
+}
+
 async function refreshTtsSpeakerUI() {
   const select = document.getElementById("tts-speaker-select");
   const note = document.getElementById("tts-note");
+  const detectBtn = document.getElementById("tts-detect-btn");
   const provider = await getActiveProvider();
   const endpoint = TTS_ENDPOINTS[provider];
   const apiKey = endpoint ? await loadApiKey(provider) : "";
-  const chosen = await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT);
+  const chosen = await kvGet("tts_speaker", "");
 
-  const options = [{ id: "", label: "ブラウザ標準（APIを使わない）" }];
   if (!apiKey) {
     select.innerHTML = "";
-    select.appendChild(new Option(options[0].label, ""));
+    select.appendChild(new Option(BROWSER_VOICE_OPTION.label, ""));
     select.value = "";
     select.disabled = true;
-    note.textContent = "APIキーを保存すると、VOICEVOXの声で読み上げられるようになります。";
+    detectBtn.disabled = true;
+    note.textContent = "APIキーを保存すると、使える話者を調べられるようになります。";
     return;
   }
 
-  const speakers = await loadAvailableSpeakers(endpoint, apiKey);
+  const speakers = await loadKnownGoodSpeakers();
   select.disabled = false;
+  detectBtn.disabled = false;
   select.innerHTML = "";
-  for (const s of options.concat(speakers)) select.appendChild(new Option(s.label, s.id));
-  /* 保存済みの話者が一覧に無い場合は既定へ寄せる（綴り違いのIDが
-     保存されたままだと、鳴らない話者を選び続けることになる） */
+  for (const s of [BROWSER_VOICE_OPTION].concat(speakers)) select.appendChild(new Option(s.label, s.id));
+
+  /* 使えなくなった話者が保存されたままだと鳴らない声を選び続けることに
+     なるので、候補に無ければブラウザ標準へ戻す */
   const available = new Set(speakers.map((s) => s.id));
-  select.value = chosen && available.has(chosen) ? chosen
-    : (available.has(TTS_SPEAKER_DEFAULT) ? TTS_SPEAKER_DEFAULT : (speakers[0]?.id || ""));
+  select.value = chosen && available.has(chosen) ? chosen : "";
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
-  /* 一覧に載っていても規約に同意するまでは使えないので、載っていること
-     をもって「使える」とは書かない。同意が要る点を先に伝えておく */
-  note.textContent = (speakers.some((s) => s.verified)
-    ? "日本語の読み上げにVOICEVOXを使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。"
-    : "話者一覧を取得できなかったため既知の候補を表示しています。")
-    + "話者ごとに、さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から利用規約に同意する必要があります。試聴で確認できます。";
+  note.textContent = speakers.length
+    ? `使える話者が${speakers.length}件見つかっています。日本語の読み上げに使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。`
+    : "使える話者がまだありません。VOICEVOXの話者は、さくらのクラウドのコントロールパネルで話者ごとに利用規約へ同意しないと使えません。同意済みの話者があれば「話者を調べる」で検出できます。";
 }
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
   await kvSet("tts_speaker", e.target.value);
+});
+
+document.getElementById("tts-detect-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("tts-detect-btn");
+  const note = document.getElementById("tts-note");
+  const provider = await getActiveProvider();
+  const endpoint = TTS_ENDPOINTS[provider];
+  const apiKey = endpoint ? await loadApiKey(provider) : "";
+  if (!apiKey) { note.textContent = "先にAPIキーを保存してください。"; return; }
+
+  btn.disabled = true;
+  try {
+    const usable = await detectUsableSpeakers(endpoint, apiKey, (done, total, label) => {
+      note.textContent = `確認中… ${done}/${total}（${label}）`;
+    });
+    await refreshTtsSpeakerUI();
+    if (!usable.length) {
+      note.textContent = "使える話者は見つかりませんでした。さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から利用規約に同意すると使えるようになります。";
+    }
+  } catch (err) {
+    console.warn("TTS speaker detection failed:", err);
+    note.textContent = `話者の確認に失敗しました（${err.message}）。`;
+  }
+  btn.disabled = false;
 });
 
 document.getElementById("tts-preview-btn").addEventListener("click", async () => {
