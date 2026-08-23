@@ -4483,9 +4483,34 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+/* ホーム画面右上のビルドタグはこれまでPRをマージするたびに手動で
+   書き換えていたが、更新を忘れて古いままになることがあったため、
+   GitHub上で直近にmainへマージされたPR番号を自動取得して表示する。
+   取得できた値はkvにキャッシュし、オフライン時や取得失敗時は前回
+   キャッシュ値（初回はHTMLの初期値）をそのまま表示し続ける */
+async function refreshBuildTag() {
+  const el = document.getElementById("build-tag");
+  if (!el) return;
+  const cached = await kvGet("build_tag_pr", null);
+  if (cached) el.textContent = `#${cached}`;
+  try {
+    const res = await fetch("https://api.github.com/search/issues?q=repo:gmgngnm%2Fsetsuguro+is:pr+is:merged+base:main&sort=updated&order=desc&per_page=1");
+    if (!res.ok) return;
+    const json = await res.json();
+    const number = json.items && json.items[0] && json.items[0].number;
+    if (number) {
+      el.textContent = `#${number}`;
+      await kvSet("build_tag_pr", number);
+    }
+  } catch (err) {
+    console.warn("ビルドタグの自動取得に失敗しました（キャッシュ値のまま表示します）:", err);
+  }
+}
+
 renderRecentChips();
 applyThemeMode();
 restoreCloudSession();
+refreshBuildTag();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
