@@ -596,9 +596,10 @@ button{font-family:inherit;cursor:pointer;}
 .settings-status{font-size:12px;text-align:center;min-height:16px;color:var(--ink-soft);}
 
 /* 読み上げの声 */
-.tts-voice-row{display:flex;gap:8px;align-items:center;}
+.tts-voice-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 #tts-speaker-select{
-  flex:1;min-width:0;border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;
+  /* 話者名が長いので、ボタン2つと同じ行に収まらない幅では行を分ける */
+  flex:1 1 190px;min-width:0;border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;
   font-family:'JetBrains Mono',monospace;font-size:12.5px;
   background:var(--surface);color:var(--ink);
 }
