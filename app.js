@@ -53,6 +53,37 @@ const AFFIX_PREFIXES = {
   "multi":  { reading: "マルチ",   meaning: "多くの",              origin: "ラテン語 multus",    phonetic: "ˈmʌlti" },
   "tele":   { reading: "テレ",     meaning: "遠くへ",              origin: "ギリシャ語 tele",    phonetic: "ˈtɛlɪ" },
   "fore":   { reading: "フォア",   meaning: "前もって・前の",      origin: "古英語 fore",        phonetic: "fɔːr" },
+  "ab":     { reading: "アブ",     meaning: "離れて・反対",        origin: "ラテン語 ab-",       phonetic: "æb" },
+  "ad":     { reading: "アド",     meaning: "〜へ・向かって",      origin: "ラテン語 ad-",       phonetic: "æd" },
+  "after":  { reading: "アフター", meaning: "後で・背後の",        origin: "古英語 æfter",       phonetic: "ˈæftər" },
+  "up":     { reading: "アップ",   meaning: "上に・立ち上がる",    origin: "古英語 up",          phonetic: "ʌp" },
+  "back":   { reading: "バック",   meaning: "戻る・背後の",        origin: "古英語 bæc",         phonetic: "bæk" },
+  "bio":    { reading: "バイオ",   meaning: "生命",                origin: "ギリシャ語 bio-",    phonetic: "ˈbaɪoʊ" },
+  "counter": { reading: "カウンター", meaning: "対抗・逆方向",    origin: "ラテン語 contra-",   phonetic: "ˈkaʊntər" },
+  "cross":  { reading: "クロス",   meaning: "横切って",            origin: "ラテン語 crux",      phonetic: "krɔːs" },
+  "down":   { reading: "ダウン",   meaning: "下へ・下降",          origin: "古英語 dun",         phonetic: "daʊn" },
+  "eco":    { reading: "エコ",     meaning: "環境・家",            origin: "ギリシャ語 oikos",   phonetic: "ˈɛkoʊ" },
+  "en":     { reading: "エン",     meaning: "中へ・〜にする",      origin: "ラテン語 in-",       phonetic: "ɛn" },
+  "em":     { reading: "エム",     meaning: "中へ・〜にする",      origin: "ラテン語 in-",       phonetic: "ɛm" },
+  "homo":   { reading: "ホモ",     meaning: "同じ",                origin: "ギリシャ語 homo-",   phonetic: "ˈhoʊmoʊ" },
+  "hyper":  { reading: "ハイパー", meaning: "過度に・上に",        origin: "ギリシャ語 hyper-",  phonetic: "ˈhaɪpər" },
+  "infra":  { reading: "インフラ", meaning: "下に・以下",          origin: "ラテン語 infra-",    phonetic: "ˈɪnfrə" },
+  "macro":  { reading: "マクロ",   meaning: "大きい",              origin: "ギリシャ語 macro-",  phonetic: "ˈmækroʊ" },
+  "micro":  { reading: "マイクロ", meaning: "小さい",              origin: "ギリシャ語 micro-",  phonetic: "ˈmaɪkroʊ" },
+  "mid":    { reading: "ミッド",   meaning: "中央の",              origin: "古英語 mid",         phonetic: "mɪd" },
+  "mono":   { reading: "モノ",     meaning: "一つの・単一",        origin: "ギリシャ語 mono-",   phonetic: "ˈmɒnoʊ" },
+  "neo":    { reading: "ネオ",     meaning: "新しい",              origin: "ギリシャ語 neo-",    phonetic: "ˈniːoʊ" },
+  "out":    { reading: "アウト",   meaning: "外へ・超える",        origin: "古英語 ut",          phonetic: "aʊt" },
+  "para":   { reading: "パラ",     meaning: "横に・異常な",        origin: "ギリシャ語 para-",   phonetic: "ˈpærə" },
+  "per":    { reading: "パー",     meaning: "〜を通じて・徹底的に", origin: "ラテン語 per-",    phonetic: "pər" },
+  "poly":   { reading: "ポリ",     meaning: "多い・多数",          origin: "ギリシャ語 poly-",   phonetic: "ˈpɒli" },
+  "pseudo": { reading: "スード",   meaning: "偽の・似た",          origin: "ギリシャ語 pseudo-", phonetic: "ˈsuːdoʊ" },
+  "retro":  { reading: "レトロ",   meaning: "後ろに・過去に",      origin: "ラテン語 retro-",    phonetic: "ˈretrəʊ" },
+  "syn":    { reading: "シン",     meaning: "一緒に・共に",        origin: "ギリシャ語 syn-",    phonetic: "sɪn" },
+  "tri":    { reading: "トライ",   meaning: "三つの",              origin: "ラテン語 tri-",      phonetic: "traɪ" },
+  "ultra":  { reading: "ウルトラ", meaning: "超える・極端な",      origin: "ラテン語 ultra-",    phonetic: "ˈʌltrə" },
+  "uni":    { reading: "ユニ",     meaning: "一つの・単一",        origin: "ラテン語 uni-",      phonetic: "ˈjuːni" },
+  "vice":   { reading: "ヴァイス", meaning: "代わり・副",          origin: "ラテン語 vice-",     phonetic: "ˈvaɪs" },
 };
 
 const AFFIX_ROOTS = {
@@ -112,7 +143,7 @@ const LOCAL_AFFIX_DICT = { ...AFFIX_PREFIXES, ...AFFIX_ROOTS, ...AFFIX_SUFFIXES 
  * 1. IndexedDB ラッパー
  * ------------------------------------------------------------------ */
 const DB_NAME = "setsugoro-db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise = null;
 
 function openDB() {
@@ -122,8 +153,15 @@ function openDB() {
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains("words")) db.createObjectStore("words", { keyPath: "id" });
+      /* 未知の語根（AI推定・辞書未収録）の表記をembeddingで統合するための
+         ローカルのみのキャッシュ。part（接辞の綴り）をキーに、初めて見た
+         意味を正としてvector（meaningのembedding）とともに保存する */
       if (!db.objectStoreNames.contains("affixes")) db.createObjectStore("affixes", { keyPath: "part" });
       if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv", { keyPath: "key" });
+      /* 語呂合わせの動的Few-shot・マンネリ検出用コーパス（ローカルのみ、
+         クラウド同期はしない）。DEMO_WORD_DATAの種データ＋ユーザーが
+         保存した語呂を、意味のembeddingとともに蓄積する */
+      if (!db.objectStoreNames.contains("goro_corpus")) db.createObjectStore("goro_corpus", { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -217,16 +255,35 @@ async function loadApiKey(provider) {
  * 3. 生成AIアダプタ層（OpenAI / Gemini / Claude）
  *    共通インターフェース: decompose(word) / goro(word, morphemes)
  * ------------------------------------------------------------------ */
-const KNOWN_AFFIXES = Object.keys(LOCAL_AFFIX_DICT).join(", ");
+/* 接辞辞書が数十〜百件規模に育つと、単語と無関係な接辞まで毎回
+   まるごとプロンプトに入れることになりノイズが増える。単語の綴りに
+   前方一致・後方一致する接頭辞・接尾辞、部分一致する語根だけを
+   抽出して渡す（接辞RAG。埋め込みではなく文字列マッチで十分な
+   ことが多いため、ここはembeddingを使わない軽量な絞り込み） */
+function relevantAffixesForWord(word) {
+  const w = (word || "").toLowerCase();
+  const prefixes = Object.keys(AFFIX_PREFIXES).filter((k) => w.startsWith(k) && k.length < w.length);
+  const suffixes = Object.keys(AFFIX_SUFFIXES).filter((k) => w.endsWith(k) && k.length < w.length);
+  const roots = Object.keys(AFFIX_ROOTS).filter((k) => w.includes(k));
+  return [...new Set([...prefixes, ...suffixes, ...roots])];
+}
 
-const DECOMPOSE_SYS = [
+function decomposeSystemPrompt(word) {
+  const relevant = relevantAffixesForWord(word);
+  const knownAffixes = relevant.length
+    ? relevant.join(", ")
+    : "（この単語の綴りに前方一致・後方一致・部分一致する既知の接辞はありません。教科書的に広く認められている接辞で分割してください）";
+  return DECOMPOSE_SYS_TEMPLATE(knownAffixes);
+}
+
+const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
   "あなたは英語の語源・形態素解析の専門家です。",
   "まず、入力が実在の英単語かどうかを判定してください。この判定はできるだけ寛容に行い、少しでも実在の英単語のタイプミスである可能性があれば、word_existsをfalseにせず積極的に修正候補を採用してください。",
   "具体的には、1〜2文字程度の入れ替え・欠落・余分・置き換え（例: teh→the, recieve→receive, seperate→separate, langage→language, adress→address, occured→occurred, definately→definitely）や、キーボード上で隣接するキーの打ち間違い、二重母音・子音の重複ミスなど、よくあるタイプミスのパターンは、単語がある程度長ければ2〜3文字程度異なっていても、最も綴りが近く一般的な実在の英単語に積極的に修正し、word_existsをtrue、corrected_wordにその修正後の単語、was_correctedをtrueにしてください。迷った場合も、実在する単語である可能性が少しである方に倒してください。誤りがなければword_existsをtrue、corrected_wordに入力そのもの、was_correctedをfalseにしてください。",
   "word_existsをfalseにしてよいのは、ランダムな文字の羅列など、どう読んでも英単語のタイプミスとは考えられず、綴りの近い実在の英単語も思い当たらない場合に限ります。この場合、corrected_wordには入力そのものを入れ、word_meaning・memory_tipは空文字、morphemesは空配列で構いません（それ以上分析しないでください）。",
   "word_existsがtrueの場合のみ、以降の分割・分析を、修正後の単語（corrected_word）に対して行ってください。",
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
-  `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${KNOWN_AFFIXES}`,
+  `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${knownAffixes}`,
   "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
   "接頭辞・接尾辞を取り除いた後に残る中間部分（語根候補）についても、その先頭や末尾がさらに一覧の接頭辞・接尾辞（教科書的に広く認められている接辞を含む）と完全に一致する場合は、それ以上一致する接辞がなくなるまで再帰的に切り出しを続けてください。例えば competition は com(接頭辞) / pet(語根) / ition(接尾辞) のように、中間部分 compet の先頭にある com も一覧にあるため接頭辞として分離してください。単に語根が長い・見慣れないという理由だけで分割を諦めず、既知の接辞パターンに一致する部分がないか必ず確認してください。",
   "ただし、分割しすぎて1〜2文字だけの無意味な断片や、教育的に不自然な分割にはしないでください。それ以上分解すると学習上の意味を持たない断片になる場合は、そこで分割を止めて語根としてください。",
@@ -243,12 +300,19 @@ const DECOMPOSE_SYS = [
   "例: competition → com(接頭辞、共に) / pet(語根、求める) / ition(接尾辞、〜すること) のように、接尾辞を除いた語根候補 compet がさらに一覧の接頭辞 com で始まっている場合は、com も分離して3つ以上の要素に分割してください。",
 ].join("\n");
 
-function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes) {
+function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   return [
     "あなたは日本語の語呂合わせ作家です。",
     `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
     wordMeaning ? `この単語全体の意味は「${wordMeaning}」です。` : "",
+
+    /* ①動的Few-shot（RAG）。単語の意味が近い過去の語呂合わせ例を
+       embeddingで検索して見せる。丸写しされると新しいマンネリの
+       元になるため、型だけ参考にして言い回しは変えるよう明示する */
+    (examples && examples.length)
+      ? `参考として、意味が近い単語で過去に作れた語呂合わせの例を示します。読みを断片化して自然な日本語に溶け込ませる「作り方」だけを参考にし、言い回しや情景はこの単語向けに必ず変えてください（例の使い回し・丸写しは不可）:\n${examples.map((e) => `- ${e.word}（${e.meaning}）→「${e.goroText}」`).join("\n")}`
+      : "",
 
     /* Rule 1: 素材の使い方。読みを丸ごとの塊として扱わせないことが、
        Rule 3で挙げる不良パターンのほぼ全ての根本原因への対策になる。
@@ -406,6 +470,64 @@ async function verifyApiKey(provider, apiKey) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 3.5 Embeddings（さくらのAI /v1/embeddings, multilingual-e5-large）
+ *    語呂合わせの動的Few-shot・意味整合チェック・マンネリ検出・
+ *    接辞の表記ゆれ統合で共通に使う。埋め込み専用なのでプロバイダは
+ *    さくらのAIのみ対応。呼び出し元は必ずtry/catchし、失敗時は
+ *    その機能だけを静かにスキップして本筋の生成は止めないこと
+ *    （TTSと同様、APIキーによって機能が有効化されていない場合がある）。
+ * ------------------------------------------------------------------ */
+const EMBEDDING_ENDPOINTS = {
+  sakura: {
+    url: "https://api.ai.sakura.ad.jp/v1/embeddings",
+    model: "multilingual-e5-large",
+  },
+};
+
+/* E5系モデルは、検索側(query)と索引側(passage)で接頭辞を分けないと
+   精度が落ちる。ここでの「意味」同士の比較は非対称な検索ではないが、
+   校正時と実行時で同じ組み合わせを使う限り一貫していれば問題ないため、
+   用途ごとに固定の接頭辞を使う */
+function e5Prefix(kind) {
+  return kind === "query" ? "query: " : "passage: ";
+}
+
+async function embedTexts(texts, apiKey, kind = "passage") {
+  const cfg = EMBEDDING_ENDPOINTS.sakura;
+  if (!apiKey) throw new Error("APIキーが設定されていません");
+  const input = texts.map((t) => e5Prefix(kind) + String(t || ""));
+  const res = await fetch(cfg.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: cfg.model, input }),
+  });
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new Error(`embeddings API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await res.json();
+  const rows = Array.isArray(json.data) ? json.data.slice() : [];
+  rows.sort((a, b) => (a.index || 0) - (b.index || 0));
+  const vectors = rows.map((d) => d.embedding);
+  if (vectors.length !== texts.length || vectors.some((v) => !Array.isArray(v))) {
+    throw new Error("embeddings API の応答が不正です");
+  }
+  return vectors;
+}
+
+function cosineSim(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom ? dot / denom : 0;
+}
+
 const RETRYABLE_STATUS = [429, 500, 502, 503, 504];
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
@@ -453,24 +575,58 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
  * ------------------------------------------------------------------ */
 const MEANING_UNAVAILABLE = "（意味を取得できませんでした）";
 
-function reconcileWithLocalDict(morphemes) {
-  return (morphemes || []).map((m) => {
+/* 辞書未収録の語根（AI推定）は、呼ぶたびに meaning の言い回しが
+   微妙にブレる（例:「見る」/「見ること」）。同じpartについて過去に
+   embeddingしたmeaningと今回のmeaningを比較し、意味的に十分近ければ
+   前回の表記に統一する。初出のpartはそのまま正としてaffixesストアに
+   保存する（provider/apiKeyがない、またはembeddings呼び出しに失敗した
+   場合はAIの出力をそのまま使い、この統合をスキップするだけで
+   処理は止めない） */
+const AFFIX_NOTE_SIM_THRESHOLD = 0.88;
+
+async function reconcileUnknownAffix(part, aiEntry, apiKey) {
+  const [meaningVec] = await embedTexts([aiEntry.meaning], apiKey, "passage");
+  const existing = await idbGet("affixes", part);
+  if (existing && Array.isArray(existing.vector) && cosineSim(meaningVec, existing.vector) >= AFFIX_NOTE_SIM_THRESHOLD) {
+    return { part: aiEntry.part, reading: existing.reading, meaning: existing.meaning, origin: existing.origin, phonetic: existing.phonetic || aiEntry.phonetic };
+  }
+  await idbPut("affixes", {
+    part, reading: aiEntry.reading, meaning: aiEntry.meaning, origin: aiEntry.origin, phonetic: aiEntry.phonetic,
+    vector: meaningVec, updatedAt: Date.now(),
+  });
+  return aiEntry;
+}
+
+async function reconcileWithLocalDict(morphemes, provider, apiKey) {
+  const out = [];
+  for (const m of (morphemes || [])) {
     const key = (m.part || "").toLowerCase();
     const local = LOCAL_AFFIX_DICT[key];
     if (local) {
-      return { part: m.part, reading: local.reading, meaning: local.meaning, origin: local.origin, phonetic: local.phonetic || "" };
+      out.push({ part: m.part, reading: local.reading, meaning: local.meaning, origin: local.origin, phonetic: local.phonetic || "" });
+      continue;
     }
-    return {
+    const aiEntry = {
       part: m.part,
       reading: m.reading || m.part,
       meaning: m.meaning || MEANING_UNAVAILABLE,
       origin: m.origin || "—",
       phonetic: m.phonetic || "",
     };
-  });
+    if (provider === "sakura" && apiKey && key && aiEntry.meaning !== MEANING_UNAVAILABLE) {
+      try {
+        out.push(await reconcileUnknownAffix(key, aiEntry, apiKey));
+        continue;
+      } catch (err) {
+        console.warn(`未知接辞 "${key}" の表記統合に失敗しました（スキップします）:`, err);
+      }
+    }
+    out.push(aiEntry);
+  }
+  return out;
 }
 
-function fallbackDecompose(word) {
+async function fallbackDecompose(word) {
   // ローカル辞書のみによるルールベース分割（API失敗時の最終手段）
   const w = word.toLowerCase();
   const byLongest = (dict) => Object.keys(dict).sort((a, b) => b.length - a.length);
@@ -517,11 +673,12 @@ function sanitizeWordList(list, excludeWord) {
 
 async function decomposeWord(word, provider, apiKey) {
   try {
-    const json = await callAI(provider, apiKey, DECOMPOSE_SYS, `単語: ${word}`, 0.2);
+    const sys = decomposeSystemPrompt(word);
+    const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2);
     if (json.word_exists === false) {
       return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: [] };
     }
-    let morphemes = reconcileWithLocalDict(json.morphemes);
+    let morphemes = await reconcileWithLocalDict(json.morphemes, provider, apiKey);
     if (!morphemes.length) throw new Error("empty");
     let wordMeaning = json.word_meaning || "";
     let wordPhonetic = json.word_phonetic || "";
@@ -530,8 +687,8 @@ async function decomposeWord(word, provider, apiKey) {
     if (!wordMeaning || !wordPhonetic || !memoryTip || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
       try {
         const retryPrompt = `単語: ${word}\n前回の応答ではword_meaning/word_phonetic/memory_tipや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
-        const retryJson = await callAI(provider, apiKey, DECOMPOSE_SYS, retryPrompt, 0.2);
-        const retryMorphemes = reconcileWithLocalDict(retryJson.morphemes);
+        const retryJson = await callAI(provider, apiKey, sys, retryPrompt, 0.2);
+        const retryMorphemes = await reconcileWithLocalDict(retryJson.morphemes, provider, apiKey);
         if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
         if (!wordMeaning) wordMeaning = retryJson.word_meaning || "";
         if (!wordPhonetic) wordPhonetic = retryJson.word_phonetic || "";
@@ -552,7 +709,7 @@ async function decomposeWord(word, provider, apiKey) {
     return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
   } catch (err) {
     console.warn("Stage1 failed, falling back to local dictionary:", err);
-    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: fallbackDecompose(word) };
+    return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: await fallbackDecompose(word) };
   }
 }
 
@@ -624,7 +781,7 @@ async function validateDecomposition(word, morphemes, provider, apiKey, memoryTi
   try {
     const sys = decomposeValidationPrompt(word, morphemes, findUnderSplitHints(word, morphemes, memoryTip));
     const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2);
-    const revised = reconcileWithLocalDict(json.morphemes);
+    const revised = await reconcileWithLocalDict(json.morphemes, provider, apiKey);
     const concatenated = revised.map((m) => m.part).join("").toLowerCase();
     if (revised.length && concatenated === word.toLowerCase()) {
       return revised;
@@ -741,6 +898,73 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 4.6 語呂合わせコーパス（①動的Few-shot / ②意味整合ゲート / ③マンネリ検出）
+ *   DEMO_WORD_DATAの種データ＋ユーザーが保存した語呂を、意味のembedding
+ *   とともにローカル(goro_corpusストア)に蓄積する。使うほど、その端末の
+ *   ユーザーの作風に寄っていく。すべてローカルのみでクラウド同期はしない。
+ * ------------------------------------------------------------------ */
+const GORO_SEED_VERSION = "v1";
+const GORO_EXAMPLE_TOPK = 4;
+/* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
+   使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
+   調整できるよう定数として独立させている */
+const GORO_REPEAT_SIM_THRESHOLD = 0.93;
+
+function buildGoroSeedCorpus() {
+  return Object.entries(DEMO_WORD_DATA)
+    .filter(([, d]) => d && d.meaning && d.goroText)
+    .map(([word, d]) => ({ id: `seed:${word}`, word, meaning: d.meaning, goroText: d.goroText, source: "seed" }));
+}
+
+/* 種データを一度だけembeddingしてgoro_corpusに保存し、あわせて
+   ②意味整合ゲートのしきい値を実測で校正する。「単語の意味」と
+   「実際に採用された語呂合わせ」の組は、良質な語呂の実例として
+   30件分揃っているので、当てずっぽうの閾値を決め打ちする代わりに、
+   その分布の最小値付近を境界として使う */
+async function ensureGoroCorpusReady(provider, apiKey) {
+  if (provider !== "sakura" || !apiKey) return;
+  if ((await kvGet("goro_seed_version", null)) === GORO_SEED_VERSION) return;
+  try {
+    const seeds = buildGoroSeedCorpus();
+    if (!seeds.length) return;
+    const [meaningPassageVecs, meaningQueryVecs, goroVecs] = await Promise.all([
+      embedTexts(seeds.map((s) => s.meaning), apiKey, "passage"),
+      embedTexts(seeds.map((s) => s.meaning), apiKey, "query"),
+      embedTexts(seeds.map((s) => s.goroText), apiKey, "passage"),
+    ]);
+    const sims = seeds.map((_, i) => cosineSim(meaningQueryVecs[i], goroVecs[i]));
+    const threshold = Math.max(0, Math.min(...sims) - 0.03);
+    await Promise.all(seeds.map((s, i) => idbPut("goro_corpus", {
+      id: s.id, word: s.word, meaning: s.meaning, goroText: s.goroText,
+      /* vector: 意味のembedding（①のFew-shot検索用）
+         goroVector: 語呂合わせ本文のembedding（③のマンネリ検出用） */
+      vector: meaningPassageVecs[i], goroVector: goroVecs[i], source: "seed", createdAt: Date.now(),
+    })));
+    await kvSet("goro_gate_threshold", threshold);
+    await kvSet("goro_seed_version", GORO_SEED_VERSION);
+  } catch (err) {
+    console.warn("語呂合わせコーパスの初期化に失敗しました（スキップします）:", err);
+  }
+}
+
+/* ユーザーが実際に採用して保存した語呂合わせを、種データと同じ形で
+   goro_corpusに追加する。idはwordから決まるので、同じ単語を作り直して
+   再保存した場合は自動的に最新の語呂合わせに上書きされる */
+async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, apiKey) {
+  if (provider !== "sakura" || !apiKey || !wordMeaning || !goroText) return;
+  try {
+    const [meaningVec] = await embedTexts([wordMeaning], apiKey, "passage");
+    const [goroVec] = await embedTexts([goroText], apiKey, "passage");
+    await idbPut("goro_corpus", {
+      id: `user:${word.toLowerCase()}`, word, meaning: wordMeaning, goroText,
+      vector: meaningVec, goroVector: goroVec, source: "user", createdAt: Date.now(),
+    });
+  } catch (err) {
+    console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err);
+  }
+}
+
 /* 機械チェックに通らなかった場合に作り直す最大回数。
    1回目で合格すれば追加のAPI呼び出しは発生しない */
 const GORO_MAX_ATTEMPTS = 3;
@@ -753,13 +977,70 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
      保険として持っておく（チェックの厳しさでユーザーの操作を失敗させない） */
   let fallback = null;
 
+  /* embeddingsが使える場合のみ、①examples検索・②③の材料を用意する。
+     どこかで失敗しても本筋の生成は止めず、以降の機能を静かに諦める */
+  const useEmbeddings = provider === "sakura" && !!apiKey;
+  let examples = [];
+  let corpus = [];
+  let meaningQueryVec = null;
+  let gateThreshold = null;
+  if (useEmbeddings) {
+    try {
+      await ensureGoroCorpusReady(provider, apiKey);
+      corpus = await idbGetAll("goro_corpus");
+      gateThreshold = await kvGet("goro_gate_threshold", null);
+      if (wordMeaning) {
+        [meaningQueryVec] = await embedTexts([wordMeaning], apiKey, "query");
+        examples = corpus
+          .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && Array.isArray(c.vector))
+          .map((c) => ({ ...c, score: cosineSim(meaningQueryVec, c.vector) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, GORO_EXAMPLE_TOPK);
+      }
+    } catch (err) {
+      console.warn("語呂合わせのRAG準備に失敗しました（スキップします）:", err);
+    }
+  }
+
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
-    const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes);
+    const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples);
     const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
     const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
     if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
 
     const violations = goroViolations(candidates[0].text, morphemes);
+
+    /* ②単語の意味との結びつきが弱い（読みの音を成立させるためだけの
+       こじつけの情景になっている）候補と、③既存の語呂と言い回しが
+       似すぎている候補を、機械チェックの違反として同じ土俵で扱う。
+       既に機械チェック(goroViolations)で不合格が確定している場合は
+       無駄なembedding呼び出しをしない */
+    if (useEmbeddings && !violations.length) {
+      try {
+        const [candVec] = await embedTexts([candidates[0].text], apiKey, "passage");
+        if (meaningQueryVec && gateThreshold != null) {
+          const alignScore = cosineSim(candVec, meaningQueryVec);
+          if (alignScore < gateThreshold) {
+            violations.push({
+              code: "semantic-drift",
+              reason: `この語呂合わせの情景は、単語の意味「${wordMeaning}」との結びつきが弱いようです。読みの断片を活かしたまま、単語の意味を連想できる情景に描き直してください。`,
+            });
+          }
+        }
+        const repeatHit = corpus
+          .filter((c) => Array.isArray(c.goroVector) && c.word.toLowerCase() !== word.toLowerCase())
+          .find((c) => cosineSim(candVec, c.goroVector) >= GORO_REPEAT_SIM_THRESHOLD);
+        if (repeatHit) {
+          violations.push({
+            code: "phrasing-reuse",
+            reason: `この語呂合わせは、以前「${repeatHit.word}」で使った言い回し・情景と似すぎています。読みの活かし方や情景の型を変えてください。`,
+          });
+        }
+      } catch (err) {
+        console.warn("意味整合ゲート/マンネリ検出の計算に失敗しました（スキップします）:", err);
+      }
+    }
+
     if (violations.length) {
       if (!fallback || violations.length < fallback.violations.length) {
         fallback = { candidates, violations };
@@ -2706,6 +2987,11 @@ async function toggleSaveWord() {
       memorized: existing ? existing.memorized : false,
       created_at: existing ? existing.created_at : Date.now(),
     });
+    /* ユーザーが良いと判断して保存した語呂合わせを、今後の①Few-shot例・
+       ③マンネリ検出の材料として蓄積する。保存操作の成否には影響させない */
+    loadApiKey(provider)
+      .then((apiKey) => growGoroCorpusFromSave(currentWord, currentWordMeaning, newGoroText, provider, apiKey))
+      .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
   }
   await refreshSaveWordBtn();
 }
