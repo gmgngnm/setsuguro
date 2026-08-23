@@ -3629,8 +3629,8 @@ document.getElementById("google-signout-btn").addEventListener("click", async ()
    anon keyはRLS(行レベルセキュリティ)で保護される前提の公開鍵なので、
    フロントエンドに埋め込んでよい値（Supabase公式ドキュメント通り）。
    テーブル定義・RLSポリシーはリポジトリのSUPABASE_SETUP.mdを参照 */
-let SUPABASE_URL = "";
-let SUPABASE_ANON_KEY = "";
+let SUPABASE_URL = "https://ubvqigsydtrrfcovvpxk.supabase.co";
+let SUPABASE_ANON_KEY = "sb_publishable_FXz2avQ5_H8i0c5YY1e3MQ_cc_BcBqN";
 
 const SUPABASE_SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
 let supabaseLoadPromise = null;
