@@ -154,8 +154,10 @@ button{font-family:inherit;cursor:pointer;}
   overflow-wrap:break-word; word-break:break-word;
   font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
 }
-.morph:nth-child(2n){border-color:var(--accent-2);}
-.morph:nth-child(2n) .morph-part{color:var(--accent-2);}
+/* 枠の色は位置ではなく、その接辞をローカル辞書に持っているかで決める。
+   青＝収録済みの定番の接辞、オレンジ＝辞書に無くAIがその場で調べたもの */
+.morph.morph-new{border-color:var(--accent-2);}
+.morph.morph-new .morph-part{color:var(--accent-2);}
 .morph-part{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);}
 .morph-meaning{
   font-size:11px;color:var(--ink-soft);line-height:1.4;
@@ -315,6 +317,9 @@ button{font-family:inherit;cursor:pointer;}
 .affix-card .mean{font-size:13px;color:var(--ink-soft);margin-top:3px;}
 
 .goro-list{display:flex;flex-direction:column;gap:12px;}
+/* 語呂合わせがまだ届いていない間の場所取り。カード1枚ぶんの高さを確保して
+   おき、届いたときにレイアウトが飛び跳ねないようにする */
+.goro-pending{display:flex;align-items:center;justify-content:center;min-height:76px;}
 .goro-card{
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
   box-shadow:var(--shadow);position:relative;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
