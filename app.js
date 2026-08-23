@@ -3493,7 +3493,7 @@ document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
    空のままなら、サインインUIは出さず未設定である旨だけを表示する。
    発行時は、このアプリを配信するオリジンを対象クライアントの
    Authorized JavaScript origins に登録すること */
-const GOOGLE_CLIENT_ID = "";
+const GOOGLE_CLIENT_ID = "942903543011-r2hgervtelhkqfqgs9g2qnokjsdjaj6r.apps.googleusercontent.com";
 
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 let gsiLoadPromise = null;
