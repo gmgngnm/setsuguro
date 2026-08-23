@@ -319,10 +319,36 @@ button{font-family:inherit;cursor:pointer;}
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
   box-shadow:var(--shadow);position:relative;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
-.goro-tap{display:flex;align-items:flex-start;gap:10px;cursor:pointer;}
+.goro-tap{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding-right:28px;}
 .goro-tap .spk{flex-shrink:0;color:var(--accent);margin-top:1px;display:inline-flex;align-items:center;}
 .goro-tap .txt{font-size:15px;line-height:1.6;color:var(--ink);}
 .goro-tap.speaking .spk{animation:pulse .6s ease-in-out infinite;}
+
+/* 語呂合わせカード内の編集ボタン。読み上げのタップ領域と重ならないよう
+   右上に小さく置き、本文側には余白を確保しておく */
+.goro-edit-btn{
+  position:absolute;top:10px;right:10px;
+  width:26px;height:26px;padding:0;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-faint);
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.goro-edit-btn:hover{background:var(--surface-2);color:var(--accent);}
+.goro-edit-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.goro-card.editing{user-select:text;-webkit-user-select:text;}
+.goro-edit-input{
+  width:100%;box-sizing:border-box;resize:vertical;
+  font-family:inherit;font-size:15px;line-height:1.6;color:var(--ink);
+  background:var(--bg);border:1px solid var(--accent);border-radius:10px;padding:9px 11px;
+}
+.goro-edit-input:focus{outline:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);}
+.goro-edit-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:9px;}
+.goro-edit-actions button{
+  font-family:inherit;font-size:13px;font-weight:600;
+  padding:7px 16px;border-radius:999px;cursor:pointer;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink-soft);
+}
+.goro-edit-actions .goro-edit-save{background:var(--accent);border-color:var(--accent);color:#fff;}
+.goro-edit-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.25);}}
 .bottom-actions{
   position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
