@@ -957,8 +957,9 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
  *   とともにローカル(goro_corpusストア)に蓄積する。使うほど、その端末の
  *   ユーザーの作風に寄っていく。すべてローカルのみでクラウド同期はしない。
  * ------------------------------------------------------------------ */
-/* styleOkの付与に伴い再シードが必要なため v1 → v2 */
-const GORO_SEED_VERSION = "v2";
+/* 種データの本文を書き換えるたびに再シードが必要なため、ここを上げる
+   （v2: styleOkの付与 / v3: 種データ30件を新しい品質基準で書き直し） */
+const GORO_SEED_VERSION = "v3";
 const GORO_EXAMPLE_TOPK = 4;
 /* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
    使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
@@ -1661,7 +1662,7 @@ const DEMO_WORD_DATA = {
       { part: "sent", reading: "セント", meaning: "感じる・示す", origin: "ラテン語 sentire", phonetic: "sɛnt" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "プリンにセント硬貨を飾り、エーション会場で発表するちょっと変わったプレゼンだ",
+    goroText: "プリントを千枚配り、堂々と発表した",
   },
   reincarnation: {
     meaning: "生まれ変わり・輪廻転生", phonetic: "ˌriːɪnkɑːrˈneɪʃən",
@@ -1672,7 +1673,7 @@ const DEMO_WORD_DATA = {
       { part: "carn", reading: "カーン", meaning: "肉体・肉", origin: "ラテン語 caro/carnis", phonetic: "kɑːrn" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "「リ」と唱えインへ進むと、カーンと鐘が鳴りエーションの地で新しい体に生まれ変わった",
+    goroText: "鈴が鳴り、棺から生まれ変わって出てきた",
   },
   visualization: {
     meaning: "視覚化すること・可視化", phonetic: "ˌvɪʒuəlaɪˈzeɪʃən",
@@ -1682,7 +1683,7 @@ const DEMO_WORD_DATA = {
       { part: "ual", reading: "アル", meaning: "〜に関する", origin: "ラテン語 -alis", phonetic: "əl" },
       { part: "ization", reading: "ゼーション", meaning: "〜化すること", origin: "ラテン語 -izatio", phonetic: "zeɪʃən" },
     ],
-    goroText: "ヴィスの視力訓練でアルバムをゼーション処理して、見えなかった図がくっきり浮かんだ",
+    goroText: "ビスの緩みを図に表し、全体を可視化した",
   },
   immortality: {
     meaning: "不死・不滅", phonetic: "ˌɪmɔːrˈtæləti",
@@ -1693,7 +1694,7 @@ const DEMO_WORD_DATA = {
       { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "イムキャラがモートの谷でアルバムを開くと、イティと輝く不死の力が宿った",
+    goroText: "今も燃える炎に触れ、不死の体を得た",
   },
   reconstruction: {
     meaning: "再建・再構築", phonetic: "ˌriːkənˈstrʌkʃən",
@@ -1704,7 +1705,7 @@ const DEMO_WORD_DATA = {
       { part: "struct", reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
       { part: "ion", reading: "イオン", meaning: "名詞化（〜すること）", origin: "ラテン語 -io", phonetic: "ən" },
     ],
-    goroText: "リフォーム班がコンビでストラクトの柱をイオンのように組み直し、街を再建した",
+    goroText: "離れた根元に柱を立て直し、家を再建した",
   },
   architecture: {
     meaning: "建築・構造", phonetic: "ˈɑːrkɪtektʃər",
@@ -1714,7 +1715,7 @@ const DEMO_WORD_DATA = {
       { part: "tect", reading: "テクト", meaning: "建てる", origin: "ギリシャ語 tekton", phonetic: "tɛkt" },
       { part: "ure", reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
     ],
-    goroText: "アーキ隊長がテクト班にユアの設計図を渡し、壮大な建築が始まった",
+    goroText: "空き地に手早く湯屋を建てる工事が始まった",
   },
   transformation: {
     meaning: "変形・変化", phonetic: "ˌtrænsfərˈmeɪʃən",
@@ -1724,7 +1725,7 @@ const DEMO_WORD_DATA = {
       { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "トランス状態でフォームを変え、エーションの光とともに姿がガラリと変形した",
+    goroText: "トラックの形が伸びて、船へと変形した",
   },
   disqualification: {
     meaning: "資格取り消し・失格", phonetic: "ˌdɪskwɒlɪfɪˈkeɪʃən",
@@ -1734,7 +1735,7 @@ const DEMO_WORD_DATA = {
       { part: "quali", reading: "クオリ", meaning: "質・資格", origin: "ラテン語 qualis", phonetic: "kwɒli" },
       { part: "fication", reading: "フィケーション", meaning: "〜化すること", origin: "ラテン語 facere 由来", phonetic: "fɪkeɪʃən" },
     ],
-    goroText: "ディスと審判が叫び、クオリ選手はフィケーションの書類とともに失格になった",
+    goroText: "弟子が狂った走りで反則を犯し、失格になった",
   },
   misunderstanding: {
     meaning: "誤解", phonetic: "ˌmɪsʌndərˈstændɪŋ",
@@ -1745,7 +1746,7 @@ const DEMO_WORD_DATA = {
       { part: "stand", reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
       { part: "ing", reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
     ],
-    goroText: "ミスして相手のアンダーにスタンドし続けたせいで、イングとすれ違う誤解が生まれた",
+    goroText: "見過ごした暗がりの立ち話が、誤解を生んだ",
   },
   unbelievable: {
     meaning: "信じられない", phonetic: "ˌʌnbɪˈliːvəbl",
@@ -1755,7 +1756,7 @@ const DEMO_WORD_DATA = {
       { part: "believ", reading: "ビリーヴ", meaning: "信じる", origin: "古英語 belyfan", phonetic: "bɪliːv" },
       { part: "able", reading: "アブル", meaning: "〜できる", origin: "ラテン語 -abilis", phonetic: "əbl" },
     ],
-    goroText: "アンと驚く声とともに、ビリーヴした話がアブルほど現実離れしていた",
+    goroText: "暗い壁がびりびり光り、信じられない眺めだ",
   },
   extraordinary: {
     meaning: "並外れた・驚くべき", phonetic: "ɪkˈstrɔːrdəneri",
@@ -1765,7 +1766,7 @@ const DEMO_WORD_DATA = {
       { part: "ordin", reading: "オーディン", meaning: "順序", origin: "ラテン語 ordo", phonetic: "ɔːrdɪn" },
       { part: "ary", reading: "アリー", meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius", phonetic: "ɛri" },
     ],
-    goroText: "エクストラの舞台でオーディン神がアリーと舞い、並外れた光景が広がった",
+    goroText: "駅前の大通りを走る馬の速さは並外れていた",
   },
   international: {
     meaning: "国際的な", phonetic: "ˌɪntərˈnæʃənəl",
@@ -1775,7 +1776,7 @@ const DEMO_WORD_DATA = {
       { part: "nation", reading: "ネーション", meaning: "国家・国民", origin: "ラテン語 natio", phonetic: "neɪʃən" },
       { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
     ],
-    goroText: "インターハイにネーションの旗が並び、アルな空気で国際色豊かな大会になった",
+    goroText: "インターホン越しの挨拶が国際的な友情を生んだ",
   },
   responsibility: {
     meaning: "責任", phonetic: "rɪˌspɒnsəˈbɪləti",
@@ -1785,7 +1786,7 @@ const DEMO_WORD_DATA = {
       { part: "ibil", reading: "イビル", meaning: "〜できる", origin: "ラテン語 -ibilis", phonetic: "ɪbɪl" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "レスポンスが遅れた部長はイビルな表情のままイティと頭を下げ、責任を認めた",
+    goroText: "レストランの主人が責任を取って深く謝った",
   },
   communication: {
     meaning: "伝達・意思疎通", phonetic: "kəˌmjuːnɪˈkeɪʃən",
@@ -1795,7 +1796,7 @@ const DEMO_WORD_DATA = {
       { part: "muni", reading: "ミューニ", meaning: "共有する", origin: "ラテン語 munis", phonetic: "mjuːni" },
       { part: "cation", reading: "ケーション", meaning: "〜化すること", origin: "ラテン語 -catio", phonetic: "keɪʃən" },
     ],
-    goroText: "コムジャーからミューニ信号が届き、ケーションの塔を通じて仲間と意思疎通できた",
+    goroText: "込み入った合図で、離れた仲間と意思疎通できた",
   },
   appreciation: {
     meaning: "感謝・鑑賞", phonetic: "əˌpriːʃiˈeɪʃən",
@@ -1805,7 +1806,7 @@ const DEMO_WORD_DATA = {
       { part: "preci", reading: "プレシ", meaning: "価値", origin: "ラテン語 pretium", phonetic: "prɛsi" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "アプと手を挙げプレシ品の価値を見抜き、エーション式典で感謝を伝えた",
+    goroText: "アプリで届いた贈り物に、心から感謝した",
   },
   imagination: {
     meaning: "想像力", phonetic: "ɪˌmædʒɪˈneɪʃən",
@@ -1814,7 +1815,7 @@ const DEMO_WORD_DATA = {
       { part: "imagin", reading: "イマジン", meaning: "心に描く", origin: "ラテン語 imaginari", phonetic: "ɪmædʒɪn" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "イマジンの国でエーションの光が広がり、子どもたちの想像力が羽ばたいた",
+    goroText: "今も陣地を思い描く子の想像力は豊かだ",
   },
   popularity: {
     meaning: "人気", phonetic: "ˌpɒpjuˈlærəti",
@@ -1824,7 +1825,7 @@ const DEMO_WORD_DATA = {
       { part: "ar", reading: "アー", meaning: "〜の", origin: "ラテン語 -aris", phonetic: "ər" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "ポピュルという歌姫がアーな衣装でイティと登場し、一気に人気者になった",
+    goroText: "ポプリの香りが評判を呼び、店は人気になった",
   },
   opportunity: {
     meaning: "好機・機会", phonetic: "ˌɒpərˈtjuːnəti",
@@ -1834,7 +1835,7 @@ const DEMO_WORD_DATA = {
       { part: "portun", reading: "ポーチュン", meaning: "港へ向いた・好機の", origin: "ラテン語 portus 由来", phonetic: "pɔːrtjuːn" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "オプと号令がかかりポーチュン号がイティと出港、絶好の好機が訪れた",
+    goroText: "落ちたポーチを拾った縁が、好機を運んできた",
   },
   personality: {
     meaning: "個性・人格", phonetic: "ˌpɜːrsəˈnæləti",
@@ -1844,7 +1845,7 @@ const DEMO_WORD_DATA = {
       { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
       { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
     ],
-    goroText: "パーソン先輩がアルバムを開き、イティと語る姿ににじみ出る強い個性があった",
+    goroText: "派手なパーカー姿に、その人の個性がにじんだ",
   },
   information: {
     meaning: "情報", phonetic: "ˌɪnfərˈmeɪʃən",
@@ -1854,7 +1855,7 @@ const DEMO_WORD_DATA = {
       { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "インした部屋でフォームに記入すると、エーション画面に最新情報が表示された",
+    goroText: "駅のホームの掲示が、最新の情報を伝えていた",
   },
   application: {
     meaning: "申請・応用・アプリ", phonetic: "ˌæplɪˈkeɪʃən",
@@ -1864,7 +1865,7 @@ const DEMO_WORD_DATA = {
       { part: "plic", reading: "プリク", meaning: "重ねる・折りたたむ", origin: "ラテン語 plicare", phonetic: "plɪk" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "アプと声をかけプリクを重ね、エーション窓口で応募申請を済ませた",
+    goroText: "分厚い書類を窓口に出し、補助金を申請した",
   },
   organization: {
     meaning: "組織・団体", phonetic: "ˌɔːrɡənaɪˈzeɪʃən",
@@ -1874,7 +1875,7 @@ const DEMO_WORD_DATA = {
       { part: "iz", reading: "アイズ", meaning: "〜化する", origin: "ギリシャ語 -izein", phonetic: "aɪz" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "オーガン奏者がアイズを合図にエーションホールへ集まり、新しい組織が生まれた",
+    goroText: "大きな鐘の合図で人が集まり、組織ができた",
   },
   illustration: {
     meaning: "説明図・イラスト", phonetic: "ˌɪləˈstreɪʃən",
@@ -1884,7 +1885,7 @@ const DEMO_WORD_DATA = {
       { part: "lustr", reading: "ラストル", meaning: "輝かせる", origin: "ラテン語 lustrare", phonetic: "lʌstər" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "イルカがラストルの光で照らされ、エーションの紙面に美しいイラストが描かれた",
+    goroText: "いるかを描き足し、分かりやすい説明図になった",
   },
   examination: {
     meaning: "試験・検査", phonetic: "ɪɡˌzæmɪˈneɪʃən",
@@ -1894,7 +1895,7 @@ const DEMO_WORD_DATA = {
       { part: "amin", reading: "アミン", meaning: "調べる", origin: "ラテン語 examinare", phonetic: "æmɪn" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "エクスと呼ばれた受験生がアミン先生の前でエーション試験に挑んだ",
+    goroText: "駅前で編み物の腕を競う試験が始まった",
   },
   celebration: {
     meaning: "祝賀・お祝い", phonetic: "ˌsɛlɪˈbreɪʃən",
@@ -1903,7 +1904,7 @@ const DEMO_WORD_DATA = {
       { part: "celebr", reading: "セレブル", meaning: "祝う", origin: "ラテン語 celebrare", phonetic: "sɛləbr" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "セレブルな面々が集まり、エーション会場は盛大なお祝いムードに包まれた",
+    goroText: "競り落とした鯛を囲み、みんなでお祝いした",
   },
   inspiration: {
     meaning: "ひらめき・霊感", phonetic: "ˌɪnspəˈreɪʃən",
@@ -1913,7 +1914,7 @@ const DEMO_WORD_DATA = {
       { part: "spir", reading: "スピル", meaning: "息をする", origin: "ラテン語 spirare", phonetic: "spɪr" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "インした瞬間スピルと深呼吸すると、エーションのごとくひらめきが降ってきた",
+    goroText: "深く息を吸うと、良い案がふとひらめいた",
   },
   exploration: {
     meaning: "探検・探査", phonetic: "ˌɛkspləˈreɪʃən",
@@ -1923,7 +1924,7 @@ const DEMO_WORD_DATA = {
       { part: "plor", reading: "プロール", meaning: "叫ぶ・探し求める", origin: "ラテン語 plorare", phonetic: "plɔːr" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "エクス隊がプロールの森を進み、エーションの奥地で未知の遺跡を探検した",
+    goroText: "駅を離れ、プロの案内で洞窟を探検した",
   },
   observation: {
     meaning: "観察", phonetic: "ˌɒbzərˈveɪʃən",
@@ -1933,7 +1934,7 @@ const DEMO_WORD_DATA = {
       { part: "serv", reading: "サーヴ", meaning: "仕える・保つ", origin: "ラテン語 servare", phonetic: "sɜːrv" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "オブと望遠鏡を構えサーヴ班がエーション星を一晩じっくり観察した",
+    goroText: "帯を締め直し、皿の中の虫を丁寧に観察した",
   },
   publication: {
     meaning: "出版・公表", phonetic: "ˌpʌblɪˈkeɪʃən",
@@ -1943,7 +1944,7 @@ const DEMO_WORD_DATA = {
       { part: "ic", reading: "イク", meaning: "〜の（形容詞化）", origin: "ラテン語 -icus", phonetic: "ɪk" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "パブルな広場でイクつもの原稿がエーション印刷され、新刊が出版された",
+    goroText: "パブの片隅で書いた話が、ついに出版された",
   },
   graduation: {
     meaning: "卒業", phonetic: "ˌɡrædʒuˈeɪʃən",
@@ -1952,7 +1953,7 @@ const DEMO_WORD_DATA = {
       { part: "gradu", reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
       { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
     ],
-    goroText: "グラジュ坂を上りきった生徒たちが、エーション式典で晴れやかに卒業した",
+    goroText: "ぐらつく足で壇上に立ち、無事に卒業した",
   },
 };
 
