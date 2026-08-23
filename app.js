@@ -6,6 +6,17 @@ function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
 
+/* 語呂合わせの生成中に出す待ち表示。無機質なスピナーではなく、
+   AIが今なにをしているかを言葉で見せる（初回は「創作中」、
+   作り直しは「推敲中」）。点は0〜3個を繰り返してCSSで動かす */
+function goroLoadingHtml(label, suffix = "") {
+  return `<div class="goro-loading" role="status" aria-live="polite">`
+    + `<span class="goro-loading-label">${escapeHtml(label)}</span>`
+    + `<span class="goro-loading-dots" aria-hidden="true"></span>`
+    + (suffix ? `<span class="goro-loading-suffix">${suffix}</span>` : "")
+    + `</div>`;
+}
+
 /* 接辞タイルの枠色の出し分けに使う。ローカル辞書に収録済みの定番の接辞か、
    辞書に無くAIがその場で調べたものかで色を変える */
 function isKnownAffix(part) {
@@ -2319,7 +2330,7 @@ async function startDecompose(rawWord) {
   /* 遷移した時点でまだ生成中なら、語呂合わせ欄が空のままだと
      壊れて見えるので、文言なしの控えめなスピナーだけ置いておく */
   if (!goroDone) {
-    document.getElementById("goro-list").innerHTML = `<div class="goro-pending"><div class="spinner"></div></div>`;
+    document.getElementById("goro-list").innerHTML = goroLoadingHtml("創作中");
   }
 
   renderResultScreen();
@@ -3183,24 +3194,11 @@ function renderGoroList() {
     card.className = "goro-card";
     card.dataset.idx = idx;
     card.innerHTML = `
-      <div class="goro-tap" data-idx="${idx}">
-        <span class="spk">${speakerIconHtml()}</span><span class="txt">${escapeHtml(c.text)}</span>
-      </div>
+      <div class="goro-body"><span class="txt">${escapeHtml(c.text)}</span></div>
       <button class="goro-edit-btn" type="button" title="編集" aria-label="語呂合わせを編集">${pencilIconHtml()}</button>`;
     list.appendChild(card);
 
-    card.querySelector(".goro-edit-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      startGoroEdit(card, idx);
-    });
-  });
-
-  list.querySelectorAll(".goro-tap").forEach((el) => {
-    el.addEventListener("click", () => {
-      const idx = Number(el.dataset.idx);
-      el.classList.add("speaking");
-      speak(currentCandidates[idx].text, () => el.classList.remove("speaking"));
-    });
+    card.querySelector(".goro-edit-btn").addEventListener("click", () => startGoroEdit(card, idx));
   });
 }
 
@@ -3269,7 +3267,7 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
     return;
   }
   document.getElementById("regen-btn").disabled = true;
-  document.getElementById("goro-list").innerHTML = `<div class="empty-note">作り直しています…</div>`;
+  document.getElementById("goro-list").innerHTML = goroLoadingHtml("推敲中", "💦");
   await loadGoroCandidates(provider, apiKey);
 });
 
@@ -3474,12 +3472,7 @@ function renderWordDetailGoro(record) {
   if (record.goro_text) {
     const card = document.createElement("div");
     card.className = "goro-card";
-    card.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
-    const tap = card.querySelector(".goro-tap");
-    tap.addEventListener("click", () => {
-      tap.classList.add("speaking");
-      speak(record.goro_text, () => tap.classList.remove("speaking"));
-    });
+    card.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     goroList.appendChild(card);
   } else {
     goroList.innerHTML = `<div class="empty-note">語呂合わせは登録されていません</div>`;
@@ -3534,7 +3527,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
 
   const btn = document.getElementById("word-detail-regen-btn");
   btn.disabled = true;
-  document.getElementById("word-detail-goro").innerHTML = `<div class="empty-note">作り直しています…</div>`;
+  document.getElementById("word-detail-goro").innerHTML = goroLoadingHtml("推敲中", "💦");
 
   try {
     const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean));
@@ -3993,12 +3986,7 @@ function revealMemorizeDetail() {
   if (record.goro_text) {
     const goroCard = document.createElement("div");
     goroCard.className = "goro-card";
-    goroCard.innerHTML = `<div class="goro-tap"><span class="spk">${speakerIconHtml()}</span><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
-    const tap = goroCard.querySelector(".goro-tap");
-    tap.addEventListener("click", () => {
-      tap.classList.add("speaking");
-      speak(record.goro_text, () => tap.classList.remove("speaking"));
-    });
+    goroCard.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     extraEl.appendChild(goroCard);
   }
   const hasExtra = extraEl.children.length > 0;
