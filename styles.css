@@ -322,7 +322,7 @@ button{font-family:inherit;cursor:pointer;}
    届いたときにレイアウトが飛び跳ねないようにする */
 .goro-loading{
   display:flex;align-items:center;justify-content:center;min-height:76px;
-  font-size:14px;color:var(--ink-faint);letter-spacing:.04em;
+  font-size:19px;font-weight:700;color:var(--accent);letter-spacing:.04em;
 }
 .goro-loading-suffix{margin-left:2px;}
 /* 点は0個→3個→0個を繰り返す。幅を固定しておかないと点の増減で
