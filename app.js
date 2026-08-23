@@ -1413,6 +1413,20 @@ function requestTtsAudio(endpoint, apiKey, model, spoken) {
   });
 }
 
+/* 音声モデルは /v1/models に載っていても、さくらのクラウドのコントロール
+   パネルで話者ごとに利用規約へ同意するまで使えず、呼ぶと400
+   "This model is not available." が返る。話者IDの綴り間違いと症状が
+   紛らわしく、実際この切り分けで一度実装が止まっているため言い分ける */
+function ttsErrorHint(err) {
+  return /not available/i.test(err.message || "")
+    ? "この話者はまだ利用できません。さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」を開き、この話者の利用規約に同意してください（反映に数分かかることがあります）。"
+    : "";
+}
+
+/* 失敗してもブラウザ内蔵の音声で読み上げは続くため、黙っていると
+   VOICEVOXが使えていないことに気づけない。セッション中に一度だけ知らせる */
+let ttsFallbackNotified = false;
+
 async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
   const cacheKey = `${speaker}\n${spoken}`;
   const cached = ttsCache.get(cacheKey);
@@ -1459,6 +1473,10 @@ async function speak(text, onEnd, lang = "ja-JP") {
   } catch (err) {
     console.warn("TTS playback failed, falling back to the browser voice:", err);
     if (currentTtsAudio) currentTtsAudio = null;
+    if (!ttsFallbackNotified) {
+      ttsFallbackNotified = true;
+      toast(ttsErrorHint(err) ? "音声モデルが未承諾のため端末の音声で読み上げます" : "読み上げに失敗したため端末の音声を使います");
+    }
     speakWithBrowser(spoken, onEnd, lang);
   }
 }
@@ -4182,9 +4200,12 @@ async function refreshTtsSpeakerUI() {
     : (available.has(TTS_SPEAKER_DEFAULT) ? TTS_SPEAKER_DEFAULT : (speakers[0]?.id || ""));
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
-  note.textContent = speakers.some((s) => s.verified)
-    ? "日本語の読み上げにさくらのAIのVOICEVOXを使います。英単語はブラウザ内蔵の音声のままです。"
-    : "話者一覧を取得できなかったため既知の候補を表示しています。試聴で実際に鳴るか確認してください。";
+  /* 一覧に載っていても規約に同意するまでは使えないので、載っていること
+     をもって「使える」とは書かない。同意が要る点を先に伝えておく */
+  note.textContent = (speakers.some((s) => s.verified)
+    ? "日本語の読み上げにVOICEVOXを使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。"
+    : "話者一覧を取得できなかったため既知の候補を表示しています。")
+    + "話者ごとに、さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から利用規約に同意する必要があります。試聴で確認できます。";
 }
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
@@ -4215,7 +4236,8 @@ document.getElementById("tts-preview-btn").addEventListener("click", async () =>
     note.textContent = "✓ この声で読み上げます。";
   } catch (err) {
     console.warn("TTS preview failed:", err);
-    note.textContent = `試聴に失敗しました（${err.message}）。別の話者を選ぶか、APIキーをご確認ください。`;
+    const hint = ttsErrorHint(err);
+    note.textContent = hint || `試聴に失敗しました（${err.message}）。別の話者を選ぶか、APIキーをご確認ください。`;
   }
   btn.disabled = false;
 });
