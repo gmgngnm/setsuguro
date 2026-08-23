@@ -332,11 +332,11 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
     `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
     wordMeaning ? `この単語全体の意味は「${wordMeaning}」です。` : "",
 
-    /* ①動的Few-shot（RAG）。単語の意味が近い過去の語呂合わせ例を
-       embeddingで検索して見せる。丸写しされると新しいマンネリの
-       元になるため、型だけ参考にして言い回しは変えるよう明示する */
+    /* ①動的Few-shot。過去の語呂合わせ例から無作為に抽出して見せる。
+       丸写しされると新しいマンネリの元になるため、型だけ参考にして
+       言い回しは変えるよう明示する */
     (examples && examples.length)
-      ? `参考として、意味が近い単語で過去に作れた語呂合わせの例を示します。読みを断片化して自然な日本語に溶け込ませる「作り方」、接辞の綴りをカッコで添える書式、面白さと文体の付け方を参考にしてください。ただし言い回しや情景はこの単語向けに必ず変えてください（例の使い回し・丸写しは不可）:\n${examples.map((e) => `- ${e.word}（${e.meaning}）→「${e.goroText}」`).join("\n")}`
+      ? `参考として、過去に作れた語呂合わせの例を示します。読みを断片化して自然な日本語に溶け込ませる「作り方」、接辞の綴りをカッコで添える書式、面白さと文体の付け方を参考にしてください。ただし言い回しや情景はこの単語向けに必ず変えてください（例の使い回し・丸写しは不可）:\n${examples.map((e) => `- ${e.word}（${e.meaning}）→「${e.goroText}」`).join("\n")}`
       : "",
 
     /* Rule 1: 素材の使い方。読みを丸ごとの塊として扱わせないことが、
@@ -1212,15 +1212,20 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
       await ensureGoroCorpusReady(provider, apiKey);
       corpus = await idbGetAll("goro_corpus");
       gateThreshold = await kvGet("goro_gate_threshold", null);
+      /* ①のFew-shot例はランダム抽出。語呂の技法（読みの断片をどう情景に
+         落とし込むか）は単語の意味領域とあまり相関がなく、意味の近さで
+         絞り込む効果が薄いため、similarity検索はやめて母集団から無作為に
+         GORO_EXAMPLE_TOPK件選ぶだけにしている */
+      examples = corpus
+        /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
+           ③のマンネリ検出には引き続き使うが、手本としては見せない */
+        .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && c.styleOk !== false)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, GORO_EXAMPLE_TOPK);
+      /* meaningQueryVecは②意味整合ゲートで使うため、examples抽出とは
+         切り離した上で引き続き取得する */
       if (wordMeaning) {
         [meaningQueryVec] = await embedTexts([wordMeaning], apiKey, "query");
-        examples = corpus
-          /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
-             ③のマンネリ検出には引き続き使うが、手本としては見せない */
-          .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && Array.isArray(c.vector) && c.styleOk !== false)
-          .map((c) => ({ ...c, score: cosineSim(meaningQueryVec, c.vector) }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, GORO_EXAMPLE_TOPK);
       }
     } catch (err) {
       console.warn("語呂合わせのRAG準備に失敗しました（スキップします）:", err);
