@@ -6,6 +6,15 @@ function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
 
+/* 接辞タイルの枠色の出し分けに使う。ローカル辞書に収録済みの定番の接辞か、
+   辞書に無くAIがその場で調べたものかで色を変える */
+function isKnownAffix(part) {
+  return !!LOCAL_AFFIX_DICT[String(part || "").toLowerCase()];
+}
+function morphTileClass(part) {
+  return isKnownAffix(part) ? "" : " morph-new";
+}
+
 const ICON_PENCIL = '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>';
 function pencilIconHtml() {
   return `<svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PENCIL}</svg>`;
@@ -2266,7 +2275,7 @@ async function startDecompose(rawWord) {
   const mid = (morphemes.length - 1) / 2;
   morphemes.forEach((m, i) => {
     const el = document.createElement("div");
-    el.className = `morph ${animStyle.tileClass}`;
+    el.className = `morph ${animStyle.tileClass}${morphTileClass(m.part)}`;
     Object.entries(animStyle.tileVars(i, mid)).forEach(([prop, val]) => el.style.setProperty(prop, val));
     el.style.animationDelay = `${i * 0.08}s`;
 
@@ -2299,14 +2308,18 @@ async function startDecompose(rawWord) {
     }, lastMeaningDelay);
   }
 
-  const totalDelay = lastMeaningDelay + 1700;
-  await sleep(totalDelay);
+  /* アニメーションが一通り終わったら、語呂合わせの生成完了を待たずに
+     一定時間だけ置いて次の画面へ進む。以前は未完了なら「語呂合わせを
+     準備中…」と出して待っていたが、分解結果を読む時間としては長すぎ、
+     待たされている感じが強かった。語呂合わせは到着し次第
+     loadGoroCandidates が描画するので、遷移を止める必要はない */
+  const DECOMPOSE_READ_MS = 3000;
+  await sleep(lastMeaningDelay + DECOMPOSE_READ_MS);
 
+  /* 遷移した時点でまだ生成中なら、語呂合わせ欄が空のままだと
+     壊れて見えるので、文言なしの控えめなスピナーだけ置いておく */
   if (!goroDone) {
-    document.getElementById("decompose-label").textContent = "語呂合わせを準備中…";
-    spinnerRow.style.visibility = "visible";
-    await goroPromise;
-    spinnerRow.style.visibility = "hidden";
+    document.getElementById("goro-list").innerHTML = `<div class="goro-pending"><div class="spinner"></div></div>`;
   }
 
   renderResultScreen();
@@ -3961,7 +3974,7 @@ function revealMemorizeDetail() {
   splitEl.className = "word-split";
   (record.morphemes || []).forEach((m, i) => {
     const tile = document.createElement("div");
-    tile.className = "morph shatter-in";
+    tile.className = `morph shatter-in${morphTileClass(m.part)}`;
     tile.style.animationDelay = `${i * 0.08}s`;
     tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml(m.meaning || "")}</div>`;
     splitEl.appendChild(tile);
