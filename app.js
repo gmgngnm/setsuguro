@@ -19,7 +19,10 @@ function speakerIconHtml() {
 /* ------------------------------------------------------------------ *
  * 0. ローカル接辞辞書（頻出接辞のハイブリッド照合用・抜粋版）
  * ------------------------------------------------------------------ */
-const LOCAL_AFFIX_DICT = {
+/* 接辞は語のどの位置に立ちうるかで扱いが変わる（分割不足の検出や
+   フォールバック分解で、接尾辞を接頭辞として切り出さないため）ので、
+   位置ごとに分けて持ち、参照用にひとつの辞書へまとめる */
+const AFFIX_PREFIXES = {
   "un":     { reading: "アン",     meaning: "〜でない・否定",      origin: "古英語 un-",         phonetic: "ʌn" },
   "re":     { reading: "リ",       meaning: "再び・戻す",          origin: "ラテン語 re-",       phonetic: "riː" },
   "dis":    { reading: "ディス",   meaning: "否定・分離",          origin: "ラテン語 dis-",      phonetic: "dɪs" },
@@ -36,6 +39,23 @@ const LOCAL_AFFIX_DICT = {
   "il":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形", phonetic: "ɪl" },
   "im":     { reading: "イム",     meaning: "〜でない",            origin: "ラテン語 in- の異形", phonetic: "ɪm" },
   "ir":     { reading: "イル",     meaning: "〜でない",            origin: "ラテン語 in- の異形", phonetic: "ɪr" },
+  "be":     { reading: "ビ",       meaning: "強意・〜にする",      origin: "古英語 be-",         phonetic: "bɪ" },
+  "de":     { reading: "ディ",     meaning: "下へ・離れて・否定",  origin: "ラテン語 de-",       phonetic: "dɪ" },
+  "pro":    { reading: "プロ",     meaning: "前へ・賛成して",      origin: "ラテン語 pro-",      phonetic: "proʊ" },
+  "mis":    { reading: "ミス",     meaning: "誤って・悪く",        origin: "古英語 mis-",        phonetic: "mɪs" },
+  "non":    { reading: "ノン",     meaning: "〜でない",            origin: "ラテン語 non",       phonetic: "nɒn" },
+  "anti":   { reading: "アンチ",   meaning: "反対の・対抗する",    origin: "ギリシャ語 anti-",   phonetic: "ˈænti" },
+  "auto":   { reading: "オート",   meaning: "自ら・自動の",        origin: "ギリシャ語 autos",   phonetic: "ˈɔːtoʊ" },
+  "over":   { reading: "オーヴァー", meaning: "過度に・上に",      origin: "古英語 ofer",        phonetic: "ˈoʊvər" },
+  "under":  { reading: "アンダー", meaning: "下に・不足して",      origin: "古英語 under",       phonetic: "ˈʌndər" },
+  "super":  { reading: "スーパー", meaning: "超えて・上位の",      origin: "ラテン語 super",     phonetic: "ˈsuːpər" },
+  "semi":   { reading: "セミ",     meaning: "半分の",              origin: "ラテン語 semi-",     phonetic: "ˈsɛmi" },
+  "multi":  { reading: "マルチ",   meaning: "多くの",              origin: "ラテン語 multus",    phonetic: "ˈmʌlti" },
+  "tele":   { reading: "テレ",     meaning: "遠くへ",              origin: "ギリシャ語 tele",    phonetic: "ˈtɛlɪ" },
+  "fore":   { reading: "フォア",   meaning: "前もって・前の",      origin: "古英語 fore",        phonetic: "fɔːr" },
+};
+
+const AFFIX_ROOTS = {
   "dict":   { reading: "ジクト",   meaning: "言う",                origin: "ラテン語 dicere",    phonetic: "dɪkt" },
   "duc":    { reading: "デュク",   meaning: "導く",                origin: "ラテン語 ducere",    phonetic: "djuːk" },
   "tract":  { reading: "トラクト", meaning: "引く",                origin: "ラテン語 trahere",   phonetic: "trækt" },
@@ -51,6 +71,9 @@ const LOCAL_AFFIX_DICT = {
   "serv":   { reading: "サーヴ",   meaning: "仕える・保つ",        origin: "ラテン語 servare",   phonetic: "sɜːrv" },
   "cred":   { reading: "クレド",   meaning: "信じる",              origin: "ラテン語 credere",   phonetic: "krɛd" },
   "gress":  { reading: "グレス",   meaning: "歩む",                origin: "ラテン語 gradi",     phonetic: "grɛs" },
+};
+
+const AFFIX_SUFFIXES = {
   "ion":    { reading: "イオン",   meaning: "名詞化（〜すること）", origin: "ラテン語 -io",       phonetic: "ən" },
   "tion":   { reading: "ション",   meaning: "名詞化（〜すること）", origin: "ラテン語 -tio",      phonetic: "ʃən" },
   "ary":    { reading: "アリー",   meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius",    phonetic: "ɛri" },
@@ -66,7 +89,24 @@ const LOCAL_AFFIX_DICT = {
   "ist":    { reading: "イスト",   meaning: "〜する人",            origin: "ギリシャ語 -istes",  phonetic: "ɪst" },
   "er":     { reading: "アー",     meaning: "〜する人・もの",      origin: "古英語 -ere",        phonetic: "ər" },
   "ology":  { reading: "オロジー", meaning: "〜学",                origin: "ギリシャ語 -logia",  phonetic: "ˈɒlədʒi" },
+  "ity":    { reading: "イティ",   meaning: "名詞化（性質・状態）", origin: "ラテン語 -itas",     phonetic: "ɪti" },
+  "ance":   { reading: "アンス",   meaning: "名詞化（こと・状態）", origin: "ラテン語 -antia",    phonetic: "əns" },
+  "ence":   { reading: "エンス",   meaning: "名詞化（こと・状態）", origin: "ラテン語 -entia",    phonetic: "əns" },
+  "ant":    { reading: "アント",   meaning: "〜する人・もの",      origin: "ラテン語 -ans",      phonetic: "ənt" },
+  "ent":    { reading: "エント",   meaning: "〜する人・もの",      origin: "ラテン語 -ens",      phonetic: "ənt" },
+  "age":    { reading: "エイジ",   meaning: "名詞化（行為・結果）", origin: "ラテン語 -aticum",   phonetic: "ɪdʒ" },
+  "ism":    { reading: "イズム",   meaning: "主義・状態",          origin: "ギリシャ語 -ismos",  phonetic: "ɪzəm" },
+  "al":     { reading: "アル",     meaning: "〜に関する（形容詞化）", origin: "ラテン語 -alis",  phonetic: "əl" },
+  "ic":     { reading: "イック",   meaning: "〜的な（形容詞化）",  origin: "ギリシャ語 -ikos",   phonetic: "ɪk" },
+  "ize":    { reading: "アイズ",   meaning: "〜にする（動詞化）",  origin: "ギリシャ語 -izein",  phonetic: "aɪz" },
+  "ify":    { reading: "イファイ", meaning: "〜にする（動詞化）",  origin: "ラテン語 -ificare",  phonetic: "ɪfaɪ" },
+  "ly":     { reading: "リ",       meaning: "〜のように（副詞化）", origin: "古英語 -lice",       phonetic: "li" },
+  "ship":   { reading: "シップ",   meaning: "状態・立場",          origin: "古英語 -scipe",      phonetic: "ʃɪp" },
+  "hood":   { reading: "フッド",   meaning: "状態・時期",          origin: "古英語 -had",        phonetic: "hʊd" },
+  "ward":   { reading: "ワード",   meaning: "〜の方向へ",          origin: "古英語 -weard",      phonetic: "wərd" },
 };
+
+const LOCAL_AFFIX_DICT = { ...AFFIX_PREFIXES, ...AFFIX_ROOTS, ...AFFIX_SUFFIXES };
 
 /* ------------------------------------------------------------------ *
  * 1. IndexedDB ラッパー
@@ -195,6 +235,7 @@ const DECOMPOSE_SYS = [
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
+  "memory_tipで言及する分割は、morphemesの分割と必ず一致させてください。memory_tipにmorphemesより細かい分割を書いてしまう場合（例: morphemesはbereave/mentなのにmemory_tipには「be-(強調)+reave(奪う)+ment(結果)」と書く）は、memory_tipの方が正しく、morphemesの分割が不足しています。その場合はmemory_tipに合わせてmorphemesを分割し直してから出力してください。",
   "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、対義語（antonyms、意味が反対・対照的な実在する一般的な英単語）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
   '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
@@ -432,9 +473,9 @@ function reconcileWithLocalDict(morphemes) {
 function fallbackDecompose(word) {
   // ローカル辞書のみによるルールベース分割（API失敗時の最終手段）
   const w = word.toLowerCase();
-  const known = Object.keys(LOCAL_AFFIX_DICT).sort((a, b) => b.length - a.length);
-  const prefix = known.find((k) => w.startsWith(k) && k.length < w.length);
-  const suffix = known.find((k) => w.endsWith(k) && k.length < w.length && k !== prefix);
+  const byLongest = (dict) => Object.keys(dict).sort((a, b) => b.length - a.length);
+  const prefix = byLongest(AFFIX_PREFIXES).find((k) => w.startsWith(k) && k.length < w.length);
+  const suffix = byLongest(AFFIX_SUFFIXES).find((k) => w.endsWith(k) && k.length < w.length && k !== prefix);
   const parts = [];
   let rest = w;
   if (prefix) { parts.push(prefix); rest = rest.slice(prefix.length); }
@@ -506,7 +547,7 @@ async function decomposeWord(word, provider, apiKey) {
     const synonyms = sanitizeWordList(json.synonyms, correctedWord);
     const antonyms = sanitizeWordList(json.antonyms, correctedWord).filter((w) => !synonyms.some((s) => s.toLowerCase() === w.toLowerCase()));
 
-    morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey);
+    morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey, memoryTip);
 
     return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
   } catch (err) {
@@ -515,7 +556,48 @@ async function decomposeWord(word, provider, apiKey) {
   }
 }
 
-function decomposeValidationPrompt(word, morphemes) {
+/* 分割不足の検出。プロンプトに「一致しなくなるまで再帰的に切り出せ」と
+   書くだけではAIが途中で分割をやめてしまうことが多いため、疑わしい箇所を
+   コード側で特定し、校閲パスに具体的な指摘として渡す */
+const UNDER_SPLIT_MIN_REST = 3;
+
+/* 語根として残された要素が、まだ既知の接頭辞で始まる・接尾辞で終わる場合は、
+   切り出しそびれの可能性が高い（例: bereave に接頭辞 be が残っている）。
+   残りが短すぎる場合は、分割しても無意味な断片になるだけなので対象外 */
+function findLeftoverAffixes(morphemes) {
+  return morphemes.flatMap((m) => {
+    const part = (m.part || "").toLowerCase();
+    if (LOCAL_AFFIX_DICT[part]) return [];
+    const fits = (dict) => Object.keys(dict).filter((k) => part.length - k.length >= UNDER_SPLIT_MIN_REST);
+    const heads = fits(AFFIX_PREFIXES).filter((k) => part.startsWith(k));
+    const tails = fits(AFFIX_SUFFIXES).filter((k) => part.endsWith(k));
+    if (!heads.length && !tails.length) return [];
+    const where = [
+      heads.length ? `先頭が接頭辞 ${heads.join("/")} と一致` : "",
+      tails.length ? `末尾が接尾辞 ${tails.join("/")} と一致` : "",
+    ].filter(Boolean).join("、");
+    return [`"${m.part}" は${where}しており、さらに分割できる可能性があります。`];
+  });
+}
+
+/* memory_tipは「in(中へ)+vestig(足跡を)+ation(たどること)で、…」の形で返る。
+   そこで説明されている分割が実際のmorphemesより細かい場合、AI自身が
+   自分の分割結果と矛盾したことを言っている（＝分割不足の強い証拠） */
+function findMemoryTipContradiction(word, morphemes, memoryTip) {
+  const segments = [...String(memoryTip || "").matchAll(/([A-Za-z]+)\s*-?\s*[(（]/g)].map((m) => m[1].toLowerCase());
+  if (segments.length <= morphemes.length) return [];
+  if (segments.join("") !== word.toLowerCase()) return [];
+  return [`memory_tipでは "${segments.join(" + ")}" と${segments.length}分割で説明しているのに、morphemesは${morphemes.length}分割になっており矛盾しています。`];
+}
+
+function findUnderSplitHints(word, morphemes, memoryTip) {
+  return [
+    ...findMemoryTipContradiction(word, morphemes, memoryTip),
+    ...findLeftoverAffixes(morphemes),
+  ].slice(0, 4);
+}
+
+function decomposeValidationPrompt(word, morphemes, hints) {
   const partsList = morphemes
     .map((m, i) => `${i + 1}. ${m.part} - 読み:${m.reading} / 意味:${m.meaning} / 由来:${m.origin} / 発音記号:${m.phonetic}`)
     .join("\n");
@@ -527,16 +609,20 @@ function decomposeValidationPrompt(word, morphemes) {
     "①各要素を順番に連結すると、対象の英単語と文字列として完全に一致すること（文字の欠落・重複・誤字がないこと）。",
     "②各要素への切り方が、言語学的・語源的に見て妥当な形態素分割になっていること（実在しない、あるいは明らかに誤った分割になっていないこと）。",
     "③各要素の意味（meaning）・由来（origin）・カタカナ読み（reading）・発音記号（phonetic）が、その要素について事実として正確であること（誤りや当てずっぽうの記載がないこと）。",
+    "④分割し切れていない箇所がないこと。語根として残した要素の先頭・末尾が、さらに教科書的に広く認められている接頭辞・接尾辞と一致する場合は、一致するものがなくなるまで分割し直してください（例: bereavement を bereave / ment で止めず、be / reave / ment まで分ける）。単に語根が長い・見慣れないというだけで分割を諦めないでください。ただし、分割すると1〜2文字の無意味な断片が生じる場合や、語源的な根拠がない場合は、分割せずそのままにしてください。",
+    hints && hints.length
+      ? `次の点は分割不足の疑いが強いので、④として特に重点的に確認してください。\n${hints.map((h) => `- ${h}`).join("\n")}`
+      : "",
     "いずれかに誤りが見つかった場合は、正しい分割・正しい情報にすべて書き直してください。問題がなければそのまま使ってください。",
     "出力は、書き直した場合も含め、必ず全要素を次のJSON形式のみで返してください。それ以外の文章は一切書かないでください。",
     '{"morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}',
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
-async function validateDecomposition(word, morphemes, provider, apiKey) {
+async function validateDecomposition(word, morphemes, provider, apiKey, memoryTip) {
   if (!morphemes.length) return morphemes;
   try {
-    const sys = decomposeValidationPrompt(word, morphemes);
+    const sys = decomposeValidationPrompt(word, morphemes, findUnderSplitHints(word, morphemes, memoryTip));
     const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2);
     const revised = reconcileWithLocalDict(json.morphemes);
     const concatenated = revised.map((m) => m.part).join("").toLowerCase();
