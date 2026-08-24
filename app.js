@@ -3393,6 +3393,334 @@ async function runMatrixTileResolve(el, delayMs) {
   el.style.visibility = "visible";
 }
 
+/* ---- 「墨」アニメーション: 単語カードが墨で書かれた文字のようににじんで
+   崩れ、墨滴が垂れ落ちながら消える。続いて接辞カードは白紙の上に一筆書きで
+   輪郭が現れ、墨だまりを残しながら文字が刷り込まれる。仕組みは他のスタイルと
+   同じく、無傷の見た目を一度オフスクリーンに描いた上で、要素本体は
+   visibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
+
+/* 角丸長方形の輪郭を、筆でなぞる用に等間隔の点列として返す（時計回り） */
+function roundRectPerimeter(w, h, r, cornerSteps) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  const pts = [{ x: rr, y: 0 }, { x: w - rr, y: 0 }];
+  const corner = (cx, cy, fromDeg) => {
+    for (let i = 1; i <= cornerSteps; i++) {
+      const a = fromDeg + ((Math.PI / 2) * i) / cornerSteps;
+      pts.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr });
+    }
+  };
+  corner(w - rr, rr, -Math.PI / 2);
+  pts.push({ x: w, y: h - rr });
+  corner(w - rr, h - rr, 0);
+  pts.push({ x: rr, y: h });
+  corner(rr, h - rr, Math.PI / 2);
+  pts.push({ x: 0, y: rr });
+  corner(rr, rr, Math.PI);
+  return pts;
+}
+
+function cumulativePathLengths(pts) {
+  const lens = [0];
+  for (let i = 1; i < pts.length; i++) {
+    lens.push(lens[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  }
+  return lens;
+}
+
+/* 単語カードが墨のようににじんで崩れ、墨滴が垂れ落ちながら消える（分解アニメ本体） */
+async function runInkDissolve(placeholder, word, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = 40, padTop = 30, padBottom = 90;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "ink-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const inkTone = rootStyle.getPropertyValue("--ink").trim() || "#1c1c1c";
+  const cx = rect.width / 2, cy = rect.height / 2;
+
+  /* 墨滴: カード下半分から重力で垂れ落ちる、しずく状の粒 */
+  const DROP_COUNT = 10 + Math.floor(rect.width / 40);
+  const drops = Array.from({ length: DROP_COUNT }, () => {
+    const x = Math.random() * rect.width;
+    const y = rect.height * (0.35 + Math.random() * 0.6);
+    return {
+      spawnX: x, spawnY: y,
+      vx: (Math.random() - 0.5) * 40,
+      vy: 30 + Math.random() * 60,
+      r: 2 + Math.random() * 3.4,
+      delayMs: Math.random() * 220,
+      lifeMs: 480 + Math.random() * 320,
+    };
+  });
+
+  const DISSOLVE_MS = 780;
+  const gravity = 520;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const p = Math.min(1, t / DISSOLVE_MS);
+
+      /* にじみ: 文字の裏側から柔らかい墨色のハローが広がりながら薄れる */
+      const bloomR = Math.max(rect.width, rect.height) * (0.15 + p * 0.75);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 0.4 * (1 - p));
+      const bloom = ctx.createRadialGradient(cx, cy, 0, cx, cy, bloomR);
+      bloom.addColorStop(0, inkTone);
+      bloom.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = bloom;
+      ctx.beginPath();
+      ctx.arc(cx, cy, bloomR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      /* カード本体: ぼかしを強めながら縦につぶれ、和紙に染み込むように薄れる */
+      const blurPx = p * 10;
+      const squash = 1 - p * 0.22;
+      const alpha = Math.max(0, 1 - p * 1.15);
+      if (alpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.translate(cx, cy);
+        ctx.scale(1, squash);
+        ctx.translate(-cx, -cy);
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
+
+      /* 墨滴: 重力で垂れ落ち、発生点から現在位置へ細い尾を引きながら消える */
+      drops.forEach((d) => {
+        const ldt = t - d.delayMs;
+        if (ldt < 0 || ldt > d.lifeMs) return;
+        const s = ldt / 1000;
+        const x = d.spawnX + d.vx * s;
+        const curVy = d.vy + gravity * s;
+        const y = d.spawnY + d.vy * s + 0.5 * gravity * s * s;
+        const fade = Math.max(0, 1 - ldt / d.lifeMs);
+        const stretch = 1 + Math.min(2.2, curVy / 260);
+        ctx.save();
+        ctx.globalAlpha = fade * 0.9;
+        ctx.fillStyle = inkTone;
+        ctx.beginPath();
+        ctx.ellipse(x, y, d.r, d.r * stretch, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = fade * 0.35;
+        ctx.strokeStyle = inkTone;
+        ctx.lineWidth = Math.max(0.6, d.r * 0.5);
+        ctx.beginPath();
+        ctx.moveTo(d.spawnX, d.spawnY);
+        ctx.lineTo(x, y - d.r * stretch);
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      ctx.restore();
+
+      if (t >= DISSOLVE_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが白紙の上に一筆書きで輪郭を描かれ、墨だまりを残しながら
+   文字が刷り込まれるように現れる（単語側の墨演出と対になる） */
+async function runInkTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const padX = 16, padY = 16;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "ink-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const partText = partEl ? partEl.textContent : "";
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(partText, rect.width / 2, partCenterY);
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const inkTone = rootStyle.getPropertyValue("--ink").trim() || "#1c1c1c";
+
+  const rr = Math.min(radius, rect.width / 2, rect.height / 2);
+  const pts = roundRectPerimeter(rect.width, rect.height, rr, 6);
+  const lens = cumulativePathLengths(pts);
+  const totalLen = lens[lens.length - 1];
+
+  const BORDER_MS = 380, SETTLE_MS = 150, TEXT_MS = 260;
+  const TOTAL_MS = BORDER_MS + SETTLE_MS + TEXT_MS;
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      /* 紙(カード地)を薄く先に敷いておく */
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, t / 120);
+      roundRectPath(ctx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+      ctx.fillStyle = bg;
+      ctx.fill();
+      ctx.restore();
+
+      /* 輪郭を筆で一筆書きする */
+      const bp = Math.min(1, t / BORDER_MS);
+      const targetLen = bp * totalLen;
+      let tipPt = pts[0];
+      ctx.save();
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = borderWidth * (1.4 - bp * 0.4);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        if (lens[i] <= targetLen) {
+          ctx.lineTo(pts[i].x, pts[i].y);
+          tipPt = pts[i];
+        } else {
+          const segLen = lens[i] - lens[i - 1];
+          const frac = segLen > 0 ? (targetLen - lens[i - 1]) / segLen : 0;
+          tipPt = {
+            x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * frac,
+            y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * frac,
+          };
+          ctx.lineTo(tipPt.x, tipPt.y);
+          break;
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      /* 筆先に残る墨だまり */
+      if (bp < 1) {
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = inkTone;
+        ctx.beginPath();
+        ctx.arc(tipPt.x, tipPt.y, borderWidth * 1.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      /* 輪郭が引き終わったら、文字を左から刷り込むように現す */
+      const textStart = BORDER_MS + SETTLE_MS;
+      if (t > textStart) {
+        const tp = Math.min(1, (t - textStart) / TEXT_MS);
+        const revealW = rect.width * tp;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, revealW, rect.height);
+        ctx.clip();
+        if (tp < 1) ctx.filter = `blur(${(1 - tp) * 3}px)`;
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -3471,6 +3799,31 @@ const DECOMPOSE_ANIM_STYLES = {
     mountTile(el, i) {
       if (reducedMotion()) return;
       runMatrixTileResolve(el, i * 110);
+    },
+  },
+
+  ink: {
+    label: "墨",
+    tileClass: "ink-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語ブロックが墨のようににじんで崩れ、墨滴を垂らしながら消え去る */
+    async intro(placeholder, word) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runInkDissolve(placeholder, word, rect);
+    },
+    /* 接辞カードが一筆書きで輪郭を描かれ、文字が刷り込まれるように現れる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runInkTileResolve(el, i * 130);
     },
   },
 };
