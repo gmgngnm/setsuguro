@@ -16,52 +16,75 @@ function goroLoadingHtml(label, suffix = "") {
     + `</div>`;
 }
 
-/* 待ち時間をただのスピナーで潰さず、今何をしていそうかを具体的な
-   文言で切り替えながら見せる。接辞分解と語呂合わせ生成でプールを分け、
-   ごく低確率でどちらのプールにもネタの一文を混ぜる */
-const DECOMPOSE_LOADING_PHRASES = ["スペル精査中", "単語詳細検索中", "語源照合中", "正規化中", "自動修正中"];
-const GORO_LOADING_PHRASES = ["読みを断片化中", "実在語と照合中", "情景を構築中", "機械チェック中", "言い回しを調整中", "校閲中"];
+/* ごく低確率で紛れ込ませるネタの一文。接辞分解の固定シーケンス・
+   語呂合わせの実況表示のどちらからも同じ確率で抽選する */
 const LOADING_EASTER_EGGS = ["少女祈祷中", "少女瞑想中"];
-const LOADING_EASTER_EGG_CHANCE = 0.08;
-const LOADING_ROTATE_MS = 1400;
+const LOADING_EASTER_EGG_CHANCE = 0.02;
 
-function pickLoadingPhrase(pool, prev) {
-  const candidates = Math.random() < LOADING_EASTER_EGG_CHANCE ? LOADING_EASTER_EGGS : pool;
-  if (candidates.length <= 1) return candidates[0];
-  let next = candidates[Math.floor(Math.random() * candidates.length)];
-  /* 同じ文言が2回続くと「切り替わっていない」ように見えるため、
-     前回と被ったら次の候補にずらす */
-  if (next === prev) next = candidates[(candidates.indexOf(next) + 1) % candidates.length];
-  return next;
-}
+/* 接辞分解の待ち時間表示。実際の分解はAIへの単発の問い合わせで
+   内部の工程を観測できないため、こちらは「それらしい」工程名を
+   固定の順番で1つずつ見せる演出（本物の進捗ではない）。
+   msは各工程がそれっぽく見える目安の滞留時間で、重そうな処理ほど
+   長めにしてある。実際の表示時間はここに0.2〜2.0秒のランダムな
+   待ちを足すため、全工程が判で押したように均一な間隔にならない */
+const DECOMPOSE_LOADING_STEPS = [
+  { text: "スペル精査中", ms: 450 },
+  { text: "単語データベース照合中", ms: 900 },
+  { text: "語源を照合中", ms: 1200 },
+  { text: "接辞候補を抽出中", ms: 800 },
+  { text: "意味を推定中", ms: 700 },
+  { text: "発音記号を生成中", ms: 500 },
+  { text: "語根の表記ゆれを正規化中", ms: 1100 },
+  { text: "既知の接辞と照合中", ms: 700 },
+  { text: "暗記のヒントを組み立て中", ms: 550 },
+  { text: "自動修正を確認中", ms: 500 },
+];
 
-/* コンテナIDごとに動いているローテーションのタイマーを管理する。
-   実際のコンテンツに差し替える側は必ずstopLoadingRotationを呼ぶこと
-   （呼ばなくても次のstart時に自動で片付くが、放置すると実体の消えた
-   コンテナに向けて無駄にsetIntervalが動き続ける） */
+/* コンテナIDごとに動いているタイマーを管理する。実際のコンテンツに
+   差し替える側は必ずstopLoadingRotationを呼ぶこと（呼ばなくても次の
+   start時に自動で片付くが、放置すると実体の消えたコンテナに向けて
+   無駄にタイマーが動き続ける） */
 const activeLoadingRotations = new Map();
 
 function stopLoadingRotation(containerId) {
   const timerId = activeLoadingRotations.get(containerId);
   if (timerId) {
+    clearTimeout(timerId);
     clearInterval(timerId);
     activeLoadingRotations.delete(containerId);
   }
 }
 
-function startLoadingRotation(containerId, phrasePool) {
+function startDecomposeLoadingSequence(containerId) {
   stopLoadingRotation(containerId);
   const container = document.getElementById(containerId);
   if (!container) return;
-  let current = pickLoadingPhrase(phrasePool, null);
-  container.innerHTML = goroLoadingHtml(current);
-  const timerId = setInterval(() => {
-    current = pickLoadingPhrase(phrasePool, current);
+  let stepIndex = 0;
+  const showStep = () => {
+    const step = DECOMPOSE_LOADING_STEPS[stepIndex % DECOMPOSE_LOADING_STEPS.length];
+    stepIndex++;
+    const phrase = Math.random() < LOADING_EASTER_EGG_CHANCE
+      ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
+      : step.text;
     const labelEl = container.querySelector(".goro-loading-label");
-    if (!labelEl) { stopLoadingRotation(containerId); return; }
-    labelEl.textContent = current;
-  }, LOADING_ROTATE_MS);
-  activeLoadingRotations.set(containerId, timerId);
+    if (labelEl) labelEl.textContent = phrase;
+    else container.innerHTML = goroLoadingHtml(phrase);
+    const dwellMs = step.ms + 200 + Math.random() * 1800;
+    activeLoadingRotations.set(containerId, setTimeout(showStep, dwellMs));
+  };
+  showStep();
+}
+
+/* 語呂合わせ生成の待ち時間表示。こちらはgenerateGoro自身が今実際に
+   実行している処理を都度reportGoroStatusで報告してくるのを、
+   そのままラベルへ反映するだけ（タイマーによる自走はしていない）。
+   コンテナに読み込み中の枠がまだ無ければここで作る */
+function reportGoroStatus(containerId, phrase) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const labelEl = container.querySelector(".goro-loading-label");
+  if (labelEl) labelEl.textContent = phrase;
+  else container.innerHTML = goroLoadingHtml(phrase);
 }
 
 /* 接辞タイルの枠色の出し分けに使う。ローカル辞書に収録済みの定番の接辞か、
@@ -1366,7 +1389,11 @@ async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, api
    1回目で合格すれば追加のAPI呼び出しは発生しない */
 const GORO_MAX_ATTEMPTS = 3;
 
-async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts) {
+async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts, onStatus) {
+  /* 呼び出し元に今実際に何をしているかを知らせる。呼び出し元を
+     指定しない場合（バッチ処理など）は何もしない */
+  const report = onStatus || (() => {});
+
   /* 機械チェックで弾いた候補と、その不合格理由。次の試行でAIに具体的に
      伝えることで、同じ失敗の繰り返しを防ぐ */
   const rejectedNotes = [];
@@ -1383,6 +1410,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   let gateThreshold = null;
   if (useEmbeddings) {
     try {
+      report("お手本を準備中");
       await ensureGoroCorpusReady(provider, apiKey);
       corpus = await idbGetAll("goro_corpus");
       gateThreshold = await kvGet("goro_gate_threshold", null);
@@ -1399,6 +1427,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
       /* meaningQueryVecは②意味整合ゲートで使うため、examples抽出とは
          切り離した上で引き続き取得する */
       if (wordMeaning) {
+        report("単語の意味を解析中");
         [meaningQueryVec] = await embedTexts([wordMeaning], apiKey, "query");
       }
     } catch (err) {
@@ -1407,11 +1436,13 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   }
 
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
+    report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
     const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples);
     const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
     const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
     if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
 
+    report("機械チェック中");
     const violations = goroViolations(candidates[0].text, morphemes);
 
     /* ②単語の意味との結びつきが弱い（読みの音を成立させるためだけの
@@ -1421,6 +1452,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
        無駄なembedding呼び出しをしない */
     if (useEmbeddings && !violations.length) {
       try {
+        report("意味の整合性を確認中");
         const [candVec] = await embedTexts([candidates[0].text], apiKey, "passage");
         if (meaningQueryVec && gateThreshold != null) {
           const alignScore = cosineSim(candVec, meaningQueryVec);
@@ -1455,6 +1487,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
 
     /* 機械チェックを通った候補だけ、AIによる自然さ・面白さの校閲にかける。
        校閲で新たな違反が入り込む場合は、校閲前の合格版をそのまま使う */
+    report("校閲中");
     const revised = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
     return goroViolations(revised[0]?.text, morphemes).length ? candidates : revised;
   }
@@ -2168,7 +2201,7 @@ async function startDecompose(rawWord) {
   /* 分解の応答待ちの間、無言のパルス演出だけだと止まって見えるため、
      下に「スペル精査中…」のような具体的な文言を切り替えながら出す */
   spinnerRow.style.visibility = "visible";
-  startLoadingRotation("decompose-spinner", DECOMPOSE_LOADING_PHRASES);
+  startDecomposeLoadingSequence("decompose-spinner");
 
   let morphemes;
   if (demo) {
@@ -2236,16 +2269,14 @@ async function startDecompose(rawWord) {
   /* 新しい単語の初回生成では、別の単語の候補を「避けるべき前回の候補」として
      引き継いでしまわないようにリセットする */
   currentCandidates = [];
-  let goroDone = false;
-  let goroPromise;
   if (demo) {
     currentCandidates = [{ text: demo.goroText, highlight: [] }];
     renderGoroList();
-    goroDone = true;
-    goroPromise = Promise.resolve();
     document.getElementById("regen-btn").disabled = false;
   } else {
-    goroPromise = loadGoroCandidates(provider, apiKey).then(() => { goroDone = true; });
+    /* 待たずに裏側で先行実行する。完了はloadGoroCandidates内のrenderGoroList
+       が、進捗はgenerateGoroからのreportGoroStatusがgoro-listへ直接反映する */
+    loadGoroCandidates(provider, apiKey);
   }
 
   const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "crack"));
@@ -2304,12 +2335,11 @@ async function startDecompose(rawWord) {
      loadGoroCandidates が描画するので、遷移を止める必要はない */
   const DECOMPOSE_READ_MS = 3000;
   await sleep(lastMeaningDelay + DECOMPOSE_READ_MS);
-
-  /* 遷移した時点でまだ生成中なら、語呂合わせ欄が空のままだと
-     壊れて見えるので、進捗の文言を切り替えながら待たせる */
-  if (!goroDone) {
-    startLoadingRotation("goro-list", GORO_LOADING_PHRASES);
-  }
+  /* 遷移した時点でまだ生成中でも、goro-listにはgenerateGoro自身が
+     reportGoroStatusで書き込んだ現在の実況がすでに反映されている
+     （loadGoroCandidatesの初回reportが分解アニメーションの再生中に
+     とっくに発火しているため）ので、ここで別途プレースホルダーを
+     出す必要はない */
 
   renderResultScreen();
   showScreen("screen-result");
@@ -3110,9 +3140,8 @@ async function loadGoroCandidates(provider, apiKey) {
      同じような内容を繰り返さないようAIに明示的に伝える */
   const previousTexts = currentCandidates.map((c) => c.text).filter(Boolean);
   try {
-    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts);
+    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts, (phrase) => reportGoroStatus("goro-list", phrase));
   } catch (err) {
-    stopLoadingRotation("goro-list");
     const list = document.getElementById("goro-list");
     list.innerHTML = "";
     const note = document.createElement("div");
@@ -3166,7 +3195,6 @@ function startGoroEdit(card, idx) {
 }
 
 function renderGoroList() {
-  stopLoadingRotation("goro-list");
   const list = document.getElementById("goro-list");
   list.innerHTML = "";
   currentCandidates.forEach((c, idx) => {
@@ -3247,7 +3275,7 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
     return;
   }
   document.getElementById("regen-btn").disabled = true;
-  startLoadingRotation("goro-list", GORO_LOADING_PHRASES);
+  reportGoroStatus("goro-list", "語呂合わせを作り直し中");
   await loadGoroCandidates(provider, apiKey);
 });
 
@@ -3447,7 +3475,6 @@ csvImportInput.addEventListener("change", async (e) => {
 
 /* 単語帳の1件をタップした際に、単語・意味・接辞・接辞の意味・語呂合わせをまとめて表示する */
 function renderWordDetailGoro(record) {
-  stopLoadingRotation("word-detail-goro");
   const goroList = document.getElementById("word-detail-goro");
   goroList.innerHTML = "";
   if (record.goro_text) {
@@ -3508,17 +3535,16 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
 
   const btn = document.getElementById("word-detail-regen-btn");
   btn.disabled = true;
-  startLoadingRotation("word-detail-goro", GORO_LOADING_PHRASES);
+  reportGoroStatus("word-detail-goro", "語呂合わせを作り直し中");
 
   try {
-    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean));
+    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean), (phrase) => reportGoroStatus("word-detail-goro", phrase));
     const c = candidates[0];
     record.goro_text = c.text;
     record.goro_highlight = c.highlight || [];
     await saveWordRecord(record);
     renderWordDetailGoro(record);
   } catch (err) {
-    stopLoadingRotation("word-detail-goro");
     document.getElementById("word-detail-goro").innerHTML =
       `<div class="empty-note">語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。</div>`;
     console.error(err);
