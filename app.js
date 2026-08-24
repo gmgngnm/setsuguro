@@ -2373,7 +2373,7 @@ async function startDecompose(rawWord) {
     loadGoroCandidates(provider, apiKey);
   }
 
-  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "crack"));
+  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
   /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
      分割演出そのものが意味を持たないため省略する */
   if (morphemes.length > 1) {
@@ -3393,51 +3393,23 @@ async function runMatrixTileResolve(el, delayMs) {
   el.style.visibility = "visible";
 }
 
-/* ---- 「墨」アニメーション: 単語カードが墨で書かれた文字のようににじんで
-   崩れ、墨滴が垂れ落ちながら消える。続いて接辞カードは白紙の上に一筆書きで
-   輪郭が現れ、墨だまりを残しながら文字が刷り込まれる。仕組みは他のスタイルと
-   同じく、無傷の見た目を一度オフスクリーンに描いた上で、要素本体は
-   visibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
+/* ---- 「活版印刷」アニメーション: 単語カードが活字のようにガコンと下へ
+   押し込まれ、インクが掠れながら消え去る。続いて接辞カードは上からハンコの
+   ように紙へ打ち付けられ、インクの飛沫・紙のへこみを残しながら現れる。
+   仕組みは他のスタイルと同じく、無傷の見た目を一度オフスクリーンに描いた
+   上で、要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
 
-/* 角丸長方形の輪郭を、筆でなぞる用に等間隔の点列として返す（時計回り） */
-function roundRectPerimeter(w, h, r, cornerSteps) {
-  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-  const pts = [{ x: rr, y: 0 }, { x: w - rr, y: 0 }];
-  const corner = (cx, cy, fromDeg) => {
-    for (let i = 1; i <= cornerSteps; i++) {
-      const a = fromDeg + ((Math.PI / 2) * i) / cornerSteps;
-      pts.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr });
-    }
-  };
-  corner(w - rr, rr, -Math.PI / 2);
-  pts.push({ x: w, y: h - rr });
-  corner(w - rr, h - rr, 0);
-  pts.push({ x: rr, y: h });
-  corner(rr, h - rr, Math.PI / 2);
-  pts.push({ x: 0, y: rr });
-  corner(rr, rr, Math.PI);
-  return pts;
-}
-
-function cumulativePathLengths(pts) {
-  const lens = [0];
-  for (let i = 1; i < pts.length; i++) {
-    lens.push(lens[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-  }
-  return lens;
-}
-
-/* 単語カードが墨のようににじんで崩れ、墨滴が垂れ落ちながら消える（分解アニメ本体） */
-async function runInkDissolve(placeholder, word, rect) {
+/* 単語カードが活字のようにガコンと下に押し込まれ、掠れながら消え去る（分解アニメ本体） */
+async function runPressDissolve(placeholder, word, rect) {
   const cs = getComputedStyle(placeholder);
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
-  const padX = 40, padTop = 30, padBottom = 90;
+  const padX = 30, padTop = 20, padBottom = 60;
   const canvasW = rect.width + padX * 2;
   const canvasH = rect.height + padTop + padBottom;
 
   const canvas = document.createElement("canvas");
-  canvas.className = "ink-canvas";
+  canvas.className = "press-canvas";
   canvas.style.left = `${-padX}px`;
   canvas.style.top = `${-padTop}px`;
   canvas.width = Math.round(canvasW * dpr);
@@ -3475,27 +3447,35 @@ async function runInkDissolve(placeholder, word, rect) {
   srcCtx.textBaseline = "middle";
   srcCtx.fillText(word, rect.width / 2, rect.height / 2);
 
-  const rootStyle = getComputedStyle(document.documentElement);
-  const inkTone = rootStyle.getPropertyValue("--ink").trim() || "#1c1c1c";
   const cx = rect.width / 2, cy = rect.height / 2;
 
-  /* 墨滴: カード下半分から重力で垂れ落ちる、しずく状の粒 */
-  const DROP_COUNT = 10 + Math.floor(rect.width / 40);
-  const drops = Array.from({ length: DROP_COUNT }, () => {
-    const x = Math.random() * rect.width;
-    const y = rect.height * (0.35 + Math.random() * 0.6);
+  /* 掠れ: 活字が擦り減っていくように、ランダムな箇所からインクが抜けていく */
+  const KASURE_COUNT = 7;
+  const kasure = Array.from({ length: KASURE_COUNT }, () => ({
+    x: Math.random() * rect.width,
+    y: Math.random() * rect.height,
+    r: rect.height * (0.18 + Math.random() * 0.22),
+    delayMs: 160 + Math.random() * 260,
+  }));
+
+  /* 紙くず: 打刻の瞬間に飛び散る小さな破片 */
+  const DEBRIS_COUNT = 10;
+  const debris = Array.from({ length: DEBRIS_COUNT }, () => {
+    const angle = Math.PI + Math.random() * Math.PI;
+    const speed = 90 + Math.random() * 160;
     return {
-      spawnX: x, spawnY: y,
-      vx: (Math.random() - 0.5) * 40,
-      vy: 30 + Math.random() * 60,
-      r: 2 + Math.random() * 3.4,
-      delayMs: Math.random() * 220,
-      lifeMs: 480 + Math.random() * 320,
+      x0: cx + (Math.random() - 0.5) * rect.width * 0.7,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 60,
+      size: 2 + Math.random() * 3,
+      rot: Math.random() * Math.PI,
+      vrot: (Math.random() - 0.5) * 10,
     };
   });
 
-  const DISSOLVE_MS = 780;
-  const gravity = 520;
+  const IMPACT_MS = 130, DISSOLVE_MS = 680;
+  const gravity = 480;
+  const easeInCubic = (p) => p * p * p;
   const start = performance.now();
 
   return new Promise((resolve) => {
@@ -3506,61 +3486,82 @@ async function runInkDissolve(placeholder, word, rect) {
       ctx.save();
       ctx.translate(padX, padTop);
 
-      const p = Math.min(1, t / DISSOLVE_MS);
+      const ip = Math.min(1, t / IMPACT_MS);
+      const squash = 1 - easeInCubic(ip) * 0.42;
+      const dropY = easeInCubic(ip) * 8;
 
-      /* にじみ: 文字の裏側から柔らかい墨色のハローが広がりながら薄れる */
-      const bloomR = Math.max(rect.width, rect.height) * (0.15 + p * 0.75);
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, 0.4 * (1 - p));
-      const bloom = ctx.createRadialGradient(cx, cy, 0, cx, cy, bloomR);
-      bloom.addColorStop(0, inkTone);
-      bloom.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = bloom;
-      ctx.beginPath();
-      ctx.arc(cx, cy, bloomR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      /* 打刻の瞬間、紙が白く光る */
+      if (t < IMPACT_MS + 90) {
+        const fp = Math.max(0, 1 - Math.max(0, t - IMPACT_MS * 0.5) / 140);
+        if (fp > 0) {
+          ctx.save();
+          ctx.globalAlpha = fp * 0.55;
+          ctx.fillStyle = "#ffffff";
+          roundRectPath(ctx, 0, 0, rect.width, rect.height, radius);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
 
-      /* カード本体: ぼかしを強めながら縦につぶれ、和紙に染み込むように薄れる */
-      const blurPx = p * 10;
-      const squash = 1 - p * 0.22;
-      const alpha = Math.max(0, 1 - p * 1.15);
-      if (alpha > 0) {
+      const overallAlpha = t < IMPACT_MS ? 1 : Math.max(0, 1 - (t - IMPACT_MS) / (DISSOLVE_MS - IMPACT_MS));
+
+      if (overallAlpha > 0) {
         ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.filter = `blur(${blurPx}px)`;
-        ctx.translate(cx, cy);
+        ctx.globalAlpha = overallAlpha;
+        ctx.translate(cx, cy + dropY);
         ctx.scale(1, squash);
         ctx.translate(-cx, -cy);
+
+        /* 版ズレしたゴースト: わずかにずらして薄く重ねる */
+        if (t > IMPACT_MS) {
+          ctx.save();
+          ctx.globalAlpha *= 0.3;
+          ctx.translate(2.5, -1.5);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+          ctx.restore();
+        }
+
         ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+
+        /* 掠れ: インクが抜けていく部分を丸く消していく */
+        kasure.forEach((k) => {
+          const kt = t - k.delayMs;
+          if (kt < 0) return;
+          const kp = Math.min(1, kt / 260);
+          ctx.save();
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.globalAlpha = kp * 0.9;
+          const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r * kp);
+          g.addColorStop(0, "rgba(0,0,0,1)");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(k.x, k.y, k.r * kp, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+
         ctx.restore();
       }
 
-      /* 墨滴: 重力で垂れ落ち、発生点から現在位置へ細い尾を引きながら消える */
-      drops.forEach((d) => {
-        const ldt = t - d.delayMs;
-        if (ldt < 0 || ldt > d.lifeMs) return;
-        const s = ldt / 1000;
-        const x = d.spawnX + d.vx * s;
-        const curVy = d.vy + gravity * s;
-        const y = d.spawnY + d.vy * s + 0.5 * gravity * s * s;
-        const fade = Math.max(0, 1 - ldt / d.lifeMs);
-        const stretch = 1 + Math.min(2.2, curVy / 260);
-        ctx.save();
-        ctx.globalAlpha = fade * 0.9;
-        ctx.fillStyle = inkTone;
-        ctx.beginPath();
-        ctx.ellipse(x, y, d.r, d.r * stretch, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = fade * 0.35;
-        ctx.strokeStyle = inkTone;
-        ctx.lineWidth = Math.max(0.6, d.r * 0.5);
-        ctx.beginPath();
-        ctx.moveTo(d.spawnX, d.spawnY);
-        ctx.lineTo(x, y - d.r * stretch);
-        ctx.stroke();
-        ctx.restore();
-      });
+      /* 紙くず */
+      if (t >= IMPACT_MS) {
+        const ldt = (t - IMPACT_MS) / 1000;
+        const fade = Math.max(0, 1 - ldt / 0.5);
+        if (fade > 0) {
+          ctx.fillStyle = textColor;
+          debris.forEach((d) => {
+            const x = d.x0 + d.vx * ldt;
+            const y = rect.height + d.vy * ldt + 0.5 * gravity * ldt * ldt;
+            ctx.save();
+            ctx.globalAlpha = fade * 0.85;
+            ctx.translate(x, y);
+            ctx.rotate(d.rot + d.vrot * ldt);
+            ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
+            ctx.restore();
+          });
+        }
+      }
 
       ctx.restore();
 
@@ -3571,9 +3572,9 @@ async function runInkDissolve(placeholder, word, rect) {
   });
 }
 
-/* 接辞カードが白紙の上に一筆書きで輪郭を描かれ、墨だまりを残しながら
-   文字が刷り込まれるように現れる（単語側の墨演出と対になる） */
-async function runInkTileResolve(el, delayMs) {
+/* 接辞カードが活字ハンコのように上から落ちてきて紙に打ち付けられ、
+   インクの飛沫・紙のへこみを残しながら現れる（単語側の活版印刷演出と対になる） */
+async function runPressTileResolve(el, delayMs) {
   await ensureMorphFontLoaded();
   el.style.position = "relative";
   const rect = { width: el.offsetWidth, height: el.offsetHeight };
@@ -3588,14 +3589,14 @@ async function runInkTileResolve(el, delayMs) {
 
   const cs = getComputedStyle(el);
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  const padX = 16, padY = 16;
+  const padX = 16, padTop = 70, padBottom = 16;
   const canvasW = rect.width + padX * 2;
-  const canvasH = rect.height + padY * 2;
+  const canvasH = rect.height + padTop + padBottom;
 
   const canvas = document.createElement("canvas");
-  canvas.className = "ink-canvas";
+  canvas.className = "press-canvas";
   canvas.style.left = `${-padX}px`;
-  canvas.style.top = `${-padY}px`;
+  canvas.style.top = `${-padTop}px`;
   canvas.width = Math.round(canvasW * dpr);
   canvas.height = Math.round(canvasH * dpr);
   canvas.style.width = `${canvasW}px`;
@@ -3621,22 +3622,43 @@ async function runInkTileResolve(el, delayMs) {
   roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
   srcCtx.fillStyle = bg;
   srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
   srcCtx.font = font;
   srcCtx.fillStyle = textColor;
   srcCtx.textAlign = "center";
   srcCtx.textBaseline = "middle";
   srcCtx.fillText(partText, rect.width / 2, partCenterY);
 
-  const rootStyle = getComputedStyle(document.documentElement);
-  const inkTone = rootStyle.getPropertyValue("--ink").trim() || "#1c1c1c";
+  const cx = rect.width / 2;
 
-  const rr = Math.min(radius, rect.width / 2, rect.height / 2);
-  const pts = roundRectPerimeter(rect.width, rect.height, rr, 6);
-  const lens = cumulativePathLengths(pts);
-  const totalLen = lens[lens.length - 1];
+  /* インクの飛沫: 打刻の瞬間に周囲へ飛び散る小さな破片 */
+  const DEBRIS_COUNT = 8;
+  const debris = Array.from({ length: DEBRIS_COUNT }, () => {
+    const angle = Math.PI + Math.random() * Math.PI;
+    const speed = 60 + Math.random() * 110;
+    return {
+      x0: cx + (Math.random() - 0.5) * rect.width * 0.6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 40,
+      size: 1.6 + Math.random() * 2.6,
+      rot: Math.random() * Math.PI,
+      vrot: (Math.random() - 0.5) * 9,
+    };
+  });
 
-  const BORDER_MS = 380, SETTLE_MS = 150, TEXT_MS = 260;
-  const TOTAL_MS = BORDER_MS + SETTLE_MS + TEXT_MS;
+  /* 掠れ: 打刻直後はインクが均一でなく、じわっと馴染んで均される */
+  const KASURE_COUNT = 5;
+  const kasure = Array.from({ length: KASURE_COUNT }, () => ({
+    x: Math.random() * rect.width,
+    y: Math.random() * rect.height,
+    r: rect.height * (0.16 + Math.random() * 0.2),
+  }));
+
+  const FALL_MS = 300, TOTAL_MS = FALL_MS + 420;
+  const debrisGravity = 900;
+  const easeInQuad = (p) => p * p;
   const start = performance.now();
 
   await new Promise((resolve) => {
@@ -3645,68 +3667,73 @@ async function runInkTileResolve(el, delayMs) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, canvasW, canvasH);
       ctx.save();
-      ctx.translate(padX, padY);
+      ctx.translate(padX, padTop);
 
-      /* 紙(カード地)を薄く先に敷いておく */
+      const impacted = t >= FALL_MS;
+      let y, squash;
+      if (!impacted) {
+        const fp = t / FALL_MS;
+        y = -padTop * 0.85 * (1 - easeInQuad(fp));
+        squash = 1;
+      } else {
+        const bt = Math.min(1, (t - FALL_MS) / 220);
+        const bounce = Math.sin(bt * Math.PI) * (1 - bt);
+        squash = 1 - (1 - bt) * 0.3 + bounce * 0.08;
+        y = 0;
+      }
+
+      /* 活字ブロックの落下・打刻時の潰れ（下端を基準に縦へ潰す） */
       ctx.save();
-      ctx.globalAlpha = Math.min(1, t / 120);
-      roundRectPath(ctx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
-      ctx.fillStyle = bg;
-      ctx.fill();
+      ctx.translate(0, y + rect.height * (1 - squash));
+      ctx.scale(1, squash);
+      ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
       ctx.restore();
 
-      /* 輪郭を筆で一筆書きする */
-      const bp = Math.min(1, t / BORDER_MS);
-      const targetLen = bp * totalLen;
-      let tipPt = pts[0];
-      ctx.save();
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.strokeStyle = borderColor;
-      ctx.lineWidth = borderWidth * (1.4 - bp * 0.4);
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) {
-        if (lens[i] <= targetLen) {
-          ctx.lineTo(pts[i].x, pts[i].y);
-          tipPt = pts[i];
-        } else {
-          const segLen = lens[i] - lens[i - 1];
-          const frac = segLen > 0 ? (targetLen - lens[i - 1]) / segLen : 0;
-          tipPt = {
-            x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * frac,
-            y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * frac,
-          };
-          ctx.lineTo(tipPt.x, tipPt.y);
-          break;
+      if (impacted) {
+        /* 打刻直後、輪郭の内側にわずかな凹み影を落として紙のへこみを表現 */
+        const settleP = Math.min(1, (t - FALL_MS) / 260);
+        ctx.save();
+        ctx.globalAlpha = 0.22 * (1 - settleP * 0.5);
+        ctx.strokeStyle = "rgba(0,0,0,0.5)";
+        ctx.lineWidth = 2;
+        roundRectPath(ctx, borderWidth, borderWidth, rect.width - borderWidth * 2, rect.height - borderWidth * 2, Math.max(0, radius - 2));
+        ctx.stroke();
+        ctx.restore();
+
+        /* 掠れ: 打刻直後は薄く抜けていた箇所が徐々に馴染む */
+        const kp = Math.max(0, 1 - (t - FALL_MS) / 320);
+        if (kp > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = "destination-out";
+          kasure.forEach((k) => {
+            ctx.globalAlpha = kp * 0.5;
+            const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r);
+            g.addColorStop(0, "rgba(0,0,0,1)");
+            g.addColorStop(1, "rgba(0,0,0,0)");
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(k.x, k.y, k.r, 0, Math.PI * 2);
+            ctx.fill();
+          });
+          ctx.restore();
         }
-      }
-      ctx.stroke();
-      ctx.restore();
 
-      /* 筆先に残る墨だまり */
-      if (bp < 1) {
-        ctx.save();
-        ctx.globalAlpha = 0.55;
-        ctx.fillStyle = inkTone;
-        ctx.beginPath();
-        ctx.arc(tipPt.x, tipPt.y, borderWidth * 1.6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      /* 輪郭が引き終わったら、文字を左から刷り込むように現す */
-      const textStart = BORDER_MS + SETTLE_MS;
-      if (t > textStart) {
-        const tp = Math.min(1, (t - textStart) / TEXT_MS);
-        const revealW = rect.width * tp;
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, revealW, rect.height);
-        ctx.clip();
-        if (tp < 1) ctx.filter = `blur(${(1 - tp) * 3}px)`;
-        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-        ctx.restore();
+        /* インクの飛沫 */
+        const ldt = (t - FALL_MS) / 1000;
+        const fade = Math.max(0, 1 - ldt / 0.4);
+        if (fade > 0) {
+          ctx.fillStyle = textColor;
+          debris.forEach((d) => {
+            const x = d.x0 + d.vx * ldt;
+            const dy = rect.height + d.vy * ldt + 0.5 * debrisGravity * ldt * ldt;
+            ctx.save();
+            ctx.globalAlpha = fade * 0.8;
+            ctx.translate(x, dy);
+            ctx.rotate(d.rot + d.vrot * ldt);
+            ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
+            ctx.restore();
+          });
+        }
       }
 
       ctx.restore();
@@ -3802,13 +3829,13 @@ const DECOMPOSE_ANIM_STYLES = {
     },
   },
 
-  ink: {
-    label: "墨",
-    tileClass: "ink-in",
+  press: {
+    label: "活版印刷",
+    tileClass: "press-in",
     tileVars() {
       return {};
     },
-    /* 単語ブロックが墨のようににじんで崩れ、墨滴を垂らしながら消え去る */
+    /* 単語ブロックが活字のようにガコンと下へ押し込まれ、掠れながら消え去る */
     async intro(placeholder, word) {
       if (reducedMotion()) return;
       await ensureMorphFontLoaded();
@@ -3818,12 +3845,12 @@ const DECOMPOSE_ANIM_STYLES = {
       placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
-      await runInkDissolve(placeholder, word, rect);
+      await runPressDissolve(placeholder, word, rect);
     },
-    /* 接辞カードが一筆書きで輪郭を描かれ、文字が刷り込まれるように現れる */
+    /* 接辞カードが上からハンコのように紙へ打ち付けられて現れる */
     mountTile(el, i) {
       if (reducedMotion()) return;
-      runInkTileResolve(el, i * 130);
+      runPressTileResolve(el, i * 130);
     },
   },
 };
@@ -4932,7 +4959,7 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
   });
 
-  const activeAnim = await kvGet("decompose_anim", "crack");
+  const activeAnim = await kvGet("decompose_anim", "random");
   document.querySelectorAll(".anim-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
   });
