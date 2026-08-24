@@ -2404,6 +2404,7 @@ async function startDecompose(rawWord) {
     el.appendChild(partEl);
     el.appendChild(meaningEl);
     splitEl.appendChild(el);
+    animStyle.mountTile?.(el, i, mid);
   });
 
   await pushRecentWord(currentWord);
@@ -3062,6 +3063,309 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
   });
 }
 
+/* ---- 「マトリックス」アニメーション: 単語カードが上から緑の数字の雨へと
+   分解されて消え、続いて接辞カードが数字の雨として降ってきてカードの形へと
+   収束する。仕組みはひび割れ/爆発と同じく、無傷の見た目を一度オフスクリーン
+   に描いた上で、要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
+
+/* 単語カードを上から順に緑の数字の滝へと置き換えながら消し去る（分解アニメ本体） */
+async function runMatrixDissolve(placeholder, word, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = 24, padTop = 50, padBottom = 100;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "matrix-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  /* 無傷のカードを一度だけオフスクリーンに描き、消去ラインの下側を
+     そのまま切り出して見せるための元絵にする */
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+
+  const rainColor = "#39ff6a", rainGlow = "#c9ffda";
+  const CELL = 15, TRAIL = 7;
+  const colsCount = Math.ceil(rect.width / CELL) + 2;
+  const columns = [];
+  for (let c = -1; c < colsCount - 1; c++) {
+    columns.push({
+      x: c * CELL + CELL / 2,
+      jitter: (Math.random() - 0.5) * 70,
+      speed: 620 + Math.random() * 340,
+      seed: Math.floor(Math.random() * 999),
+    });
+  }
+
+  const ERASE_MS = 560, TAIL_MS = 420, TOTAL_MS = ERASE_MS + TAIL_MS;
+  const easeInQuad = (p) => p * p;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const eraseP = Math.min(1, t / ERASE_MS);
+      const boundaryY = -30 + easeInQuad(eraseP) * (rect.height + 60);
+
+      /* 消去ラインより下は、まだ無傷のカードそのまま */
+      if (boundaryY < rect.height) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, Math.max(0, boundaryY), rect.width, rect.height - Math.max(0, boundaryY));
+        ctx.clip();
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+
+        /* ラインのすぐ上、わずかな帯だけ左右にずらしたコピーを重ねて
+           デジタルノイズが走っているように見せる */
+        const glitchH = 8;
+        const gy = Math.max(0, boundaryY - glitchH);
+        if (gy < rect.height) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, gy, rect.width, Math.min(glitchH, rect.height - gy));
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = 0.5;
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, -3, 0, rect.width, rect.height);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 3, 0, rect.width, rect.height);
+          ctx.restore();
+        }
+      }
+
+      const overallFade = t > ERASE_MS ? Math.max(0, 1 - (t - ERASE_MS) / TAIL_MS) : 1;
+
+      /* 消去ラインの位置を示す、発光する走査線 */
+      if (overallFade > 0 && boundaryY > -10 && boundaryY < rect.height + 10) {
+        ctx.save();
+        ctx.globalAlpha = overallFade;
+        ctx.shadowColor = rainColor;
+        ctx.shadowBlur = 10;
+        ctx.strokeStyle = rainGlow;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, boundaryY);
+        ctx.lineTo(rect.width, boundaryY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      /* 消去ラインに寄り添いながら緑の数字が滝のように流れ落ちる */
+      if (overallFade > 0) {
+        ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        columns.forEach((col) => {
+          const headY = boundaryY + col.jitter + (t > ERASE_MS ? (t - ERASE_MS) * col.speed / 1000 : 0);
+          for (let k = 0; k < TRAIL; k++) {
+            const gy = headY - k * CELL;
+            if (gy < -padTop || gy > rect.height + padBottom) continue;
+            const a = (1 - k / TRAIL) * overallFade;
+            if (a <= 0.02) continue;
+            const digit = (col.seed + k * 7 + Math.floor(t / 70)) % 10;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = k === 0 ? rainGlow : rainColor;
+            if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 6; }
+            ctx.fillText(String(digit), col.x, gy);
+            ctx.restore();
+          }
+        });
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが緑の数字の雨として上から降ってきて、数字が定まるにつれて
+   実際のカードの見た目へと収束する（単語側の消去演出と対になる、逆方向の演出） */
+async function runMatrixTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const padX = 18, padTop = 60, padBottom = 18;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "matrix-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const partText = partEl ? partEl.textContent : "";
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(partText, rect.width / 2, partCenterY);
+
+  const rainColor = "#39ff6a", rainGlow = "#c9ffda";
+  const CELL = 13, TRAIL = 5;
+  const colsCount = Math.ceil(rect.width / CELL) + 2;
+  const columns = [];
+  for (let c = -1; c < colsCount - 1; c++) {
+    columns.push({
+      x: c * CELL + CELL / 2,
+      jitter: (Math.random() - 0.5) * 40,
+      speed: 520 + Math.random() * 260,
+      seed: Math.floor(Math.random() * 999),
+    });
+  }
+
+  const RESOLVE_MS = 520;
+  const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const p = Math.min(1, t / RESOLVE_MS);
+      const headY = easeOutCubic(p) * (rect.height + 40) - 20;
+
+      /* ラインより上は、収束済みの実際のカードの見た目 */
+      if (headY > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, rect.width, Math.min(rect.height, headY));
+        ctx.clip();
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
+
+      /* 収束ラインを示す、発光する走査線 */
+      if (headY > -10 && headY < rect.height + 10) {
+        ctx.save();
+        ctx.globalAlpha = 1 - p * 0.5;
+        ctx.shadowColor = rainColor;
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = rainGlow;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, headY);
+        ctx.lineTo(rect.width, headY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      /* まだ収束していない下側では、数字が定まりきらずに揺れ続ける */
+      const fadeIn = Math.min(1, t / 90);
+      ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      columns.forEach((col) => {
+        const chHead = headY + col.jitter;
+        for (let k = 0; k < TRAIL; k++) {
+          const gy = chHead - k * CELL;
+          if (gy < -padTop || gy > rect.height) continue;
+          const a = (1 - k / TRAIL) * fadeIn * Math.max(0, 1 - p * 0.3);
+          if (a <= 0.02) continue;
+          const digit = (col.seed + k * 7 + Math.floor(t / 60)) % 10;
+          ctx.save();
+          ctx.globalAlpha = a;
+          ctx.fillStyle = k === 0 ? rainGlow : rainColor;
+          if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 5; }
+          ctx.fillText(String(digit), col.x, gy);
+          ctx.restore();
+        }
+      });
+
+      ctx.restore();
+
+      if (t >= RESOLVE_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -3115,6 +3419,31 @@ const DECOMPOSE_ANIM_STYLES = {
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
       await runBurstExplosion(placeholder, word, morphemes, rect);
+    },
+  },
+
+  matrix: {
+    label: "マトリックス",
+    tileClass: "matrix-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語ブロックが上から緑の数字の雨へと分解されて消え去る */
+    async intro(placeholder, word) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runMatrixDissolve(placeholder, word, rect);
+    },
+    /* 接辞カードが数字の雨として降ってきて、カードの形へ収束する */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runMatrixTileResolve(el, i * 110);
     },
   },
 };
