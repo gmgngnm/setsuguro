@@ -3251,6 +3251,7 @@ async function runMatrixTileResolve(el, delayMs) {
   canvas.style.width = `${canvasW}px`;
   canvas.style.height = `${canvasH}px`;
   el.appendChild(canvas);
+  canvas.style.visibility = "visible";
   const ctx = canvas.getContext("2d");
 
   const bg = cs.backgroundColor;
@@ -3280,20 +3281,23 @@ async function runMatrixTileResolve(el, delayMs) {
   srcCtx.fillText(partText, rect.width / 2, partCenterY);
 
   const rainColor = "#39ff6a", rainGlow = "#c9ffda";
-  const CELL = 13, TRAIL = 5;
+  const CELL = 13, TRAIL = 6;
   const colsCount = Math.ceil(rect.width / CELL) + 2;
+  /* 収束ラインとは無関係に、各列が独立して上から降り続ける。
+     開始位置をカード上端よりさらに上(canvas天井付近)に散らし、
+     「数字が外から降ってきてカードの中に入っていく」瞬間から見せる */
   const columns = [];
   for (let c = -1; c < colsCount - 1; c++) {
     columns.push({
       x: c * CELL + CELL / 2,
-      jitter: (Math.random() - 0.5) * 40,
-      speed: 520 + Math.random() * 260,
+      headY0: -padTop + Math.random() * padTop * 0.6,
+      speed: 300 + Math.random() * 220,
       seed: Math.floor(Math.random() * 999),
     });
   }
 
-  const RESOLVE_MS = 520;
-  const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+  const RESOLVE_MS = 680;
+  const easeInOutCubic = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
   const start = performance.now();
 
   await new Promise((resolve) => {
@@ -3305,54 +3309,77 @@ async function runMatrixTileResolve(el, delayMs) {
       ctx.translate(padX, padTop);
 
       const p = Math.min(1, t / RESOLVE_MS);
-      const headY = easeOutCubic(p) * (rect.height + 40) - 20;
+      const lineY = easeInOutCubic(p) * rect.height;
 
-      /* ラインより上は、収束済みの実際のカードの見た目 */
-      if (headY > 0) {
+      /* 収束ラインより上は、すでに定まった実際のカードの見た目 */
+      if (lineY > 0) {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(0, 0, rect.width, Math.min(rect.height, headY));
+        ctx.rect(0, 0, rect.width, Math.min(rect.height, lineY));
         ctx.clip();
         ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
         ctx.restore();
+
+        /* ラインのすぐ下、わずかな帯だけ色ズレしたコピーを重ねてノイズを走らせる */
+        const glitchH = 6;
+        const gy = Math.max(0, lineY - glitchH);
+        if (gy < rect.height) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, gy, rect.width, Math.min(glitchH, rect.height - gy));
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = 0.5;
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, -2, 0, rect.width, rect.height);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 2, 0, rect.width, rect.height);
+          ctx.restore();
+        }
       }
 
       /* 収束ラインを示す、発光する走査線 */
-      if (headY > -10 && headY < rect.height + 10) {
+      if (lineY > -10 && lineY < rect.height + 10) {
         ctx.save();
-        ctx.globalAlpha = 1 - p * 0.5;
+        ctx.globalAlpha = 1 - p * 0.3;
         ctx.shadowColor = rainColor;
         ctx.shadowBlur = 8;
         ctx.strokeStyle = rainGlow;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(0, headY);
-        ctx.lineTo(rect.width, headY);
+        ctx.moveTo(0, lineY);
+        ctx.lineTo(rect.width, lineY);
         ctx.stroke();
         ctx.restore();
       }
 
-      /* まだ収束していない下側では、数字が定まりきらずに揺れ続ける */
-      const fadeIn = Math.min(1, t / 90);
-      ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      columns.forEach((col) => {
-        const chHead = headY + col.jitter;
-        for (let k = 0; k < TRAIL; k++) {
-          const gy = chHead - k * CELL;
-          if (gy < -padTop || gy > rect.height) continue;
-          const a = (1 - k / TRAIL) * fadeIn * Math.max(0, 1 - p * 0.3);
-          if (a <= 0.02) continue;
-          const digit = (col.seed + k * 7 + Math.floor(t / 60)) % 10;
-          ctx.save();
-          ctx.globalAlpha = a;
-          ctx.fillStyle = k === 0 ? rainGlow : rainColor;
-          if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 5; }
-          ctx.fillText(String(digit), col.x, gy);
-          ctx.restore();
-        }
-      });
+      /* まだ収束していない下側は、上から降り続ける数字の雨で満たしておく
+         （収束ラインより上の確定領域には重ねて描かないようクリップする） */
+      if (lineY < rect.height) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, Math.max(0, lineY), rect.width, rect.height - Math.max(0, lineY));
+        ctx.clip();
+        const fadeIn = Math.min(1, t / 90);
+        ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        columns.forEach((col) => {
+          const head = col.headY0 + (t * col.speed) / 1000;
+          for (let k = 0; k < TRAIL; k++) {
+            const gy = head - k * CELL;
+            if (gy < -padTop || gy > rect.height) continue;
+            const a = (1 - k / TRAIL) * fadeIn;
+            if (a <= 0.02) continue;
+            const digit = (col.seed + k * 7 + Math.floor(t / 60)) % 10;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = k === 0 ? rainGlow : rainColor;
+            if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 5; }
+            ctx.fillText(String(digit), col.x, gy);
+            ctx.restore();
+          }
+        });
+        ctx.restore();
+      }
 
       ctx.restore();
 
