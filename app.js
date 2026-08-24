@@ -6,15 +6,62 @@ function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
 
-/* 語呂合わせの生成中に出す待ち表示。無機質なスピナーではなく、
-   AIが今なにをしているかを言葉で見せる（初回は「創作中」、
-   作り直しは「推敲中」）。点は0〜3個を繰り返してCSSで動かす */
+/* 生成中に出す待ち表示。無機質なスピナーではなく、AIが今なにをしているか
+   （らしきもの）を言葉で見せる。点は0〜3個を繰り返してCSSで動かす */
 function goroLoadingHtml(label, suffix = "") {
   return `<div class="goro-loading" role="status" aria-live="polite">`
     + `<span class="goro-loading-label">${escapeHtml(label)}</span>`
     + `<span class="goro-loading-dots" aria-hidden="true"></span>`
     + (suffix ? `<span class="goro-loading-suffix">${suffix}</span>` : "")
     + `</div>`;
+}
+
+/* 待ち時間をただのスピナーで潰さず、今何をしていそうかを具体的な
+   文言で切り替えながら見せる。接辞分解と語呂合わせ生成でプールを分け、
+   ごく低確率でどちらのプールにもネタの一文を混ぜる */
+const DECOMPOSE_LOADING_PHRASES = ["スペル精査中", "単語詳細検索中", "語源照合中", "正規化中", "自動修正中"];
+const GORO_LOADING_PHRASES = ["読みを断片化中", "実在語と照合中", "情景を構築中", "機械チェック中", "言い回しを調整中", "校閲中"];
+const LOADING_EASTER_EGGS = ["少女祈祷中", "少女瞑想中"];
+const LOADING_EASTER_EGG_CHANCE = 0.08;
+const LOADING_ROTATE_MS = 1400;
+
+function pickLoadingPhrase(pool, prev) {
+  const candidates = Math.random() < LOADING_EASTER_EGG_CHANCE ? LOADING_EASTER_EGGS : pool;
+  if (candidates.length <= 1) return candidates[0];
+  let next = candidates[Math.floor(Math.random() * candidates.length)];
+  /* 同じ文言が2回続くと「切り替わっていない」ように見えるため、
+     前回と被ったら次の候補にずらす */
+  if (next === prev) next = candidates[(candidates.indexOf(next) + 1) % candidates.length];
+  return next;
+}
+
+/* コンテナIDごとに動いているローテーションのタイマーを管理する。
+   実際のコンテンツに差し替える側は必ずstopLoadingRotationを呼ぶこと
+   （呼ばなくても次のstart時に自動で片付くが、放置すると実体の消えた
+   コンテナに向けて無駄にsetIntervalが動き続ける） */
+const activeLoadingRotations = new Map();
+
+function stopLoadingRotation(containerId) {
+  const timerId = activeLoadingRotations.get(containerId);
+  if (timerId) {
+    clearInterval(timerId);
+    activeLoadingRotations.delete(containerId);
+  }
+}
+
+function startLoadingRotation(containerId, phrasePool) {
+  stopLoadingRotation(containerId);
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  let current = pickLoadingPhrase(phrasePool, null);
+  container.innerHTML = goroLoadingHtml(current);
+  const timerId = setInterval(() => {
+    current = pickLoadingPhrase(phrasePool, current);
+    const labelEl = container.querySelector(".goro-loading-label");
+    if (!labelEl) { stopLoadingRotation(containerId); return; }
+    labelEl.textContent = current;
+  }, LOADING_ROTATE_MS);
+  activeLoadingRotations.set(containerId, timerId);
 }
 
 /* 接辞タイルの枠色の出し分けに使う。ローカル辞書に収録済みの定番の接辞か、
@@ -2118,6 +2165,11 @@ async function startDecompose(rawWord) {
   placeholder.textContent = word;
   splitEl.appendChild(placeholder);
 
+  /* 分解の応答待ちの間、無言のパルス演出だけだと止まって見えるため、
+     下に「スペル精査中…」のような具体的な文言を切り替えながら出す */
+  spinnerRow.style.visibility = "visible";
+  startLoadingRotation("decompose-spinner", DECOMPOSE_LOADING_PHRASES);
+
   let morphemes;
   if (demo) {
     /* 本来はAI分解の応答待ちが入る箇所。デモ単語は即座にデータが揃ってしまい
@@ -2133,6 +2185,8 @@ async function startDecompose(rawWord) {
     try {
       const decomposed = await decomposeWord(word, provider, apiKey);
       if (decomposed.wordExists === false) {
+        stopLoadingRotation("decompose-spinner");
+        spinnerRow.style.visibility = "hidden";
         await playNotFoundError(placeholder, word);
         return;
       }
@@ -2150,13 +2204,16 @@ async function startDecompose(rawWord) {
       }
     } catch (err) {
       placeholder.remove();
+      stopLoadingRotation("decompose-spinner");
       spinnerRow.style.visibility = "visible";
+      spinnerRow.innerHTML = `<span class="spin-label">分解に失敗しました。ホームに戻ってお試しください。</span>`;
       document.getElementById("decompose-appbar").style.display = "flex";
-      document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
       console.error(err);
       return;
     }
   }
+  stopLoadingRotation("decompose-spinner");
+  spinnerRow.style.visibility = "hidden";
   currentMorphemes = morphemes;
 
   /* 単語の意味・接辞を踏まえた一文は、後で表示するタイミングより先にここで
@@ -2249,9 +2306,9 @@ async function startDecompose(rawWord) {
   await sleep(lastMeaningDelay + DECOMPOSE_READ_MS);
 
   /* 遷移した時点でまだ生成中なら、語呂合わせ欄が空のままだと
-     壊れて見えるので、文言なしの控えめなスピナーだけ置いておく */
+     壊れて見えるので、進捗の文言を切り替えながら待たせる */
   if (!goroDone) {
-    document.getElementById("goro-list").innerHTML = goroLoadingHtml("創作中");
+    startLoadingRotation("goro-list", GORO_LOADING_PHRASES);
   }
 
   renderResultScreen();
@@ -3055,6 +3112,7 @@ async function loadGoroCandidates(provider, apiKey) {
   try {
     currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts);
   } catch (err) {
+    stopLoadingRotation("goro-list");
     const list = document.getElementById("goro-list");
     list.innerHTML = "";
     const note = document.createElement("div");
@@ -3108,6 +3166,7 @@ function startGoroEdit(card, idx) {
 }
 
 function renderGoroList() {
+  stopLoadingRotation("goro-list");
   const list = document.getElementById("goro-list");
   list.innerHTML = "";
   currentCandidates.forEach((c, idx) => {
@@ -3188,7 +3247,7 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
     return;
   }
   document.getElementById("regen-btn").disabled = true;
-  document.getElementById("goro-list").innerHTML = goroLoadingHtml("推敲中");
+  startLoadingRotation("goro-list", GORO_LOADING_PHRASES);
   await loadGoroCandidates(provider, apiKey);
 });
 
@@ -3388,6 +3447,7 @@ csvImportInput.addEventListener("change", async (e) => {
 
 /* 単語帳の1件をタップした際に、単語・意味・接辞・接辞の意味・語呂合わせをまとめて表示する */
 function renderWordDetailGoro(record) {
+  stopLoadingRotation("word-detail-goro");
   const goroList = document.getElementById("word-detail-goro");
   goroList.innerHTML = "";
   if (record.goro_text) {
@@ -3448,7 +3508,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
 
   const btn = document.getElementById("word-detail-regen-btn");
   btn.disabled = true;
-  document.getElementById("word-detail-goro").innerHTML = goroLoadingHtml("推敲中");
+  startLoadingRotation("word-detail-goro", GORO_LOADING_PHRASES);
 
   try {
     const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean));
@@ -3458,6 +3518,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
     await saveWordRecord(record);
     renderWordDetailGoro(record);
   } catch (err) {
+    stopLoadingRotation("word-detail-goro");
     document.getElementById("word-detail-goro").innerHTML =
       `<div class="empty-note">語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。</div>`;
     console.error(err);
