@@ -24,21 +24,21 @@ const LOADING_EASTER_EGG_CHANCE = 0.02;
 /* 接辞分解の待ち時間表示。実際の分解はAIへの単発の問い合わせで
    内部の工程を観測できないため、こちらは「それらしい」工程名を
    固定の順番で1つずつ見せる演出（本物の進捗ではない）。
-   msは各工程がそれっぽく見える目安の滞留時間で、重そうな処理ほど
-   長めにしてある。実際の表示時間はここに0.2〜2.0秒のランダムな
-   待ちを足すため、全工程が判で押したように均一な間隔にならない */
+   各工程の表示時間は100〜4000msの範囲でランダムだが、序盤の工程ほど
+   短め・終盤の工程ほど長めになるようバイアスをかけてある（毎回同じ
+   長さにならないよう、範囲そのものを工程ごとに引く） */
 const DECOMPOSE_LOADING_STEPS = [
-  { text: "スペル精査中", ms: 450 },
-  { text: "単語データベース照合中", ms: 900 },
-  { text: "語源を照合中", ms: 1200 },
-  { text: "接辞候補を抽出中", ms: 800 },
-  { text: "意味を推定中", ms: 700 },
-  { text: "発音記号を生成中", ms: 500 },
-  { text: "語根の表記ゆれを正規化中", ms: 1100 },
-  { text: "既知の接辞と照合中", ms: 700 },
-  { text: "暗記のヒントを組み立て中", ms: 550 },
-  { text: "自動修正を確認中", ms: 500 },
+  "スペル精査中", "単語データベース照合中", "語源を照合中", "接辞候補を抽出中",
+  "意味を推定中", "発音記号を生成中", "語根の表記ゆれを正規化中",
+  "既知の接辞と照合中", "暗記のヒントを組み立て中", "自動修正を確認中",
 ];
+/* 早送り時（分解自体は先に終わっている場合）の1工程あたりの表示時間 */
+const DECOMPOSE_LOADING_FAST_MS = [80, 180];
+
+function decomposeStepDwellRange(index, total) {
+  const t = total > 1 ? index / (total - 1) : 0;
+  return { min: 100 + t * 1100, max: 900 + t * 3100 };
+}
 
 /* コンテナIDごとに動いているタイマーを管理する。実際のコンテンツに
    差し替える側は必ずstopLoadingRotationを呼ぶこと（呼ばなくても次の
@@ -55,24 +55,68 @@ function stopLoadingRotation(containerId) {
   }
 }
 
+/* 接辞分解の待ち表示を開始する。返り値のmarkWorkDone()は、裏側の実際の
+   分解（AI応答 or デモの待機）が終わった時点で呼ぶ。まだ全10工程を
+   見せ切っていなければ、残りは早送り（DECOMPOSE_LOADING_FAST_MS）で
+   消化してから終わる。donePromiseは「全工程を見せ終えた」時点で解決する
+   ので、呼び出し側はこれをawaitしてから次のアニメーションへ進むこと */
 function startDecomposeLoadingSequence(containerId) {
   stopLoadingRotation(containerId);
   const container = document.getElementById(containerId);
-  if (!container) return;
+  if (!container) return { markWorkDone() {}, donePromise: Promise.resolve() };
+
+  const total = DECOMPOSE_LOADING_STEPS.length;
   let stepIndex = 0;
+  let workDone = false;
+  let resolveDone;
+  const donePromise = new Promise((resolve) => { resolveDone = resolve; });
+
+  const scheduleNext = () => {
+    let dwellMs;
+    if (workDone) {
+      const [fastMin, fastMax] = DECOMPOSE_LOADING_FAST_MS;
+      dwellMs = fastMin + Math.random() * (fastMax - fastMin);
+    } else {
+      const { min, max } = decomposeStepDwellRange(stepIndex, total);
+      dwellMs = min + Math.random() * (max - min);
+    }
+    activeLoadingRotations.set(containerId, setTimeout(showStep, dwellMs));
+  };
+
   const showStep = () => {
-    const step = DECOMPOSE_LOADING_STEPS[stepIndex % DECOMPOSE_LOADING_STEPS.length];
-    stepIndex++;
     const phrase = Math.random() < LOADING_EASTER_EGG_CHANCE
       ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
-      : step.text;
+      : DECOMPOSE_LOADING_STEPS[stepIndex % total];
     const labelEl = container.querySelector(".goro-loading-label");
     if (labelEl) labelEl.textContent = phrase;
     else container.innerHTML = goroLoadingHtml(phrase);
-    const dwellMs = step.ms + 200 + Math.random() * 1800;
-    activeLoadingRotations.set(containerId, setTimeout(showStep, dwellMs));
+
+    stepIndex++;
+    if (stepIndex >= total) {
+      /* 全工程を出し切ったので、ここで初めて呼び出し側に完了を知らせる */
+      activeLoadingRotations.delete(containerId);
+      resolveDone();
+      return;
+    }
+    scheduleNext();
   };
   showStep();
+
+  return {
+    markWorkDone() {
+      if (workDone) return;
+      workDone = true;
+      /* 保留中の工程が長めの待ちで止まっている場合、早送りの待ち時間で
+         すぐ次へ進むよう仕切り直す（実際の分解がもう終わっているのに、
+         演出のためだけに長く待たせないため） */
+      const pending = activeLoadingRotations.get(containerId);
+      if (pending) {
+        clearTimeout(pending);
+        scheduleNext();
+      }
+    },
+    donePromise,
+  };
 }
 
 /* 語呂合わせ生成の待ち時間表示。こちらはgenerateGoro自身が今実際に
@@ -1313,8 +1357,9 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
  * ------------------------------------------------------------------ */
 /* 種データの本文を書き換えるたびに再シードが必要なため、ここを上げる
    （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し /
-    v5: demo_words.csv化・126件に拡充） */
-const GORO_SEED_VERSION = "v5";
+    v5: demo_words.csv化・126件に拡充 / v6: morphemesを追加し①の
+    お手本抽出で接辞の重なりを見られるようにした） */
+const GORO_SEED_VERSION = "v6";
 const GORO_EXAMPLE_TOPK = 4;
 /* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
    使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
@@ -1331,6 +1376,7 @@ function buildGoroSeedCorpus() {
     .filter(([, d]) => d && d.meaning && d.goroText)
     .map(([word, d]) => ({
       id: `seed:${word}`, word, meaning: d.meaning, goroText: d.goroText, source: "seed",
+      morphemes: d.morphemes || [],
       styleOk: goroViolations(d.goroText, d.morphemes || []).length === 0,
     }));
 }
@@ -1356,9 +1402,11 @@ async function ensureGoroCorpusReady(provider, apiKey) {
     const threshold = Math.max(0, Math.min(...sims) - 0.03);
     await Promise.all(seeds.map((s, i) => idbPut("goro_corpus", {
       id: s.id, word: s.word, meaning: s.meaning, goroText: s.goroText,
-      /* vector: 意味のembedding（①のFew-shot検索用）
-         goroVector: 語呂合わせ本文のembedding（③のマンネリ検出用） */
-      vector: meaningPassageVecs[i], goroVector: goroVecs[i], source: "seed", styleOk: s.styleOk, createdAt: Date.now(),
+      /* vector: 意味のembedding（②意味整合ゲート用）
+         goroVector: 語呂合わせ本文のembedding（③のマンネリ検出用）
+         morphemes: ①お手本抽出で接辞の重なりを見るために持つ */
+      vector: meaningPassageVecs[i], goroVector: goroVecs[i], morphemes: s.morphemes,
+      source: "seed", styleOk: s.styleOk, createdAt: Date.now(),
     })));
     await kvSet("goro_gate_threshold", threshold);
     await kvSet("goro_seed_version", GORO_SEED_VERSION);
@@ -1370,7 +1418,7 @@ async function ensureGoroCorpusReady(provider, apiKey) {
 /* ユーザーが実際に採用して保存した語呂合わせを、種データと同じ形で
    goro_corpusに追加する。idはwordから決まるので、同じ単語を作り直して
    再保存した場合は自動的に最新の語呂合わせに上書きされる */
-async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, apiKey) {
+async function growGoroCorpusFromSave(word, wordMeaning, goroText, morphemes, provider, apiKey) {
   if (provider !== "sakura" || !apiKey || !wordMeaning || !goroText) return;
   if (!(await isRagEnabled())) return;
   try {
@@ -1378,7 +1426,7 @@ async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, api
     const [goroVec] = await embedTexts([goroText], apiKey, "passage");
     await idbPut("goro_corpus", {
       id: `user:${word.toLowerCase()}`, word, meaning: wordMeaning, goroText,
-      vector: meaningVec, goroVector: goroVec, source: "user", createdAt: Date.now(),
+      vector: meaningVec, goroVector: goroVec, morphemes: morphemes || [], source: "user", createdAt: Date.now(),
     });
   } catch (err) {
     console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err);
@@ -1414,15 +1462,24 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
       await ensureGoroCorpusReady(provider, apiKey);
       corpus = await idbGetAll("goro_corpus");
       gateThreshold = await kvGet("goro_gate_threshold", null);
-      /* ①のFew-shot例はランダム抽出。語呂の技法（読みの断片をどう情景に
-         落とし込むか）は単語の意味領域とあまり相関がなく、意味の近さで
-         絞り込む効果が薄いため、similarity検索はやめて母集団から無作為に
-         GORO_EXAMPLE_TOPK件選ぶだけにしている */
+      /* ①のFew-shot例は「同じ接辞をどう音として捌いたか」の実例を優先する。
+         意味の近さ（embedding類似度）は語呂の技法とあまり相関がなく
+         参考にならなかったが、接辞そのものが同じなら、その読みをどう
+         断片化して自然な日本語に溶け込ませたかがそのまま参考になる。
+         共有接辞数の多い順に並べ、同数の中はランダムにして、
+         GORO_EXAMPLE_TOPK件を選ぶ（一致が無ければ実質ランダム抽出のまま） */
       examples = corpus
         /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
            ③のマンネリ検出には引き続き使うが、手本としては見せない */
         .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && c.styleOk !== false)
-        .sort(() => Math.random() - 0.5)
+        .map((c) => ({
+          ...c,
+          affixOverlap: (c.morphemes || []).filter((cm) =>
+            morphemes.some((m) => (m.part || "").toLowerCase() === (cm.part || "").toLowerCase())
+          ).length,
+          sortKey: Math.random(),
+        }))
+        .sort((a, b) => b.affixOverlap - a.affixOverlap || a.sortKey - b.sortKey)
         .slice(0, GORO_EXAMPLE_TOPK);
       /* meaningQueryVecは②意味整合ゲートで使うため、examples抽出とは
          切り離した上で引き続き取得する */
@@ -2201,7 +2258,7 @@ async function startDecompose(rawWord) {
   /* 分解の応答待ちの間、無言のパルス演出だけだと止まって見えるため、
      下に「スペル精査中…」のような具体的な文言を切り替えながら出す */
   spinnerRow.style.visibility = "visible";
-  startDecomposeLoadingSequence("decompose-spinner");
+  const decomposeLoadingSeq = startDecomposeLoadingSequence("decompose-spinner");
 
   let morphemes;
   if (demo) {
@@ -2245,7 +2302,10 @@ async function startDecompose(rawWord) {
       return;
     }
   }
-  stopLoadingRotation("decompose-spinner");
+  /* 実際の分解はもう終わっているので、まだ見せていない工程があれば
+     早送りで消化してから次へ進む（一応、全工程を出し切ってから遷移する） */
+  decomposeLoadingSeq.markWorkDone();
+  await decomposeLoadingSeq.donePromise;
   spinnerRow.style.visibility = "hidden";
   currentMorphemes = morphemes;
 
@@ -3257,7 +3317,7 @@ async function toggleSaveWord() {
     /* ユーザーが良いと判断して保存した語呂合わせを、今後の①Few-shot例・
        ③マンネリ検出の材料として蓄積する。保存操作の成否には影響させない */
     loadApiKey(provider)
-      .then((apiKey) => growGoroCorpusFromSave(currentWord, currentWordMeaning, newGoroText, provider, apiKey))
+      .then((apiKey) => growGoroCorpusFromSave(currentWord, currentWordMeaning, newGoroText, currentMorphemes, provider, apiKey))
       .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
   }
   await refreshSaveWordBtn();
