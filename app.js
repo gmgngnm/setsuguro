@@ -1807,7 +1807,12 @@ const micOverlayBtn = document.getElementById("mic-overlay-btn");
 const micOverlayHint = document.getElementById("mic-overlay-hint");
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-const MIC_HINT_IDLE = "長押しで入力";
+/* PC（デスクトップ幅）では長押しではなくクリック開始・クリック終了の
+   トグル操作にする。#appの min-width:860px のレイアウト切り替えと
+   同じ基準に合わせている */
+const desktopMicQuery = window.matchMedia("(min-width: 860px)");
+const isDesktopMic = () => desktopMicQuery.matches;
+const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押しで入力");
 
 /* Whisper の文字起こしエンドポイント。OpenAI 互換で
    multipart/form-data の file + model を受け付ける。
@@ -1903,8 +1908,18 @@ if (!SpeechRecognitionCtor && !canRecord) {
   const resetMic = () => {
     busy = false;
     engineInUse = null;
-    setMicState(false, MIC_HINT_IDLE);
+    setMicState(false, micHintIdle());
   };
+
+  /* 操作説明（ヒント文言・aria-label）をPC/モバイルの現在のレイアウトに
+     合わせる。録音中に呼んでも表示中の状態文言を上書きしないよう、
+     アイドル時のみヒントを差し替える */
+  const refreshMicHintForLayout = () => {
+    if (!busy) micOverlayHint.textContent = micHintIdle();
+    micOverlayBtn.setAttribute("aria-label", isDesktopMic() ? "クリックで音声入力" : "長押しで音声入力");
+  };
+  refreshMicHintForLayout();
+  desktopMicQuery.addEventListener("change", refreshMicHintForLayout);
 
   const submitWord = (transcript) => {
     const word = transcriptToWord(transcript);
@@ -2068,11 +2083,30 @@ if (!SpeechRecognitionCtor && !canRecord) {
     if (engineInUse) engineInUse.stop();
   };
 
-  micOverlayBtn.addEventListener("pointerdown", startListening);
-  micOverlayBtn.addEventListener("pointerup", stopListening);
-  micOverlayBtn.addEventListener("pointercancel", stopListening);
+  /* モバイルは長押し（押している間だけ録音）、PCはクリックで開始・
+     もう一度クリックで終了のトグル。タップ操作の後にはブラウザが
+     合成のclickイベントも発火させるため、互いのハンドラは現在の
+     レイアウトに合わない方をその場で無視する（二重発火防止） */
+  micOverlayBtn.addEventListener("pointerdown", (e) => {
+    if (isDesktopMic()) return;
+    startListening(e);
+  });
+  micOverlayBtn.addEventListener("pointerup", (e) => {
+    if (isDesktopMic()) return;
+    stopListening();
+  });
+  micOverlayBtn.addEventListener("pointercancel", (e) => {
+    if (isDesktopMic()) return;
+    stopListening();
+  });
   /* pointerleave では止めない。指がボタンからわずかにずれただけで
      録音が切れてしまい、長い単語の途中で終わる原因になる */
+
+  micOverlayBtn.addEventListener("click", (e) => {
+    if (!isDesktopMic()) return;
+    if (busy) stopListening();
+    else startListening(e);
+  });
 }
 
 /* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
