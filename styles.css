@@ -683,5 +683,5 @@ button{font-family:inherit;cursor:pointer;}
   /* デスクトップでは#appがmin-height:0のため、margin-top:autoによる
      下寄せが効かずマイクボタンがコンテンツ直下に詰まって表示される。
      ある程度の余白を明示して下方向に配置する */
-  .mic-section{margin-top:96px;}
+  .mic-section{margin-top:40px;}
 }
