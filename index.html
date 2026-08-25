@@ -250,6 +250,10 @@
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
 
+    <div class="section-label" style="margin-top:6px;">まとめて登録</div>
+    <button class="btn-ghost btn-wide" id="batch-entry-btn" type="button">📥 単語をまとめて登録・生成する</button>
+    <div class="usage-note">単語だけを先に登録しておき、あとでまとめて分解・語呂合わせを生成します。生成は数語ずつ1回のリクエストにまとめるため、1語ずつ登録するより呼び出し回数を減らせます。</div>
+
     <div class="section-label" style="margin-top:6px;">RAGによる精度向上</div>
     <div class="provider-row" id="rag-toggle-row">
       <button class="mode-pill" data-rag-toggle="on">オン</button>
@@ -295,6 +299,48 @@
       <button class="anim-pill" data-anim="burst">爆発</button>
       <button class="anim-pill" data-anim="matrix">マトリックス</button>
       <button class="anim-pill" data-anim="press">活版印刷</button>
+    </div>
+  </section>
+
+  <!-- ============ SCREEN 08: まとめて登録 ============ -->
+  <section id="screen-batch" class="screen">
+    <div class="appbar">
+      <span class="logo">まとめて登録</span>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="settings" title="設定へ戻る" aria-label="設定へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+      </div>
+    </div>
+    <div class="usage-note">覚えたい英単語を改行・カンマ・空白で区切って入力してください。ここで登録した単語は、まとめて生成したあと確認画面で選んで単語帳に保存します。</div>
+    <textarea id="batch-input" class="batch-input" rows="4" placeholder="abandon&#10;bereavement&#10;competition" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <button class="btn-solid" id="batch-add-btn" type="button">リストに追加</button>
+
+    <div class="section-label" style="margin-top:6px;">登録した単語<span class="batch-stats" id="batch-stats"></span></div>
+    <div class="usage-note" id="batch-cost-note"></div>
+    <div class="batch-actions">
+      <button class="btn-solid" id="batch-run-btn" type="button">⚡ まとめて生成</button>
+      <button class="btn-ghost" id="batch-open-review-btn" type="button">確認する</button>
+    </div>
+    <div class="spinner-row" id="batch-progress" style="display:none;">
+      <div class="spinner"></div>
+      <span class="spin-label" id="batch-progress-label"></span>
+    </div>
+    <div class="batch-list" id="batch-list"></div>
+  </section>
+
+  <!-- ============ SCREEN 09: まとめて確認 ============ -->
+  <section id="screen-batch-review" class="screen">
+    <div class="appbar">
+      <span class="logo">生成結果の確認</span>
+      <div class="nav-icons">
+        <button class="icon-btn" id="batch-review-select-all" type="button" title="全選択/全解除" aria-label="全選択・全解除">☑</button>
+        <button class="icon-btn" id="batch-review-back-btn" type="button" title="まとめて登録へ戻る" aria-label="まとめて登録へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+      </div>
+    </div>
+    <div class="usage-note">保存したくない単語はチェックを外すか破棄してください。ここで保存しなかった結果は次に開いたときもそのまま残ります。</div>
+    <div class="batch-stats" id="batch-review-stats"></div>
+    <div class="batch-review-list" id="batch-review-list"></div>
+    <div class="bottom-actions">
+      <button class="save-word-btn" id="batch-review-save-btn">💾 単語帳に保存</button>
     </div>
   </section>
 

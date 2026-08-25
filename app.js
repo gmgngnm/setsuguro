@@ -407,7 +407,7 @@ const DEMO_CUSTOM_MORPHEMES = {
  * 1. IndexedDB ラッパー
  * ------------------------------------------------------------------ */
 const DB_NAME = "setsugoro-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let dbPromise = null;
 
 function openDB() {
@@ -426,6 +426,10 @@ function openDB() {
          クラウド同期はしない）。DEMO_WORD_DATAの種データ＋ユーザーが
          保存した語呂を、意味のembeddingとともに蓄積する */
       if (!db.objectStoreNames.contains("goro_corpus")) db.createObjectStore("goro_corpus", { keyPath: "id" });
+      /* まとめて登録した単語の待ち行列（ローカルのみ、クラウド同期はしない）。
+         登録しただけの単語と、生成は済んだがまだ確認していない結果を持つ。
+         単語帳に保存した時点でこのストアからは消える */
+      if (!db.objectStoreNames.contains("batch_queue")) db.createObjectStore("batch_queue", { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -532,22 +536,37 @@ function relevantAffixesForWord(word) {
   return [...new Set([...prefixes, ...suffixes, ...roots])];
 }
 
-function decomposeSystemPrompt(word) {
+/* この単語の綴りに一致する既知の接辞を、プロンプトに載せる形に整える。
+   1語ずつの経路とまとめ経路で同じ絞り込みを使う */
+function knownAffixesFor(word) {
   const relevant = relevantAffixesForWord(word);
-  const knownAffixes = relevant.length
+  return relevant.length
     ? relevant.join(", ")
     : "（この単語の綴りに前方一致・後方一致・部分一致する既知の接辞はありません。教科書的に広く認められている接辞で分割してください）";
-  return DECOMPOSE_SYS_TEMPLATE(knownAffixes);
 }
 
-const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
+function decomposeSystemPrompt(word) {
+  return DECOMPOSE_SYS_TEMPLATE(knownAffixesFor(word));
+}
+
+/* 分解プロンプトの本文。単語ごとに変わるのは「既知の接辞一覧」と出力形式
+   だけで、規則そのものは共通なので定数として切り出しておく。1語ずつ
+   処理する DECOMPOSE_SYS_TEMPLATE と、複数語をまとめて1リクエストで
+   処理する BATCH_DECOMPOSE_SYS_TEMPLATE の両方が、ここにある同一の文面を
+   使う（まとめ処理用に規則を書き写すと、片方だけ直したときに精度が
+   静かに食い違っていくため） */
+const DECOMPOSE_ROLE_RULES = [
   "あなたは英語の語源・形態素解析の専門家です。",
   "まず、入力が実在の英単語かどうかを判定してください。この判定はできるだけ寛容に行い、少しでも実在の英単語のタイプミスである可能性があれば、word_existsをfalseにせず積極的に修正候補を採用してください。",
   "具体的には、1〜2文字程度の入れ替え・欠落・余分・置き換え（例: teh→the, recieve→receive, seperate→separate, langage→language, adress→address, occured→occurred, definately→definitely）や、キーボード上で隣接するキーの打ち間違い、二重母音・子音の重複ミスなど、よくあるタイプミスのパターンは、単語がある程度長ければ2〜3文字程度異なっていても、最も綴りが近く一般的な実在の英単語に積極的に修正し、word_existsをtrue、corrected_wordにその修正後の単語、was_correctedをtrueにしてください。迷った場合も、実在する単語である可能性が少しである方に倒してください。誤りがなければword_existsをtrue、corrected_wordに入力そのもの、was_correctedをfalseにしてください。",
   "word_existsをfalseにしてよいのは、ランダムな文字の羅列など、どう読んでも英単語のタイプミスとは考えられず、綴りの近い実在の英単語も思い当たらない場合に限ります。この場合、corrected_wordには入力そのものを入れ、word_meaning・memory_tipは空文字、morphemesは空配列で構いません（それ以上分析しないでください）。",
   "word_existsがtrueの場合のみ、以降の分割・分析を、修正後の単語（corrected_word）に対して行ってください。",
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
-  `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${knownAffixes}`,
+];
+
+const DECOMPOSE_AFFIX_HINT = (knownAffixes) => `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${knownAffixes}`;
+
+const DECOMPOSE_SPLIT_RULES = [
   "単語がこの一覧のいずれかの文字列で始まる・終わる場合は、必ずその一覧の文字列と完全に一致する形で切り出してください（例: 一覧に'con'があれば'co'ではなく'con'を使う）。一覧にない場合のみ、教科書的に広く認められている接辞を使ってください。",
   "接頭辞・接尾辞を取り除いた後に残る中間部分（語根候補）についても、その先頭や末尾がさらに一覧の接頭辞・接尾辞（教科書的に広く認められている接辞を含む）と完全に一致する場合は、それ以上一致する接辞がなくなるまで再帰的に切り出しを続けてください。例えば competition は com(接頭辞) / pet(語根) / ition(接尾辞) のように、中間部分 compet の先頭にある com も一覧にあるため接頭辞として分離してください。単に語根が長い・見慣れないという理由だけで分割を諦めず、既知の接辞パターンに一致する部分がないか必ず確認してください。",
   "ただし、分割しすぎて1〜2文字だけの無意味な断片や、教育的に不自然な分割にはしないでください。それ以上分解すると学習上の意味を持たない断片になる場合は、そこで分割を止めて語根としてください。",
@@ -558,11 +577,79 @@ const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
   "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
   "memory_tipで言及する分割は、morphemesの分割と必ず一致させてください。memory_tipにmorphemesより細かい分割を書いてしまう場合（例: morphemesはbereave/mentなのにmemory_tipには「be-(強調)+reave(奪う)+ment(結果)」と書く）は、memory_tipの方が正しく、morphemesの分割が不足しています。その場合はmemory_tipに合わせてmorphemesを分割し直してから出力してください。",
   "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、対義語（antonyms、意味が反対・対照的な実在する一般的な英単語）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
-  "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+];
+
+const DECOMPOSE_EXAMPLES = [
   "例: investigation → in(接頭辞) / vestig(語根、探る) / ation(接尾辞、〜すること) のように、既知の接尾辞パターン（-ation, -tion, -able 等）はまとめて一つの要素として扱ってください。",
   "例: competition → com(接頭辞、共に) / pet(語根、求める) / ition(接尾辞、〜すること) のように、接尾辞を除いた語根候補 compet がさらに一覧の接頭辞 com で始まっている場合は、com も分離して3つ以上の要素に分割してください。",
+];
+
+const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
+  ...DECOMPOSE_ROLE_RULES,
+  DECOMPOSE_AFFIX_HINT(knownAffixes),
+  ...DECOMPOSE_SPLIT_RULES,
+  "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  ...DECOMPOSE_EXAMPLES,
 ].join("\n");
+
+/* 語呂合わせプロンプトのうち、対象の単語によらず常に同じ規則。
+   1語ずつ作る goroSystemPrompt と、複数語を1リクエストにまとめる
+   batchGoroSystemPrompt が、まったく同じ文面をここから使う。
+   まとめ生成のために規則を書き写してしまうと、片方だけ手を入れた
+   ときにまとめ生成の精度だけが静かに落ちるため、必ず共有する */
+const GORO_RULE_MATERIAL = [
+  "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にしてください。読みはひとまとまりの単語として丸ごと使おうとせず、1〜2音程度の断片に分解し、実在する別々の日本語表現の中に散りばめてください。",
+  /* 音の扱い。「省略してよい」と書いていたら接辞の音がごっそり
+  抜け落ちるようになったため、崩すのは自由・省略は不可、と
+  はっきり分ける */
+  "【重要】どの接辞も省略せず、全ての接辞の音を必ず一文の中に登場させてください。ただし元の発音に忠実である必要はまったくありません。pre(プレ)を「プリッ」、sent(セント)を「せんと」、ation(エーション)を「A賞」のように、日本語として面白く自然になるなら大胆に音を崩して構いません。崩すのは自由、省略は不可です。",
+  /* 出力書式。どの音がどの接辞に対応するかを読み手に示すため、
+  音の直後に接辞の綴りをカッコで添えさせる。この注釈は表示上の
+  補助であって本文ではないので、文字数には数えない */
+  "音を担っている箇所の直後に、対応する接辞の綴りを半角カッコで添えてください（例:「プリッ(pre)と」）。カッコに入れてよいのは接辞の綴りだけで、意味の日本語訳を書いてはいけません。このカッコは表示上の補助なので、文字数には数えません。",
+  "【重要】注釈は1つの接辞につき1箇所だけです。その接辞の音はひとまとまりの箇所でまとめて担わせてください。1音ずつ区切って同じ注釈を繰り返してはいけません（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。",
+  "接辞が1つしかない単語（それ以上分解できない語）の場合も同じで、注釈は1箇所だけ付けます。",
+  "お手本: pre(プレ)/sent(セント)/ation(エーション)、意味「発表」 → 「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」",
+  "お手本: dict(ジクト)/ion(イオン)/ary(アリー)、意味「辞書」 → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！」",
+].join("\n");
+
+const GORO_RULE_MEANING_ALIGN = "一文が描く情景・オチは、単語全体の意味（上記）を連想できる内容にしてください。読みの音を成立させるためだけのこじつけの情景ではなく、音と意味の両方を一度に思い出せる一文にしてください。";
+
+const GORO_RULE_BAD_PATTERNS = [
+  "次のパターンは日本語として不自然になるため禁止します。いずれも「読みをカタカナの塊のまま置く」ことが原因なので、上の断片化の指示を徹底すれば避けられます。",
+  "✗ 意味の日本語訳をカッコ書きで注釈する:「セイシェイション（飽食）して」「エーター（刑務所）へ」 → ○ カッコに入れるのは接辞の綴りだけ。意味は情景そのもので伝える。",
+  "✗ 隣り合う接辞の読みをそのまま連結し、対象単語や既存の外来語をなぞる:「インター」+「アクト」→「インターアクト」 → ○ 読みは互いに離し、それぞれ別の日本語表現の一部にする。",
+  "✗ 読みをそのまま実在しない一単語として使い、助詞を付けて主語・修飾語にする:「オクシールは」「イアリーな」「オノミが」 → ○ 読みの音は、実在する日本語の言葉の一部分の音として溶け込ませる。",
+  "✗ 読みを人名・人物のように扱う。「〜さん」「〜くん」といった呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせることも含む:「オノミが分類法を教えた」 → ○ 人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）の実在する言葉で表現する。",
+  "✗ 音を似せるためだけの不自然なカタカナ語（外来語）で無理やり埋める → ○ 読み以外はふつうの日本語（和語・漢語）で自然に構成する。",
+  "✗ カタカナ語に「する」を付けて動詞にする:「マッシュしたら」「ジクトして」 → ○ 「マッシュポテトを潰す」のように、実在する日本語の動詞で動作を表す。実在の外来語（テストする、セットする など）以外は、カタカナを動詞にしない。",
+  "✗ 意味のつながらない出来事を「〜したら、〜」で並べる:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」（何が起きたのか読み手に伝わらない） → ○ 描くのは一つの出来事だけにし、原因と結果が自然につながった一場面にする。",
+].join("\n");
+
+const GORO_RULE_FINAL = [
+  "最優先事項として、日本語として文法的に自然で、一つの筋が通った情景・出来事を描写する一文にしてください。意味のつながらない不自然な文は不可とします。誰が読んでも情景がすっと思い浮かぶ、破綻のない一文にしてください。",
+  /* 「音は合っているが何を言っているのか分からない」候補を防ぐ最終確認。
+  抽象的に「自然に」と言うより、読み手がその場面を絵にできるか、
+  という具体的な合格条件に落とした方が守られやすい */
+  "出力する前に必ず自分で読み返し、この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられるか確認してください。思い浮かべられないなら、音を大胆に崩してでも、日常にありふれた分かりやすい出来事に書き直してください（崩すのは自由ですが、接辞を省略してはいけません）。",
+  "描くのは一つの出来事だけにしてください。関係のない場面を「〜したら、〜」「〜して、〜」でつなげて複数並べないでください。",
+  "接辞の注釈を除いて10〜18文字程度、長くても22文字までに収めてください。短ければ短いほど覚えやすいので、意味が通る限り短くしてください。",
+  "【重要】書き終えたら、無くても意味が通る語を全て削ってください。特に、情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」「なんてね」など）や、飾りだけの修飾語は不要です（✗「コードが燃えるぜ、みんな！」→ ○「コードが燃えるぜ！」）。",
+  /* ユーモアと文体。「面白く」とだけ言うと、どれも
+  「〜して、〜した」の淡々とした説明文になりがちなので、
+  具体的な笑いの作り方と、使ってよい文末の型を並べて示す */
+  "【重要】覚えやすさは面白さから生まれます。読んだ人が思わずニヤリとする一文にしてください。大げさな誇張、ばかばかしい取り合わせ、身も蓋もない本音、ずっこけるオチ、あるあるネタなどを積極的に使ってください。擬音語・擬態語（ドカン、ジンジン、ぐらぐら など）も歓迎です。下品・差別的な表現は避けてください。",
+  "【重要】文体を毎回変えてください。「〜して、〜した」という淡々とした説明調ばかりにならないよう、次のような型から、その単語に合うものを選んでください: 呼びかけ・警告（「〜せんと〜ないぞ！」）、感嘆（「〜だ！」）、疑問・ツッコミ（「〜なのか!?」）、ぼやき（「〜、あーあ」）、伝聞（「〜だってさ」）、体言止め、セリフ調。",
+].join("\n");
+
+const GORO_RULE_SELF_CHECK = "出力前に最後の確認: (1)全ての接辞の綴りが1回ずつカッコで登場しているか (2)注釈を除いた本文が22文字以内か (3)読んだ人が情景を思い浮かべられるか (4)説明調になっていないか (5)削れる語が残っていないか。";
+
+/* 動的Few-shotの例示と、機械チェックで不合格になった候補のフィードバック。
+   1語ずつの経路とまとめ経路で同じ見せ方をする */
+const GORO_EXAMPLE_BLOCK = (examples) => `参考として、意味が近い単語で過去に作れた語呂合わせの例を示します。読みを断片化して自然な日本語に溶け込ませる「作り方」、接辞の綴りをカッコで添える書式、面白さと文体の付け方を参考にしてください。ただし言い回しや情景はこの単語向けに必ず変えてください（例の使い回し・丸写しは不可）:\n${examples.map((e) => `- ${e.word}（${e.meaning}）→「${e.goroText}」`).join("\n")}`;
+
+const GORO_REJECTED_BLOCK = (rejectedNotes) => `【重要】直前の試行で作った次の候補は、機械的なチェックで不合格になりました。指摘された点を必ず直し、同じ失敗を繰り返さないでください:\n${rejectedNotes.map((n, i) => `${i + 1}. 「${n.text}」\n   → 不合格の理由: ${n.reasons.join(" / ")}`).join("\n")}`;
 
 function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
@@ -575,75 +662,26 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
        丸写しされると新しいマンネリの元になるため、型だけ参考にして
        言い回しは変えるよう明示する */
     (examples && examples.length)
-      ? `参考として、過去に作れた語呂合わせの例を示します。読みを断片化して自然な日本語に溶け込ませる「作り方」、接辞の綴りをカッコで添える書式、面白さと文体の付け方を参考にしてください。ただし言い回しや情景はこの単語向けに必ず変えてください（例の使い回し・丸写しは不可）:\n${examples.map((e) => `- ${e.word}（${e.meaning}）→「${e.goroText}」`).join("\n")}`
+      ? GORO_EXAMPLE_BLOCK(examples)
       : "",
 
-    /* Rule 1: 素材の使い方。読みを丸ごとの塊として扱わせないことが、
-       Rule 3で挙げる不良パターンのほぼ全ての根本原因への対策になる。
-       音については「元の発音に忠実である必要はないが、接辞を省略しては
-       いけない」の二段構えにする。かつて「省略してよい」と許可したら
-       接辞の音がごっそり落ちるようになり、逆に完全再現を求めていた頃は
-       不自然な造語が量産された。崩すのは自由・省略は不可、が両者の
-       落としどころになる */
-    [
-      "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にしてください。読みはひとまとまりの単語として丸ごと使おうとせず、1〜2音程度の断片に分解し、実在する別々の日本語表現の中に散りばめてください。",
-      /* 音の扱い。「省略してよい」と書いていたら接辞の音がごっそり
-         抜け落ちるようになったため、崩すのは自由・省略は不可、と
-         はっきり分ける */
-      "【重要】どの接辞も省略せず、全ての接辞の音を必ず一文の中に登場させてください。ただし元の発音に忠実である必要はまったくありません。pre(プレ)を「プリッ」、sent(セント)を「せんと」、ation(エーション)を「A賞」のように、日本語として面白く自然になるなら大胆に音を崩して構いません。崩すのは自由、省略は不可です。",
-      /* 出力書式。どの音がどの接辞に対応するかを読み手に示すため、
-         音の直後に接辞の綴りをカッコで添えさせる。この注釈は表示上の
-         補助であって本文ではないので、文字数には数えない */
-      "音を担っている箇所の直後に、対応する接辞の綴りを半角カッコで添えてください（例:「プリッ(pre)と」）。カッコに入れてよいのは接辞の綴りだけで、意味の日本語訳を書いてはいけません。このカッコは表示上の補助なので、文字数には数えません。",
-      "【重要】注釈は1つの接辞につき1箇所だけです。その接辞の音はひとまとまりの箇所でまとめて担わせてください。1音ずつ区切って同じ注釈を繰り返してはいけません（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。",
-      "接辞が1つしかない単語（それ以上分解できない語）の場合も同じで、注釈は1箇所だけ付けます。",
-      "お手本: pre(プレ)/sent(セント)/ation(エーション)、意味「発表」 → 「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」",
-      "お手本: dict(ジクト)/ion(イオン)/ary(アリー)、意味「辞書」 → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！」",
-    ].join("\n"),
+    GORO_RULE_MATERIAL,
 
-    wordMeaning
-      ? "一文が描く情景・オチは、単語全体の意味（上記）を連想できる内容にしてください。読みの音を成立させるためだけのこじつけの情景ではなく、音と意味の両方を一度に思い出せる一文にしてください。"
-      : "",
+    wordMeaning ? GORO_RULE_MEANING_ALIGN : "",
 
-    /* Rule 3: 不良パターンを禁止の羅列ではなく✗/○の対で示す。
-       いずれも「読みをカタカナの塊のまま置く」ことが共通原因なので、
-       Rule 1の断片化を徹底すれば自然に避けられる、という繋がりを示す */
-    [
-      "次のパターンは日本語として不自然になるため禁止します。いずれも「読みをカタカナの塊のまま置く」ことが原因なので、上の断片化の指示を徹底すれば避けられます。",
-      "✗ 意味の日本語訳をカッコ書きで注釈する:「セイシェイション（飽食）して」「エーター（刑務所）へ」 → ○ カッコに入れるのは接辞の綴りだけ。意味は情景そのもので伝える。",
-      "✗ 隣り合う接辞の読みをそのまま連結し、対象単語や既存の外来語をなぞる:「インター」+「アクト」→「インターアクト」 → ○ 読みは互いに離し、それぞれ別の日本語表現の一部にする。",
-      "✗ 読みをそのまま実在しない一単語として使い、助詞を付けて主語・修飾語にする:「オクシールは」「イアリーな」「オノミが」 → ○ 読みの音は、実在する日本語の言葉の一部分の音として溶け込ませる。",
-      "✗ 読みを人名・人物のように扱う。「〜さん」「〜くん」といった呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせることも含む:「オノミが分類法を教えた」 → ○ 人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）の実在する言葉で表現する。",
-      "✗ 音を似せるためだけの不自然なカタカナ語（外来語）で無理やり埋める → ○ 読み以外はふつうの日本語（和語・漢語）で自然に構成する。",
-      "✗ カタカナ語に「する」を付けて動詞にする:「マッシュしたら」「ジクトして」 → ○ 「マッシュポテトを潰す」のように、実在する日本語の動詞で動作を表す。実在の外来語（テストする、セットする など）以外は、カタカナを動詞にしない。",
-      "✗ 意味のつながらない出来事を「〜したら、〜」で並べる:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」（何が起きたのか読み手に伝わらない） → ○ 描くのは一つの出来事だけにし、原因と結果が自然につながった一場面にする。",
-    ].join("\n"),
+    GORO_RULE_BAD_PATTERNS,
 
     (avoidTexts && avoidTexts.length)
       ? `この単語では既に次の語呂合わせ候補が使われましたが、ユーザーが気に入らず作り直しを求めています。同じような言い回し・情景・オチの焼き直しは不可です。読みの活かし方・情景・オチの方向性を意図的に変え、明確に異なる新しい一文を考えてください:\n${avoidTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}`
       : "",
 
-    [
-      "最優先事項として、日本語として文法的に自然で、一つの筋が通った情景・出来事を描写する一文にしてください。意味のつながらない不自然な文は不可とします。誰が読んでも情景がすっと思い浮かぶ、破綻のない一文にしてください。",
-      /* 「音は合っているが何を言っているのか分からない」候補を防ぐ最終確認。
-         抽象的に「自然に」と言うより、読み手がその場面を絵にできるか、
-         という具体的な合格条件に落とした方が守られやすい */
-      "出力する前に必ず自分で読み返し、この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられるか確認してください。思い浮かべられないなら、音を大胆に崩してでも、日常にありふれた分かりやすい出来事に書き直してください（崩すのは自由ですが、接辞を省略してはいけません）。",
-      "描くのは一つの出来事だけにしてください。関係のない場面を「〜したら、〜」「〜して、〜」でつなげて複数並べないでください。",
-      "接辞の注釈を除いて10〜18文字程度、長くても22文字までに収めてください。短ければ短いほど覚えやすいので、意味が通る限り短くしてください。",
-      "【重要】書き終えたら、無くても意味が通る語を全て削ってください。特に、情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」「なんてね」など）や、飾りだけの修飾語は不要です（✗「コードが燃えるぜ、みんな！」→ ○「コードが燃えるぜ！」）。",
-      /* ユーモアと文体。「面白く」とだけ言うと、どれも
-         「〜して、〜した」の淡々とした説明文になりがちなので、
-         具体的な笑いの作り方と、使ってよい文末の型を並べて示す */
-      "【重要】覚えやすさは面白さから生まれます。読んだ人が思わずニヤリとする一文にしてください。大げさな誇張、ばかばかしい取り合わせ、身も蓋もない本音、ずっこけるオチ、あるあるネタなどを積極的に使ってください。擬音語・擬態語（ドカン、ジンジン、ぐらぐら など）も歓迎です。下品・差別的な表現は避けてください。",
-      "【重要】文体を毎回変えてください。「〜して、〜した」という淡々とした説明調ばかりにならないよう、次のような型から、その単語に合うものを選んでください: 呼びかけ・警告（「〜せんと〜ないぞ！」）、感嘆（「〜だ！」）、疑問・ツッコミ（「〜なのか!?」）、ぼやき（「〜、あーあ」）、伝聞（「〜だってさ」）、体言止め、セリフ調。",
-    ].join("\n"),
+    GORO_RULE_FINAL,
 
     (rejectedNotes && rejectedNotes.length)
-      ? `【重要】直前の試行で作った次の候補は、機械的なチェックで不合格になりました。指摘された点を必ず直し、同じ失敗を繰り返さないでください:\n${rejectedNotes.map((n, i) => `${i + 1}. 「${n.text}」\n   → 不合格の理由: ${n.reasons.join(" / ")}`).join("\n")}`
+      ? GORO_REJECTED_BLOCK(rejectedNotes)
       : "",
     "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
-    "出力前に最後の確認: (1)全ての接辞の綴りが1回ずつカッコで登場しているか (2)注釈を除いた本文が22文字以内か (3)読んだ人が情景を思い浮かべられるか (4)説明調になっていないか (5)削れる語が残っていないか。",
+    GORO_RULE_SELF_CHECK,
     "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
     '{"candidates":[{"text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！","highlight":[{"part":"dict","in_text":"軸"}]}]}',
   ].filter(Boolean).join("\n");
@@ -1073,6 +1111,19 @@ function findUnderSplitHints(word, morphemes, memoryTip) {
   ].slice(0, 4);
 }
 
+/* 分解の校閲基準と指摘の文面。1語ずつ校閲する decomposeValidationPrompt と、
+   複数語をまとめて校閲する batchDecomposeValidationUserPrompt が共有する */
+const DECOMPOSE_VALIDATION_CRITERIA = [
+  "①各要素を順番に連結すると、対象の英単語と文字列として完全に一致すること（文字の欠落・重複・誤字がないこと）。",
+  "②各要素への切り方が、言語学的・語源的に見て妥当な形態素分割になっていること（実在しない、あるいは明らかに誤った分割になっていないこと）。",
+  "③各要素の意味（meaning）・由来（origin）・カタカナ読み（reading）・発音記号（phonetic）が、その要素について事実として正確であること（誤りや当てずっぽうの記載がないこと）。",
+  "④分割し切れていない箇所がないこと。語根として残した要素の先頭・末尾が、さらに教科書的に広く認められている接頭辞・接尾辞と一致する場合は、一致するものがなくなるまで分割し直してください（例: bereavement を bereave / ment で止めず、be / reave / ment まで分ける）。単に語根が長い・見慣れないというだけで分割を諦めないでください。ただし、分割すると1〜2文字の無意味な断片が生じる場合や、語源的な根拠がない場合は、分割せずそのままにしてください。",
+].join("\n");
+
+const DECOMPOSE_HINT_BLOCK = (hints) => `次の点は分割不足の疑いが強いので、④として特に重点的に確認してください。\n${hints.map((h) => `- ${h}`).join("\n")}`;
+
+const DECOMPOSE_REQUIRED_BLOCK = (requiredParts) => `【必須】この単語の分割は ${requiredParts.join(" / ")} で確定しています。morphemesは必ずこの${requiredParts.length}要素、この順序で出力してください。要素を統合したり、これ以外の分割にしたりしてはいけません。あなたの仕事は、この分割を前提に各要素のreading・meaning・origin・phoneticを正確に埋めることです。`;
+
 function decomposeValidationPrompt(word, morphemes, hints, requiredParts) {
   const partsList = morphemes
     .map((m, i) => `${i + 1}. ${m.part} - 読み:${m.reading} / 意味:${m.meaning} / 由来:${m.origin} / 発音記号:${m.phonetic}`)
@@ -1082,18 +1133,15 @@ function decomposeValidationPrompt(word, morphemes, hints, requiredParts) {
     `対象の英単語は "${word}"。以下は、この単語を接頭辞・語根・接尾辞（接辞）に分割した結果です。`,
     partsList,
     "各要素について、次の点を厳しく確認してください。",
-    "①各要素を順番に連結すると、対象の英単語と文字列として完全に一致すること（文字の欠落・重複・誤字がないこと）。",
-    "②各要素への切り方が、言語学的・語源的に見て妥当な形態素分割になっていること（実在しない、あるいは明らかに誤った分割になっていないこと）。",
-    "③各要素の意味（meaning）・由来（origin）・カタカナ読み（reading）・発音記号（phonetic）が、その要素について事実として正確であること（誤りや当てずっぽうの記載がないこと）。",
-    "④分割し切れていない箇所がないこと。語根として残した要素の先頭・末尾が、さらに教科書的に広く認められている接頭辞・接尾辞と一致する場合は、一致するものがなくなるまで分割し直してください（例: bereavement を bereave / ment で止めず、be / reave / ment まで分ける）。単に語根が長い・見慣れないというだけで分割を諦めないでください。ただし、分割すると1〜2文字の無意味な断片が生じる場合や、語源的な根拠がない場合は、分割せずそのままにしてください。",
+    DECOMPOSE_VALIDATION_CRITERIA,
     hints && hints.length
-      ? `次の点は分割不足の疑いが強いので、④として特に重点的に確認してください。\n${hints.map((h) => `- ${h}`).join("\n")}`
+      ? DECOMPOSE_HINT_BLOCK(hints)
       : "",
     /* memory_tipから正しい分割が確定している場合は、指摘ではなく命令として
        渡す。「疑いがある」程度の書き方だとAIが「問題なし」と判断して
        分割不足のまま素通りさせてしまうため */
     (requiredParts && requiredParts.length)
-      ? `【必須】この単語の分割は ${requiredParts.join(" / ")} で確定しています。morphemesは必ずこの${requiredParts.length}要素、この順序で出力してください。要素を統合したり、これ以外の分割にしたりしてはいけません。あなたの仕事は、この分割を前提に各要素のreading・meaning・origin・phoneticを正確に埋めることです。`
+      ? DECOMPOSE_REQUIRED_BLOCK(requiredParts)
       : "",
     "いずれかに誤りが見つかった場合は、正しい分割・正しい情報にすべて書き直してください。問題がなければそのまま使ってください。",
     "出力は、書き直した場合も含め、必ず全要素を次のJSON形式のみで返してください。それ以外の文章は一切書かないでください。",
@@ -1306,6 +1354,20 @@ function goroViolations(text, morphemes) {
   return violations;
 }
 
+/* 校閲パスの合否基準。対象の単語によらず同じ文面なので、1語ずつ校閲する
+   goroValidationPrompt と、複数語をまとめて校閲する
+   batchGoroValidationPrompt で共有する */
+const GORO_VALIDATION_CRITERIA = (wordMeaning) => [
+  "①自然さ: 日本語として文法的に自然で、一つの筋が通った意味のある文になっていること。読みを詰め込むための不自然な言い回しや、音を似せるためだけの不自然なカタカナ語（外来語）がないこと。",
+  "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)カッコの中に接辞の綴り以外のもの、特に意味の日本語訳を書いていない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよい。",
+  "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず、かつ1接辞につきちょうど1箇所だけ登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合はその音を足し、同じ接辞の注釈が複数回付いている場合はひとまとまりに直すこと（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。書き直す際もこのカッコの書式は必ず保つこと。",
+  "③人名化していないこと: 「〜さん」「〜くん」といった明示的な呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせているパターンも不可。人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）で表現されていること。また、実在の外来語以外のカタカナ語に「する」を付けて動詞にしていないこと（例:「マッシュしたら」は不可）。",
+  "④簡潔であること（接辞の注釈を除いて10〜18文字程度、長くても22文字までが目安）。無くても意味が通る語、特に情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」など）や飾りだけの修飾語が残っていないこと。残っていれば削って短くすること。",
+  "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
+  "⑤読み手に伝わること: この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられること。関係のない出来事を「〜したら、〜」で並べただけの、何を言っているのか分からない文は不可（例:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」）。描かれている出来事は一つに絞られていること。",
+  wordMeaning ? "⑥一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
+].filter(Boolean).join("\n");
+
 function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
   const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
   const candList = candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n");
@@ -1314,16 +1376,7 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
     `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
     wordMeaning ? `単語全体の意味は「${wordMeaning}」です。` : "",
     "以下は語呂合わせ候補の一文です。各文について、次の基準をすべて満たしているか厳しく確認してください。",
-    [
-      "①自然さ: 日本語として文法的に自然で、一つの筋が通った意味のある文になっていること。読みを詰め込むための不自然な言い回しや、音を似せるためだけの不自然なカタカナ語（外来語）がないこと。",
-      "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)カッコの中に接辞の綴り以外のもの、特に意味の日本語訳を書いていない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよい。",
-      "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず、かつ1接辞につきちょうど1箇所だけ登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合はその音を足し、同じ接辞の注釈が複数回付いている場合はひとまとまりに直すこと（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。書き直す際もこのカッコの書式は必ず保つこと。",
-      "③人名化していないこと: 「〜さん」「〜くん」といった明示的な呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせているパターンも不可。人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）で表現されていること。また、実在の外来語以外のカタカナ語に「する」を付けて動詞にしていないこと（例:「マッシュしたら」は不可）。",
-      "④簡潔であること（接辞の注釈を除いて10〜18文字程度、長くても22文字までが目安）。無くても意味が通る語、特に情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」など）や飾りだけの修飾語が残っていないこと。残っていれば削って短くすること。",
-      "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
-      "⑤読み手に伝わること: この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられること。関係のない出来事を「〜したら、〜」で並べただけの、何を言っているのか分からない文は不可（例:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」）。描かれている出来事は一つに絞られていること。",
-      wordMeaning ? "⑥一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
-    ].filter(Boolean).join("\n"),
+    GORO_VALIDATION_CRITERIA(wordMeaning),
     "いずれかを満たしていない候補は書き直してください。その際、どの接辞の音も省略してはいけません（元の発音から大胆に崩すのは自由です）。すべて満たしている候補はそのまま使ってください。",
     candList,
     "書き直した場合も含め、必ず1件を出力してください。接辞の綴りを添えるカッコの書式は必ず保ってください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
@@ -1433,6 +1486,22 @@ async function growGoroCorpusFromSave(word, wordMeaning, goroText, morphemes, pr
   }
 }
 
+/* ②意味整合ゲート・③マンネリ検出の不合格理由。1語ずつの経路と
+   まとめ経路で同じ文面をAIに返せるよう、生成側に切り出しておく */
+function semanticDriftViolation(wordMeaning) {
+  return {
+    code: "semantic-drift",
+    reason: `この語呂合わせの情景は、単語の意味「${wordMeaning}」との結びつきが弱いようです。読みの断片を活かしたまま、単語の意味を連想できる情景に描き直してください。`,
+  };
+}
+
+function phrasingReuseViolation(similarWord) {
+  return {
+    code: "phrasing-reuse",
+    reason: `この語呂合わせは、以前「${similarWord}」で使った言い回し・情景と似すぎています。読みの活かし方や情景の型を変えてください。`,
+  };
+}
+
 /* 機械チェックに通らなかった場合に作り直す最大回数。
    1回目で合格すれば追加のAPI呼び出しは発生しない */
 const GORO_MAX_ATTEMPTS = 3;
@@ -1513,22 +1582,12 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
         const [candVec] = await embedTexts([candidates[0].text], apiKey, "passage");
         if (meaningQueryVec && gateThreshold != null) {
           const alignScore = cosineSim(candVec, meaningQueryVec);
-          if (alignScore < gateThreshold) {
-            violations.push({
-              code: "semantic-drift",
-              reason: `この語呂合わせの情景は、単語の意味「${wordMeaning}」との結びつきが弱いようです。読みの断片を活かしたまま、単語の意味を連想できる情景に描き直してください。`,
-            });
-          }
+          if (alignScore < gateThreshold) violations.push(semanticDriftViolation(wordMeaning));
         }
         const repeatHit = corpus
           .filter((c) => Array.isArray(c.goroVector) && c.word.toLowerCase() !== word.toLowerCase())
           .find((c) => cosineSim(candVec, c.goroVector) >= GORO_REPEAT_SIM_THRESHOLD);
-        if (repeatHit) {
-          violations.push({
-            code: "phrasing-reuse",
-            reason: `この語呂合わせは、以前「${repeatHit.word}」で使った言い回し・情景と似すぎています。読みの活かし方や情景の型を変えてください。`,
-          });
-        }
+        if (repeatHit) violations.push(phrasingReuseViolation(repeatHit.word));
       } catch (err) {
         console.warn("意味整合ゲート/マンネリ検出の計算に失敗しました（スキップします）:", err);
       }
@@ -1558,6 +1617,382 @@ async function bumpUsage(tokens) {
   const total = (await kvGet("usage_tokens", 0)) + (tokens || 0);
   await kvSet("usage_calls", calls);
   await kvSet("usage_tokens", total);
+}
+
+/* ------------------------------------------------------------------ *
+ * 4.7 まとめ生成（複数の単語を1リクエストに束ねる）
+ *   さくらのAI Engineはリクエスト単位で課金されるため、1語につき4〜6回
+ *   呼んでいた分解・語呂合わせを、数語ぶんまとめて1回にする。
+ *
+ *   語呂合わせの精度を落とさないために、次の2つは必ず守る。
+ *     ・プロンプトの規則本文は1語ずつの経路とまったく同じ定数を共有する
+ *       （DECOMPOSE_* / GORO_RULE_* / GORO_VALIDATION_CRITERIA）。
+ *       まとめ用に書き写すと、片方だけ直したときに、まとめ生成の精度だけが
+ *       誰にも気づかれずに落ちていく。
+ *     ・生成後の機械チェック(goroViolations)・意味整合ゲート・マンネリ検出・
+ *       不合格時の作り直しループ・AIによる校閲パスを、1語ずつの経路と
+ *       まったく同じものを同じ順で通す。
+ *   つまり、まとめるのは「送り方」だけで、合否の基準は一切変えない。
+ *   まとめたせいで応答が雑になれば機械チェックが捕まえて作り直しに回るので、
+ *   手抜きがそのまま単語帳に入ることはない。
+ * ------------------------------------------------------------------ */
+
+/* 1リクエストにまとめる単語数。増やすほど課金は減るが、1回の応答で
+   書かせる量が増えるぶん品質は落ちやすくなる。落ちた分は機械チェックが
+   捕まえて作り直しに回してくれるものの、作り直しが増えれば結局
+   リクエストも増えるので、割に合う範囲としてこの値にしている */
+const BATCH_CHUNK_SIZE = 5;
+
+function chunkArray(list, size) {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
+/* まとめ応答を単語で引けるようにする。AIが綴りを直して返してきたり、
+   wordを省いたりすることがあるので、単語で引けない場合に限り、渡した
+   順序を頼りに対応づける（順序を保つことはプロンプトで指示している）。
+   どちらでも引けない語は取り違えるくらいなら未生成のまま残す */
+function indexAiResultsByWord(results, words) {
+  const rows = Array.isArray(results) ? results : [];
+  const byWord = new Map();
+  rows.forEach((r) => {
+    const key = (r && typeof r.word === "string") ? r.word.trim().toLowerCase() : "";
+    if (key && !byWord.has(key)) byWord.set(key, r);
+  });
+  const out = new Map();
+  words.forEach((w, i) => {
+    const hit = byWord.get(w.toLowerCase()) || (rows.length === words.length ? rows[i] : null);
+    if (hit) out.set(w.toLowerCase(), hit);
+  });
+  return out;
+}
+
+/* --- まとめ分解 --- */
+
+const BATCH_DECOMPOSE_SYS = [
+  ...DECOMPOSE_ROLE_RULES,
+  "既知の接頭辞・接尾辞の一覧は、単語ごとにユーザーメッセージで示します。その単語について示された一覧を優先的に使ってください。",
+  ...DECOMPOSE_SPLIT_RULES,
+  "複数の英単語をまとめて渡します。単語ごとに独立して判定・分割・分析し、渡された順序のまま、渡された単語すべてについて結果を返してください。単語を飛ばしたり、複数の単語をまとめたりしてはいけません。まとめて処理するからといって、1語ずつ扱う場合より内容を簡略化しないでください。",
+  "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。resultsの各要素のwordには、渡された単語（修正前の綴り）をそのまま入れてください。",
+  '{"results":[{"word":"investigation","word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}]}',
+  ...DECOMPOSE_EXAMPLES,
+].join("\n");
+
+function batchDecomposeUserPrompt(words) {
+  return [
+    `次の${words.length}語について、それぞれ判定・分割・分析してください。`,
+    ...words.map((w, i) => `【${i + 1}】単語: ${w}\n  ${DECOMPOSE_AFFIX_HINT(knownAffixesFor(w))}`),
+  ].join("\n\n");
+}
+
+/* AIの応答1件を、decomposeWord の戻り値と同じ形に整える */
+async function buildDecomposeResult(word, json, provider, apiKey) {
+  const morphemes = await reconcileWithLocalDict(json.morphemes, provider, apiKey);
+  const validCorrection = typeof json.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(json.corrected_word);
+  const correctedWord = validCorrection ? json.corrected_word : word;
+  const wasCorrected = validCorrection && !!json.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
+  const synonyms = sanitizeWordList(json.synonyms, correctedWord);
+  const antonyms = sanitizeWordList(json.antonyms, correctedWord).filter((w) => !synonyms.some((s) => s.toLowerCase() === w.toLowerCase()));
+  return {
+    correctedWord, wasCorrected, wordExists: true,
+    meaning: json.word_meaning || "",
+    phonetic: json.word_phonetic || "",
+    memoryTip: (json.memory_tip || "").slice(0, 100),
+    synonyms, antonyms, morphemes,
+  };
+}
+
+/* 1語ずつの経路には、項目が欠けていたときに埋め直す再試行がある。
+   まとめ経路でそこまで作り込むと分岐が増えるので、欠けのある語だけ
+   1語ずつの経路にそのまま渡す。まとめたせいで内容の薄い単語が
+   混ざることを防げて、追加の課金も欠けた語のぶんだけで済む */
+function isDecomposeResultComplete(result) {
+  return !!(result.morphemes.length && result.meaning && result.phonetic && result.memoryTip
+    && !result.morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE));
+}
+
+async function batchDecomposeWords(words, provider, apiKey) {
+  const out = new Map();
+  const fallbackToSingle = async (word) => {
+    try {
+      out.set(word.toLowerCase(), await decomposeWord(word, provider, apiKey));
+    } catch (err) {
+      console.warn(`"${word}" の分解に失敗しました:`, err);
+    }
+  };
+
+  let json;
+  try {
+    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(words), 0.2);
+  } catch (err) {
+    console.warn("まとめ分解に失敗しました。1語ずつの経路で処理します:", err);
+    for (const word of words) await fallbackToSingle(word);
+    return out;
+  }
+
+  const byWord = indexAiResultsByWord(json.results, words);
+  const validationTargets = [];
+  for (const word of words) {
+    const row = byWord.get(word.toLowerCase());
+    if (!row) { await fallbackToSingle(word); continue; }
+    if (row.word_exists === false) {
+      out.set(word.toLowerCase(), {
+        correctedWord: word, wasCorrected: false, wordExists: false,
+        meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: [],
+      });
+      continue;
+    }
+    const result = await buildDecomposeResult(word, row, provider, apiKey);
+    if (!isDecomposeResultComplete(result)) { await fallbackToSingle(word); continue; }
+    out.set(word.toLowerCase(), result);
+    validationTargets.push({ word, result });
+  }
+
+  await batchValidateDecompositions(validationTargets, provider, apiKey);
+  return out;
+}
+
+const BATCH_DECOMPOSE_VALIDATION_SYS = [
+  "あなたは英語の語源・形態素解析の専門家であり、厳格な校閲者です。",
+  "複数の英単語について、接頭辞・語根・接尾辞（接辞）に分割した結果をまとめて渡します。単語ごとに独立して、次の点を厳しく確認してください。",
+  DECOMPOSE_VALIDATION_CRITERIA,
+  "単語によっては、特に重点的に確認すべき点や、既に確定している分割が添えられています。添えられている場合は必ずその指示に従ってください。",
+  "いずれかに誤りが見つかった場合は、正しい分割・正しい情報にすべて書き直してください。問題がなければそのまま使ってください。",
+  "渡された単語すべてについて、渡された順序のまま結果を返してください。単語を飛ばしてはいけません。wordには渡された単語をそのまま入れてください。",
+  "出力は、書き直した場合も含め、必ず全単語・全要素を次のJSON形式のみで返してください。それ以外の文章は一切書かないでください。",
+  '{"results":[{"word":"investigation","morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}]}',
+].join("\n");
+
+function batchDecomposeValidationUserPrompt(targets) {
+  return targets.map((t, i) => [
+    `【${i + 1}】単語: ${t.result.correctedWord}`,
+    t.result.morphemes
+      .map((m, j) => `  ${j + 1}. ${m.part} - 読み:${m.reading} / 意味:${m.meaning} / 由来:${m.origin} / 発音記号:${m.phonetic}`)
+      .join("\n"),
+    t.hints.length ? DECOMPOSE_HINT_BLOCK(t.hints) : "",
+    t.requiredParts ? DECOMPOSE_REQUIRED_BLOCK(t.requiredParts) : "",
+  ].filter(Boolean).join("\n")).join("\n\n");
+}
+
+/* validateDecomposition と同じ受け入れ条件で、まとめて校閲する。
+   条件を満たさなかった語は、1語ずつの経路と同じく元の分割のまま残す
+   （校閲結果を無理に採用して分割を壊す方が害が大きい） */
+async function batchValidateDecompositions(entries, provider, apiKey) {
+  const targets = entries
+    .filter((e) => e.result.morphemes.length)
+    .map((e) => ({
+      ...e,
+      hints: findUnderSplitHints(e.result.correctedWord, e.result.morphemes, e.result.memoryTip),
+      requiredParts: requiredSegmentation(e.result.correctedWord, e.result.morphemes, e.result.memoryTip),
+    }));
+  if (!targets.length) return;
+
+  try {
+    const json = await callAI(provider, apiKey, BATCH_DECOMPOSE_VALIDATION_SYS, batchDecomposeValidationUserPrompt(targets), 0.2);
+    const byWord = indexAiResultsByWord(json.results, targets.map((t) => t.result.correctedWord));
+    for (const t of targets) {
+      const row = byWord.get(t.result.correctedWord.toLowerCase());
+      if (!row || !Array.isArray(row.morphemes)) continue;
+      const revised = await reconcileWithLocalDict(row.morphemes, provider, apiKey);
+      if (!revised.length) continue;
+      if (revised.map((m) => m.part).join("").toLowerCase() !== t.result.correctedWord.toLowerCase()) continue;
+      if (t.requiredParts && !sameSegmentation(revised, t.requiredParts)) continue;
+      t.result.morphemes = revised;
+    }
+  } catch (err) {
+    console.warn("まとめ校閲に失敗しました（元の分割をそのまま使います）:", err);
+  }
+}
+
+/* --- まとめ語呂合わせ生成 --- */
+
+function batchGoroSystemPrompt(count) {
+  return [
+    "あなたは日本語の語呂合わせ作家です。",
+    `${count}語の英単語について、それぞれ語呂合わせを1件ずつ作ってください。単語ごとの接辞・カタカナ読み・意味は、ユーザーメッセージで単語ごとに示します。`,
+    GORO_RULE_MATERIAL,
+    GORO_RULE_MEANING_ALIGN,
+    GORO_RULE_BAD_PATTERNS,
+    GORO_RULE_FINAL,
+    /* まとめて作らせたときにだけ起きる崩れ方が2つある。1語目だけ丁寧で
+       残りが雑になることと、同じ型の一文を全語で使い回すこと。どちらも
+       1語ずつの経路では起きないので、この注意はまとめ経路にだけ足す */
+    "【重要】1語ずつ、上の規則をすべて満たしているか確認してから次の語に進んでください。まとめて作るからといって、1語ずつ作る場合より雑にしてはいけません。",
+    "【重要】単語ごとに情景・オチ・文体を必ず変えてください。同じ型・同じ言い回しの一文を複数の単語で使い回してはいけません。",
+    GORO_RULE_SELF_CHECK,
+    "渡された単語すべてについて、渡された順序のまま1件ずつ返してください。単語を飛ばしてはいけません。wordには渡された単語をそのまま入れてください。",
+    "次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"results":[{"word":"dictionary","text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！","highlight":[{"part":"dict","in_text":"軸"}]}]}',
+  ].join("\n");
+}
+
+function batchGoroWordBlock(item, index) {
+  return [
+    `【${index + 1}】単語: ${item.word}`,
+    `  接辞とカタカナ読み: ${item.morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ")}`,
+    item.wordMeaning ? `  単語全体の意味: ${item.wordMeaning}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function batchGoroUserPrompt(states, rag) {
+  return states.map((s, i) => [
+    batchGoroWordBlock(s.item, i),
+    (rag && (rag.examples.get(s.item.word) || []).length) ? GORO_EXAMPLE_BLOCK(rag.examples.get(s.item.word)) : "",
+    s.notes.length ? GORO_REJECTED_BLOCK(s.notes) : "",
+  ].filter(Boolean).join("\n")).join("\n\n");
+}
+
+/* 1チャンク分のRAG材料をまとめて用意する。embeddingsは1リクエストで
+   複数テキストを送れるので、単語数によらず呼び出しは数回で済む。
+   どこかで失敗しても本筋の生成は止めず、静かにRAGだけ諦める */
+async function prepareBatchGoroRag(items, provider, apiKey) {
+  if (provider !== "sakura" || !apiKey || !(await isRagEnabled())) return null;
+  try {
+    await ensureGoroCorpusReady(provider, apiKey);
+    const corpus = await idbGetAll("goro_corpus");
+    const gateThreshold = await kvGet("goro_gate_threshold", null);
+    const meaningVecs = new Map();
+    const examples = new Map();
+    const withMeaning = items.filter((it) => it.wordMeaning);
+    if (withMeaning.length) {
+      const vecs = await embedTexts(withMeaning.map((it) => it.wordMeaning), apiKey, "query");
+      withMeaning.forEach((it, i) => {
+        meaningVecs.set(it.word, vecs[i]);
+        examples.set(it.word, corpus
+          .filter((c) => c.word.toLowerCase() !== it.word.toLowerCase() && Array.isArray(c.vector) && c.styleOk !== false)
+          .map((c) => ({ ...c, score: cosineSim(vecs[i], c.vector) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, GORO_EXAMPLE_TOPK));
+      });
+    }
+    return { corpus, gateThreshold, meaningVecs, examples };
+  } catch (err) {
+    console.warn("まとめ生成のRAG準備に失敗しました（スキップします）:", err);
+    return null;
+  }
+}
+
+/* 機械チェック・意味整合ゲート・マンネリ検出を、チャンク内の全候補に
+   同じ基準で適用する。generateGoro と同じく、機械チェックで既に不合格が
+   確定している候補にはembeddingを使わない */
+async function batchGoroViolations(fresh, rag, apiKey) {
+  const out = new Map();
+  for (const f of fresh) out.set(f, goroViolations(f.cand.text, f.state.item.morphemes));
+  const clean = fresh.filter((f) => !out.get(f).length);
+  if (!rag || !clean.length) return out;
+
+  try {
+    const vecs = await embedTexts(clean.map((f) => f.cand.text), apiKey, "passage");
+    clean.forEach((f, i) => {
+      const violations = out.get(f);
+      const item = f.state.item;
+      const meaningVec = rag.meaningVecs.get(item.word);
+      if (meaningVec && rag.gateThreshold != null && cosineSim(vecs[i], meaningVec) < rag.gateThreshold) {
+        violations.push(semanticDriftViolation(item.wordMeaning));
+      }
+      const repeatHit = rag.corpus
+        .filter((c) => Array.isArray(c.goroVector) && c.word.toLowerCase() !== item.word.toLowerCase())
+        .find((c) => cosineSim(vecs[i], c.goroVector) >= GORO_REPEAT_SIM_THRESHOLD);
+      if (repeatHit) violations.push(phrasingReuseViolation(repeatHit.word));
+    });
+  } catch (err) {
+    console.warn("意味整合ゲート/マンネリ検出の計算に失敗しました（スキップします）:", err);
+  }
+  return out;
+}
+
+function batchGoroValidationSystemPrompt(count) {
+  return [
+    "あなたは日本語の語呂合わせの校閲者です。",
+    `${count}語ぶんの語呂合わせ候補をまとめて渡します。単語ごとに独立して、次の基準をすべて満たしているか厳しく確認してください。`,
+    GORO_VALIDATION_CRITERIA(true),
+    "いずれかを満たしていない候補は書き直してください。その際、どの接辞の音も省略してはいけません（元の発音から大胆に崩すのは自由です）。すべて満たしている候補はそのまま使ってください。",
+    "渡された単語すべてについて、渡された順序のまま1件ずつ返してください。単語を飛ばしてはいけません。wordには渡された単語をそのまま入れてください。",
+    "書き直した場合も含め、接辞の綴りを添えるカッコの書式は必ず保ってください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"results":[{"word":"dictionary","text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！"}]}',
+  ].join("\n");
+}
+
+function batchGoroValidationUserPrompt(states) {
+  return states.map((s, i) => [
+    batchGoroWordBlock(s.item, i),
+    `  候補: ${s.cand.text}`,
+  ].join("\n")).join("\n\n");
+}
+
+/* 機械チェックを通った候補だけを、まとめて校閲にかける。校閲で新たな
+   違反が入り込んだ語は校閲前の合格版に戻す（1語ずつの経路と同じ扱い） */
+async function batchValidateGoro(states, provider, apiKey) {
+  if (!states.length) return;
+  try {
+    const json = await callAI(provider, apiKey, batchGoroValidationSystemPrompt(states.length), batchGoroValidationUserPrompt(states), 0.4);
+    const byWord = indexAiResultsByWord(json.results, states.map((s) => s.item.word));
+    for (const s of states) {
+      const row = byWord.get(s.item.word.toLowerCase());
+      const text = (row && typeof row.text === "string") ? row.text.trim() : "";
+      if (!text || goroViolations(text, s.item.morphemes).length) continue;
+      s.cand = { text, highlight: s.cand.highlight };
+    }
+  } catch (err) {
+    console.warn("まとめ語呂の校閲に失敗しました（校閲前の候補を使います）:", err);
+  }
+}
+
+/* items: [{ word, wordMeaning, morphemes }]（1チャンク分）
+   戻り値: Map<word, {text, highlight}>。作れなかった語は入らない */
+async function batchGenerateGoro(items, provider, apiKey, rag) {
+  const states = items.map((item) => ({ item, notes: [], best: null, cand: null, passed: false }));
+
+  for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
+    const pending = states.filter((s) => !s.cand);
+    if (!pending.length) break;
+
+    let json;
+    try {
+      json = await callAI(provider, apiKey, batchGoroSystemPrompt(pending.length), batchGoroUserPrompt(pending, rag));
+    } catch (err) {
+      /* 1回目で失敗したら候補が1つも無いので呼び出し元に投げる。
+         2回目以降は手元に候補があるので、作り直しを諦めてそれを使う */
+      if (attempt === 0) throw err;
+      console.warn("まとめ語呂の作り直しに失敗しました:", err);
+      break;
+    }
+
+    const byWord = indexAiResultsByWord(json.results, pending.map((s) => s.item.word));
+    const fresh = [];
+    for (const state of pending) {
+      const row = byWord.get(state.item.word.toLowerCase());
+      const text = (row && typeof row.text === "string") ? row.text.trim() : "";
+      if (!text) continue; // 応答から漏れた語は次の試行に持ち越す
+      fresh.push({ state, cand: { text, highlight: Array.isArray(row.highlight) ? row.highlight : [] } });
+    }
+
+    const violationsOf = await batchGoroViolations(fresh, rag, apiKey);
+    for (const f of fresh) {
+      const violations = violationsOf.get(f) || [];
+      if (!violations.length) { f.state.cand = f.cand; f.state.passed = true; continue; }
+      if (!f.state.best || violations.length < f.state.best.violations.length) {
+        f.state.best = { cand: f.cand, violations };
+      }
+      f.state.notes.push({ text: f.cand.text, reasons: violations.map((v) => v.reason) });
+    }
+  }
+
+  /* 全試行が不合格だった語は、1語ずつの経路と同じく違反の最も少ない
+     候補を使う（チェックの厳しさで操作そのものを失敗させない） */
+  for (const state of states) {
+    if (state.cand || !state.best) continue;
+    console.warn(`"${state.item.word}" は機械チェックを通らなかったため、違反の最も少ない候補を使います:`, state.best.violations);
+    state.cand = state.best.cand;
+  }
+
+  await batchValidateGoro(states.filter((s) => s.passed), provider, apiKey);
+
+  const out = new Map();
+  for (const state of states) if (state.cand) out.set(state.item.word, state.cand);
+  return out;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1593,6 +2028,12 @@ const TTS_SPEAKERS = [
   { id: "ankomon", label: "あんこもん" },
 ];
 const TTS_VOICE = "normal";
+
+/* 規約に同意済みで、実際に鳴ることを確認できている話者。検出を一度も
+   実行していない端末でも最初から選べるようにする。検出を実行した後は
+   その結果を優先する（実測を、確認済みの決め打ちより信用する） */
+const TTS_SPEAKERS_CONFIRMED = ["zundamon"];
+const TTS_SPEAKER_DEFAULT = "zundamon";
 
 /* 綴りの揺れ（ハイフンやアンダースコアの有無）を無視して突き合わせる */
 function normalizeSpeakerId(id) {
@@ -1708,9 +2149,7 @@ async function speak(text, onEnd, lang = "ja-JP") {
   /* VOICEVOXは日本語専用なので、英単語の読み上げは常にブラウザ内蔵の合成 */
   const provider = await getActiveProvider();
   const endpoint = lang === "ja-JP" ? TTS_ENDPOINTS[provider] : null;
-  /* 既定はブラウザ標準。使えることを確認できた話者を設定画面で選んだ時
-     だけVOICEVOXを使う */
-  const speaker = endpoint ? await kvGet("tts_speaker", "") : "";
+  const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
   const apiKey = speaker ? await loadApiKey(provider) : "";
   if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
   if (!apiKey) { speakWithBrowser(spoken, onEnd, lang); return; }
@@ -4986,7 +5425,8 @@ const TTS_PROBE_TEXT = "テスト";
 
 async function loadKnownGoodSpeakers() {
   const saved = await kvGet("tts_speakers_ok", null);
-  return Array.isArray(saved) ? saved : [];
+  if (Array.isArray(saved)) return saved;
+  return TTS_SPEAKERS.filter((s) => TTS_SPEAKERS_CONFIRMED.includes(s.id));
 }
 
 /* 候補を1つずつ鳴らしてみて、成功したものだけを残す。規約に同意して
@@ -5029,7 +5469,7 @@ async function refreshTtsSpeakerUI() {
   const provider = await getActiveProvider();
   const endpoint = TTS_ENDPOINTS[provider];
   const apiKey = endpoint ? await loadApiKey(provider) : "";
-  const chosen = await kvGet("tts_speaker", "");
+  const chosen = await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT);
 
   if (!apiKey) {
     select.innerHTML = "";
@@ -5050,12 +5490,13 @@ async function refreshTtsSpeakerUI() {
   /* 使えなくなった話者が保存されたままだと鳴らない声を選び続けることに
      なるので、候補に無ければブラウザ標準へ戻す */
   const available = new Set(speakers.map((s) => s.id));
-  select.value = chosen && available.has(chosen) ? chosen : "";
+  select.value = chosen && available.has(chosen) ? chosen
+    : (available.has(TTS_SPEAKER_DEFAULT) ? TTS_SPEAKER_DEFAULT : "");
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
   note.textContent = speakers.length
-    ? `使える話者が${speakers.length}件見つかっています。日本語の読み上げに使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。`
-    : "使える話者がまだありません。VOICEVOXの話者は、さくらのクラウドのコントロールパネルで話者ごとに利用規約へ同意しないと使えません。同意済みの話者があれば「話者を調べる」で検出できます。";
+    ? "日本語の読み上げにVOICEVOXを使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。他の話者は、コントロールパネルで利用規約に同意したうえで「話者を調べる」を押すと追加されます。"
+    : "使える話者がありません。VOICEVOXの話者は、さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から話者ごとに利用規約へ同意しないと使えません。";
 }
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
@@ -5607,6 +6048,383 @@ async function restoreCloudSession() {
     console.warn("Failed to restore Supabase session:", err);
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * 12e. まとめて登録 / まとめて確認（設定画面から入る）
+ *   ホーム画面の流れは「1語入力 → 分解と語呂生成を待つ → 保存」で、
+ *   単語を思いついた勢いで次々に登録することができない。ここでは
+ *   「単語だけ先に溜める」「あとでまとめて生成する」「あとでまとめて
+ *   確認して単語帳に入れる」の3段階に分け、待ち時間と操作を切り離す。
+ *   ホーム画面の流れには一切手を入れていない。
+ * ------------------------------------------------------------------ */
+const BATCH_STORE = "batch_queue";
+
+/* 生成中・作り直し中は、二重に走らせないためのフラグ。どちらも
+   実行中はボタンを押せなくする */
+let batchRunning = false;
+let batchRegenerating = false;
+
+/* 改行・カンマ・空白など、英字とハイフン/アポストロフィ以外は全て区切りとして扱う。
+   単語帳のCSVを貼り付けても、メモから改行で貼り付けても同じように拾えるようにする */
+function parseBatchWordInput(text) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(text || "").split(/[^A-Za-z'-]+/)) {
+    const word = raw.replace(/^[-']+|[-']+$/g, "").toLowerCase();
+    if (word.length < 2 || !/^[a-z][a-z'-]*$/.test(word) || seen.has(word)) continue;
+    seen.add(word);
+    out.push(word);
+  }
+  return out;
+}
+
+/* まとめる意味がどれくらいあるのかを、実行前に数字で見せるために使う。
+   分解 / 分解の校閲 / 語呂合わせ / 語呂の校閲 の4回が最小で、これは
+   1語ずつでもチャンク単位でも変わらない。つまり節約できる倍率は
+   そのまま BATCH_CHUNK_SIZE になる。機械チェックに落ちた語の作り直しは
+   ここに含まれないので、実際の回数はこれ以上になりうる */
+const REQUESTS_PER_PASS = 4;
+const SINGLE_REQUESTS_PER_WORD = REQUESTS_PER_PASS;
+
+function estimateBatchRequests(count) {
+  return Math.ceil(count / BATCH_CHUNK_SIZE) * REQUESTS_PER_PASS;
+}
+
+async function loadBatchQueue() {
+  const rows = await idbGetAll(BATCH_STORE);
+  return rows.sort((a, b) => a.created_at - b.created_at);
+}
+
+async function putBatchRow(row) {
+  row.updated_at = Date.now();
+  await idbPut(BATCH_STORE, row);
+}
+
+/* 生成結果を単語帳のレコードの形に移す。まとめ経路でも1語ずつの経路でも
+   単語帳に入る形は同じでなければならないので、変換はここ1か所に閉じる */
+function batchRowToWordRecord(row, existing) {
+  return {
+    id: wordCardId(row.result.word),
+    word: row.result.word,
+    word_meaning: row.result.word_meaning,
+    word_phonetic: row.result.word_phonetic,
+    word_memory_tip: row.result.word_memory_tip,
+    morphemes: row.result.morphemes,
+    goro_text: row.result.goro_text,
+    goro_highlight: row.result.goro_highlight,
+    provider: row.result.provider,
+    memorized: existing ? existing.memorized : false,
+    created_at: existing ? existing.created_at : Date.now(),
+  };
+}
+
+async function addBatchWords(text) {
+  const words = parseBatchWordInput(text);
+  if (!words.length) { toast("英単語が見つかりませんでした"); return; }
+
+  const queued = new Set((await loadBatchQueue()).map((r) => r.id));
+  const saved = new Set((await idbGetAll("words")).map((r) => r.id));
+  let added = 0, skipped = 0;
+  for (const word of words) {
+    const id = wordCardId(word);
+    if (queued.has(id) || saved.has(id)) { skipped++; continue; }
+    await putBatchRow({ id, word, status: "pending", error: "", result: null, created_at: Date.now() });
+    added++;
+  }
+  toast(skipped ? `${added}語を追加（${skipped}語は登録済みのため除外）` : `${added}語を追加しました`);
+  await renderBatchQueue();
+}
+
+function setBatchProgress(label) {
+  const row = document.getElementById("batch-progress");
+  const text = document.getElementById("batch-progress-label");
+  if (!row || !text) return;
+  row.style.display = label ? "flex" : "none";
+  text.textContent = label || "";
+}
+
+const BATCH_STATUS_LABEL = { pending: "未生成", ready: "確認待ち", failed: "失敗" };
+
+async function renderBatchQueue() {
+  const listEl = document.getElementById("batch-list");
+  const statsEl = document.getElementById("batch-stats");
+  const noteEl = document.getElementById("batch-cost-note");
+  if (!listEl || !statsEl) return;
+
+  const rows = await loadBatchQueue();
+  const pending = rows.filter((r) => r.status === "pending");
+  const ready = rows.filter((r) => r.status === "ready");
+  const failed = rows.filter((r) => r.status === "failed");
+  statsEl.textContent = `未生成${pending.length} ・ 確認待ち${ready.length} ・ 失敗${failed.length}`;
+
+  if (noteEl) {
+    noteEl.textContent = pending.length
+      ? `${pending.length}語をまとめて生成すると、AIへの呼び出しは最小で約${estimateBatchRequests(pending.length)}回です（ホーム画面から1語ずつ登録した場合は最小で約${pending.length * SINGLE_REQUESTS_PER_WORD}回）。語呂合わせが品質チェックに通らなかった場合は作り直すため、実際はこれより増えることがあります。`
+      : "生成待ちの単語はありません。";
+  }
+
+  const runBtn = document.getElementById("batch-run-btn");
+  if (runBtn) {
+    runBtn.disabled = batchRunning || !pending.length;
+    runBtn.textContent = pending.length ? `⚡ ${pending.length}語をまとめて生成` : "⚡ まとめて生成";
+  }
+  const reviewBtn = document.getElementById("batch-open-review-btn");
+  if (reviewBtn) {
+    reviewBtn.disabled = !ready.length;
+    reviewBtn.textContent = ready.length ? `確認する（${ready.length}語）` : "確認する";
+  }
+
+  listEl.innerHTML = "";
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="empty-note">まだ登録されていません</div>`;
+    return;
+  }
+  rows.forEach((r) => {
+    const item = document.createElement("div");
+    item.className = `batch-item batch-item-${r.status}`;
+    const sub = r.status === "failed" ? r.error : (r.result?.word_meaning || "");
+    /* 失敗は通信エラーなど一時的な理由のことが多い。未生成に戻せる口を
+       用意しておかないと、登録し直すまでその単語だけ置き去りになる */
+    const retryBtn = r.status === "failed"
+      ? `<button class="btn-ghost batch-item-retry" type="button">再試行</button>`
+      : "";
+    item.innerHTML = `
+      <div class="batch-item-main">
+        <div class="batch-item-word">${escapeHtml(r.word)}</div>
+        ${sub ? `<div class="batch-item-sub">${escapeHtml(sub)}</div>` : ""}
+      </div>
+      ${retryBtn}
+      <span class="batch-item-status">${BATCH_STATUS_LABEL[r.status] || r.status}</span>
+      <button class="batch-item-del" type="button" aria-label="${escapeHtml(r.word)} を取り消す">✕</button>`;
+    item.querySelector(".batch-item-del").addEventListener("click", async () => {
+      await idbDelete(BATCH_STORE, r.id);
+      await renderBatchQueue();
+    });
+    item.querySelector(".batch-item-retry")?.addEventListener("click", async () => {
+      r.status = "pending";
+      r.error = "";
+      await putBatchRow(r);
+      await renderBatchQueue();
+    });
+    listEl.appendChild(item);
+  });
+}
+
+async function markBatchFailed(row, message) {
+  row.status = "failed";
+  row.error = message || "生成に失敗しました";
+  await putBatchRow(row);
+}
+
+async function runBatchGeneration() {
+  if (batchRunning) return;
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) { toast("設定画面でAPIキーを登録してください"); return; }
+
+  const queue = (await loadBatchQueue()).filter((r) => r.status === "pending");
+  if (!queue.length) { toast("生成待ちの単語がありません"); return; }
+
+  batchRunning = true;
+  await renderBatchQueue();
+  let done = 0;
+  setBatchProgress(`生成中… 0 / ${queue.length}`);
+
+  try {
+    for (const chunk of chunkArray(queue, BATCH_CHUNK_SIZE)) {
+      try {
+        const decomposed = await batchDecomposeWords(chunk.map((r) => r.word), provider, apiKey);
+
+        const items = [];
+        for (const row of chunk) {
+          const d = decomposed.get(row.word.toLowerCase());
+          if (!d) { await markBatchFailed(row, "分解できませんでした"); continue; }
+          if (d.wordExists === false) { await markBatchFailed(row, "英単語として認識できませんでした"); continue; }
+          if (!d.morphemes.length) { await markBatchFailed(row, "接辞に分解できませんでした"); continue; }
+          items.push({ row, decomposed: d, word: d.correctedWord, wordMeaning: d.meaning, morphemes: d.morphemes });
+        }
+        if (items.length) {
+          const rag = await prepareBatchGoroRag(items, provider, apiKey);
+          const goro = await batchGenerateGoro(items, provider, apiKey, rag);
+          for (const it of items) {
+            const cand = goro.get(it.word);
+            if (!cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
+            it.row.status = "ready";
+            it.row.error = "";
+            it.row.result = {
+              word: it.decomposed.correctedWord,
+              word_meaning: it.decomposed.meaning,
+              word_phonetic: it.decomposed.phonetic,
+              word_memory_tip: it.decomposed.memoryTip,
+              morphemes: it.decomposed.morphemes,
+              goro_text: cand.text,
+              goro_highlight: cand.highlight,
+              provider,
+            };
+            await putBatchRow(it.row);
+          }
+        }
+      } catch (err) {
+        console.error("まとめ生成に失敗しました:", err);
+        for (const row of chunk) {
+          if (row.status === "pending") await markBatchFailed(row, err.message);
+        }
+      }
+      done += chunk.length;
+      setBatchProgress(`生成中… ${done} / ${queue.length}`);
+      await renderBatchQueue();
+    }
+    toast("まとめ生成が終わりました");
+  } finally {
+    batchRunning = false;
+    setBatchProgress("");
+    await renderBatchQueue();
+  }
+}
+
+/* --- 確認画面 --- */
+/* 保存対象の選択はメモリだけで持つ。生成結果そのものはIndexedDBに
+   あるので、途中で画面を離れても結果は失われない */
+const batchExcluded = new Set();
+
+async function renderBatchReview() {
+  const listEl = document.getElementById("batch-review-list");
+  const statsEl = document.getElementById("batch-review-stats");
+  if (!listEl || !statsEl) return;
+
+  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result);
+  const selected = rows.filter((r) => !batchExcluded.has(r.id));
+  statsEl.textContent = rows.length ? `${rows.length}語 ・ 保存対象 ${selected.length}語` : "";
+
+  const saveBtn = document.getElementById("batch-review-save-btn");
+  if (saveBtn) {
+    saveBtn.disabled = !selected.length || batchRegenerating;
+    saveBtn.textContent = `💾 ${selected.length}語を単語帳に保存`;
+  }
+
+  listEl.innerHTML = "";
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="empty-note">確認待ちの単語はありません</div>`;
+    return;
+  }
+
+  rows.forEach((r) => {
+    const on = !batchExcluded.has(r.id);
+    const card = document.createElement("div");
+    card.className = `batch-review-card${on ? " on" : ""}`;
+    const phonetic = r.result.word_phonetic ? `<span class="phonetic">[${escapeHtml(r.result.word_phonetic)}]</span>` : "";
+    const morphs = r.result.morphemes
+      .map((m) => `<span class="batch-morph">${escapeHtml(m.part)}<i>${escapeHtml(m.reading)}</i></span>`)
+      .join("");
+    card.innerHTML = `
+      <div class="batch-review-head">
+        <button class="batch-review-check" type="button" aria-pressed="${on}" aria-label="${escapeHtml(r.result.word)} を保存対象にする">${on ? "✓" : ""}</button>
+        <div class="batch-review-title">${escapeHtml(r.result.word)}${phonetic}</div>
+      </div>
+      <div class="batch-review-meaning">${escapeHtml(r.result.word_meaning || "")}</div>
+      <div class="batch-review-morphs">${morphs}</div>
+      <div class="batch-review-goro">${escapeHtml(r.result.goro_text || "")}</div>
+      <div class="batch-review-actions">
+        <button class="btn-ghost batch-review-regen" type="button">語呂を作り直す</button>
+        <button class="btn-ghost batch-review-drop" type="button">破棄</button>
+      </div>`;
+
+    card.querySelector(".batch-review-check").addEventListener("click", async () => {
+      if (batchExcluded.has(r.id)) batchExcluded.delete(r.id); else batchExcluded.add(r.id);
+      await renderBatchReview();
+    });
+    card.querySelector(".batch-review-drop").addEventListener("click", async () => {
+      await idbDelete(BATCH_STORE, r.id);
+      batchExcluded.delete(r.id);
+      await renderBatchReview();
+    });
+    card.querySelector(".batch-review-regen").addEventListener("click", () => regenerateBatchGoro(r));
+    listEl.appendChild(card);
+  });
+}
+
+/* 1語だけ作り直す。ここは1語ずつの経路（generateGoro）をそのまま使う。
+   1語のために束ねる相手がいないので、まとめても得にならない */
+async function regenerateBatchGoro(row) {
+  if (batchRegenerating) return;
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) { toast("設定画面でAPIキーを登録してください"); return; }
+
+  batchRegenerating = true;
+  await renderBatchReview();
+  toast(`${row.result.word} の語呂を作り直しています…`);
+  try {
+    const candidates = await generateGoro(
+      row.result.word, row.result.morphemes, provider, apiKey, row.result.word_meaning,
+      [row.result.goro_text].filter(Boolean),
+    );
+    const c = candidates[0];
+    if (c && c.text) {
+      row.result.goro_text = c.text;
+      row.result.goro_highlight = c.highlight || [];
+      await putBatchRow(row);
+    }
+  } catch (err) {
+    console.error(err);
+    toast(`作り直しに失敗しました（${err.message}）`);
+  } finally {
+    batchRegenerating = false;
+    await renderBatchReview();
+  }
+}
+
+async function saveBatchReviewSelection() {
+  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result && !batchExcluded.has(r.id));
+  if (!rows.length) return;
+
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider).catch(() => "");
+  for (const row of rows) {
+    const existing = await idbGet("words", wordCardId(row.result.word));
+    await saveWordRecord(batchRowToWordRecord(row, existing));
+    await idbDelete(BATCH_STORE, row.id);
+    batchExcluded.delete(row.id);
+    /* ユーザーが良しとして保存した語呂を、今後のFew-shot例・マンネリ検出の
+       材料として蓄積する。1語ずつ保存したときと同じ扱いにする */
+    growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text, provider, apiKey)
+      .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
+  }
+  toast(`${rows.length}語を単語帳に保存しました`);
+  await renderBatchReview();
+}
+
+function openBatchScreen() {
+  showScreen("screen-batch");
+  renderBatchQueue();
+}
+
+function openBatchReviewScreen() {
+  showScreen("screen-batch-review");
+  renderBatchReview();
+}
+
+document.getElementById("batch-entry-btn").addEventListener("click", openBatchScreen);
+document.getElementById("batch-open-review-btn").addEventListener("click", openBatchReviewScreen);
+document.getElementById("batch-review-back-btn").addEventListener("click", openBatchScreen);
+document.getElementById("batch-run-btn").addEventListener("click", runBatchGeneration);
+document.getElementById("batch-review-save-btn").addEventListener("click", saveBatchReviewSelection);
+
+document.getElementById("batch-add-btn").addEventListener("click", async () => {
+  const input = document.getElementById("batch-input");
+  await addBatchWords(input.value);
+  input.value = "";
+});
+
+document.getElementById("batch-review-select-all").addEventListener("click", async () => {
+  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result);
+  /* 1件でも外れていれば全選択、全部入っていれば全解除。ボタン1つで
+     どちらもできるようにする */
+  const allOn = rows.every((r) => !batchExcluded.has(r.id));
+  batchExcluded.clear();
+  if (allOn) rows.forEach((r) => batchExcluded.add(r.id));
+  await renderBatchReview();
+});
 
 /* ------------------------------------------------------------------ *
  * 13. テーマカラー

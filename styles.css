@@ -701,3 +701,85 @@ button{font-family:inherit;cursor:pointer;}
      ある程度の余白を明示して下方向に配置する */
   .mic-section{margin-top:40px;}
 }
+
+/* ------------------------------------------------------------------ *
+ * まとめて登録 / まとめて確認
+ * ------------------------------------------------------------------ */
+/* 設定画面から入る導線。他の設定項目と違って画面遷移を伴うので、
+   行いっぱいに広げて「押すと移動する」ことが分かるようにする */
+.btn-wide{width:100%;padding:12px 16px;font-size:13px;border-radius:14px;}
+
+.batch-input{
+  width:100%;box-sizing:border-box;resize:vertical;min-height:96px;
+  font-family:'JetBrains Mono',monospace;font-size:14px;line-height:1.6;color:var(--ink);
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+}
+.batch-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);}
+
+.batch-stats{
+  font-size:11.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;
+  text-transform:none;letter-spacing:normal;
+}
+.batch-actions{display:flex;gap:10px;align-items:center;}
+.batch-actions .btn-solid{flex:1;min-width:0;padding:12px 14px;font-size:13px;}
+#batch-progress{margin-top:0;}
+
+.batch-list{display:flex;flex-direction:column;gap:8px;}
+.batch-item{
+  display:flex;align-items:center;gap:10px;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+}
+.batch-item-main{flex:1;min-width:0;}
+.batch-item-word{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:var(--accent-ink);}
+.batch-item-sub{
+  font-size:11.5px;color:var(--ink-soft);margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.batch-item-status{
+  flex-shrink:0;font-size:10.5px;font-family:'JetBrains Mono',monospace;color:var(--ink-faint);
+  border:1px solid var(--line);border-radius:999px;padding:3px 8px;
+}
+.batch-item-ready .batch-item-status{color:var(--accent-ink);border-color:var(--accent);}
+.batch-item-failed .batch-item-status{color:var(--danger);border-color:var(--danger);}
+.batch-item-failed .batch-item-sub{color:var(--danger);}
+.batch-item-retry{flex-shrink:0;padding:4px 10px;font-size:10.5px;}
+.batch-item-del{
+  flex-shrink:0;width:26px;height:26px;padding:0;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-faint);font-size:14px;line-height:1;
+}
+.batch-item-del:active{transform:scale(.92);}
+
+#screen-batch-review{padding-bottom:96px;}
+.batch-review-list{display:flex;flex-direction:column;gap:10px;}
+.batch-review-card{
+  background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;
+  display:flex;flex-direction:column;gap:8px;
+}
+/* 保存対象になっているカードだけ縁を強調する。チェックの有無を
+   カード全体で見分けられた方が、まとめて見返すときに速い */
+.batch-review-card.on{border-color:var(--accent);box-shadow:var(--shadow);}
+.batch-review-head{display:flex;align-items:center;gap:10px;}
+.batch-review-check{
+  flex-shrink:0;width:24px;height:24px;padding:0;border-radius:8px;
+  border:1.5px solid var(--line);background:var(--surface);
+  color:#fff;font-size:13px;font-weight:700;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+}
+.batch-review-card.on .batch-review-check{background:var(--accent);border-color:var(--accent);}
+.batch-review-title{
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:var(--accent-ink);
+  min-width:0;overflow:hidden;text-overflow:ellipsis;
+}
+.batch-review-title .phonetic{font-weight:400;font-size:11px;color:var(--ink-faint);margin-left:6px;}
+.batch-review-meaning{font-size:13px;color:var(--ink);}
+.batch-review-morphs{display:flex;flex-wrap:wrap;gap:6px;}
+.batch-morph{
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-soft);
+  background:var(--surface-2);border-radius:8px;padding:3px 8px;
+}
+.batch-morph i{font-style:normal;color:var(--ink-faint);margin-left:5px;}
+.batch-review-goro{
+  font-size:14px;line-height:1.6;color:var(--ink);
+  background:var(--bg);border-radius:12px;padding:10px 12px;
+}
+.batch-review-actions{display:flex;justify-content:flex-end;gap:8px;}
