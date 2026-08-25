@@ -915,7 +915,11 @@ function isJsonValidationFailure(err) {
 /* model を省略すると、そのプロバイダの既定モデルを使う。語呂合わせだけ
    別のモデルに切り替えられるようにするための引数で、分解や校閲など
    他の呼び出しはこれまで通り既定のモデルで動く */
-async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, model = "") {
+/* 解釈済みのJSONと、モデルが実際に返した生テキストの両方を返す。
+   生テキストは、期待した形が取り出せなかったときに「モデルが何を
+   返したのか」を人が見るために要る（モデルを乗り換える判断は、
+   応答を見ずにはできない） */
+async function callAIRaw(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, model = "") {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
   if (!apiKey) throw new Error("APIキーが設定されていません");
@@ -925,7 +929,7 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
     try {
       const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature, model);
       await bumpUsage(tokens);
-      return extractJson(text);
+      return { json: extractJson(text), text };
     } catch (err) {
       lastErr = err;
       const status = statusFromError(err);
@@ -936,6 +940,11 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
     }
   }
   throw lastErr;
+}
+
+async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, model = "") {
+  const { json } = await callAIRaw(provider, apiKey, systemPrompt, userPrompt, temperature, model);
+  return json;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1418,13 +1427,45 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
   ].filter(Boolean).join("\n");
 }
 
+/* 語呂本文が入っていそうなキー。指示しているのは text だけだが、
+   モデルによっては goro や 語呂 で返してくる */
+const GORO_TEXT_KEYS = ["text", "goro", "goroText", "goro_text", "candidate", "語呂", "語呂合わせ"];
+
+function goroTextOf(node) {
+  if (typeof node === "string") return node.trim();
+  if (!node || typeof node !== "object") return "";
+  for (const key of GORO_TEXT_KEYS) {
+    if (typeof node[key] === "string" && node[key].trim()) return node[key].trim();
+  }
+  return "";
+}
+
+/* 候補の取り出し。プロンプトでは {"candidates":[{"text":...}]} を指示して
+   いるが、モデルによっては results で返す・配列を直に返す・本文だけを
+   返すなど、形だけが違うことがある。形の違いで「生成できなかった」ことに
+   すると、モデルの実力ではなく書式の癖で不合格になってしまうので、
+   素直に読める形はすべて受ける。中身の良し悪しは goroViolations が見る */
+function extractGoroCandidates(json) {
+  const lists = [json?.candidates, json?.results, json?.output, json?.data];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    const out = list
+      .map((c) => ({ text: goroTextOf(c), highlight: (c && Array.isArray(c.highlight)) ? c.highlight : [] }))
+      .filter((c) => c.text);
+    if (out.length) return out;
+  }
+  const single = goroTextOf(json);
+  return single ? [{ text: single, highlight: Array.isArray(json?.highlight) ? json.highlight : [] }] : [];
+}
+
 async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning, model = "") {
   try {
     const sys = goroValidationPrompt(word, morphemes, candidates, wordMeaning);
     const json = await callAI(provider, apiKey, sys, "候補を精査し、必要なら書き直して、1件をJSON形式で出力してください。", 0.4, model);
-    const revised = (json.candidates || []).map((c, i) => ({
-      text: (c && c.text) || candidates[i]?.text || "",
-      highlight: candidates[i]?.highlight || [],
+    const parsed = extractGoroCandidates(json);
+    const revised = candidates.map((c, i) => ({
+      text: parsed[i]?.text || c.text || "",
+      highlight: c.highlight || [],
     }));
     if (revised.length === candidates.length && revised.every((c) => c.text)) {
       return revised;
@@ -1602,9 +1643,14 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
     report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
     const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples);
-    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。", 0.9, goroModel);
-    const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
-    if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
+    const { json, text: raw } = await callAIRaw(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。", 0.9, goroModel);
+    const candidates = extractGoroCandidates(json);
+    if (!candidates.length) {
+      /* 応答は返ったが語呂本文を取り出せなかった場合。モデルを乗り換える
+         判断のために、何が返ってきたのかをコンソールに残す */
+      console.warn("語呂合わせの応答から候補を取り出せませんでした:", raw);
+      throw new Error("語呂合わせが生成できませんでした");
+    }
 
     report("機械チェック中");
     const violations = goroViolations(candidates[0].text, morphemes);
@@ -6648,12 +6694,17 @@ async function generateGoroOnce(item, provider, apiKey, model) {
   const startedAt = Date.now();
   try {
     const sys = goroSystemPrompt(item.word, item.morphemes, item.wordMeaning, [], [], []);
-    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。", 0.9, model);
-    const text = (json.candidates || [])[0]?.text?.trim() || "";
-    if (!text) return { text: "", violations: [], error: "候補が返りませんでした", ms: Date.now() - startedAt };
-    return { text, violations: goroViolations(text, item.morphemes), error: "", ms: Date.now() - startedAt };
+    const { json, text: raw } = await callAIRaw(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。", 0.9, model);
+    const text = extractGoroCandidates(json)[0]?.text || "";
+    /* 語呂本文を取り出せなかった場合は、モデルが何を返したのかをそのまま
+       残す。「候補が返りませんでした」とだけ言われても、モデルの実力の
+       問題なのか書式の癖なのか判断できない */
+    if (!text) {
+      return { text: "", violations: [], error: "候補を取り出せませんでした", raw, ms: Date.now() - startedAt };
+    }
+    return { text, violations: goroViolations(text, item.morphemes), error: "", raw: "", ms: Date.now() - startedAt };
   } catch (err) {
-    return { text: "", violations: [], error: err.message, ms: Date.now() - startedAt };
+    return { text: "", violations: [], error: err.message, raw: "", ms: Date.now() - startedAt };
   }
 }
 
@@ -6841,6 +6892,7 @@ async function renderCompareResult(data) {
       <div class="compare-row">
         <div class="compare-row-model">${escapeHtml(modelLabel(r.model, models))}</div>
         <div class="compare-row-text">${r.error ? `<span class="compare-error">${escapeHtml(r.error)}</span>` : escapeHtml(r.text)}</div>
+        ${r.raw ? `<details class="compare-raw"><summary>モデルの応答を見る</summary><pre>${escapeHtml(r.raw)}</pre></details>` : ""}
         <div class="compare-chips">${r.error ? "" : violationChips(r.violations)}</div>
       </div>`).join("");
     return `

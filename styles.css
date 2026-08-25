@@ -848,3 +848,10 @@ button{font-family:inherit;cursor:pointer;}
 .compare-row-model{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-faint);}
 .compare-row-text{font-size:14px;line-height:1.6;color:var(--ink);}
 .compare-error{color:var(--danger);font-size:12px;}
+.compare-raw{font-size:11px;color:var(--ink-soft);}
+.compare-raw summary{cursor:pointer;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:10.5px;}
+.compare-raw pre{
+  margin:6px 0 0;padding:8px 10px;background:var(--bg);border-radius:10px;
+  font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.5;
+  white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;
+}
