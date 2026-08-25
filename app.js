@@ -6,15 +6,129 @@ function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
 
-/* 語呂合わせの生成中に出す待ち表示。無機質なスピナーではなく、
-   AIが今なにをしているかを言葉で見せる（初回は「創作中」、
-   作り直しは「推敲中」）。点は0〜3個を繰り返してCSSで動かす */
+/* 生成中に出す待ち表示。無機質なスピナーではなく、AIが今なにをしているか
+   （らしきもの）を言葉で見せる。点は0〜3個を繰り返してCSSで動かす */
 function goroLoadingHtml(label, suffix = "") {
   return `<div class="goro-loading" role="status" aria-live="polite">`
     + `<span class="goro-loading-label">${escapeHtml(label)}</span>`
     + `<span class="goro-loading-dots" aria-hidden="true"></span>`
     + (suffix ? `<span class="goro-loading-suffix">${suffix}</span>` : "")
     + `</div>`;
+}
+
+/* ごく低確率で紛れ込ませるネタの一文。接辞分解の固定シーケンス・
+   語呂合わせの実況表示のどちらからも同じ確率で抽選する */
+const LOADING_EASTER_EGGS = ["少女祈祷中", "少女瞑想中"];
+const LOADING_EASTER_EGG_CHANCE = 0.02;
+
+/* 接辞分解の待ち時間表示。実際の分解はAIへの単発の問い合わせで
+   内部の工程を観測できないため、こちらは「それらしい」工程名を
+   固定の順番で1つずつ見せる演出（本物の進捗ではない）。
+   各工程の表示時間は100〜4000msの範囲でランダムだが、序盤の工程ほど
+   短め・終盤の工程ほど長めになるようバイアスをかけてある（毎回同じ
+   長さにならないよう、範囲そのものを工程ごとに引く） */
+const DECOMPOSE_LOADING_STEPS = [
+  "スペル精査中", "単語データベース照合中", "語源を照合中", "接辞候補を抽出中",
+  "意味を推定中", "発音記号を生成中", "語根の表記ゆれを正規化中",
+  "既知の接辞と照合中", "暗記のヒントを組み立て中", "自動修正を確認中",
+];
+/* 早送り時（分解自体は先に終わっている場合）の1工程あたりの表示時間 */
+const DECOMPOSE_LOADING_FAST_MS = [80, 180];
+
+function decomposeStepDwellRange(index, total) {
+  const t = total > 1 ? index / (total - 1) : 0;
+  return { min: 100 + t * 1100, max: 900 + t * 3100 };
+}
+
+/* コンテナIDごとに動いているタイマーを管理する。実際のコンテンツに
+   差し替える側は必ずstopLoadingRotationを呼ぶこと（呼ばなくても次の
+   start時に自動で片付くが、放置すると実体の消えたコンテナに向けて
+   無駄にタイマーが動き続ける） */
+const activeLoadingRotations = new Map();
+
+function stopLoadingRotation(containerId) {
+  const timerId = activeLoadingRotations.get(containerId);
+  if (timerId) {
+    clearTimeout(timerId);
+    clearInterval(timerId);
+    activeLoadingRotations.delete(containerId);
+  }
+}
+
+/* 接辞分解の待ち表示を開始する。返り値のmarkWorkDone()は、裏側の実際の
+   分解（AI応答 or デモの待機）が終わった時点で呼ぶ。まだ全10工程を
+   見せ切っていなければ、残りは早送り（DECOMPOSE_LOADING_FAST_MS）で
+   消化してから終わる。donePromiseは「全工程を見せ終えた」時点で解決する
+   ので、呼び出し側はこれをawaitしてから次のアニメーションへ進むこと */
+function startDecomposeLoadingSequence(containerId) {
+  stopLoadingRotation(containerId);
+  const container = document.getElementById(containerId);
+  if (!container) return { markWorkDone() {}, donePromise: Promise.resolve() };
+
+  const total = DECOMPOSE_LOADING_STEPS.length;
+  let stepIndex = 0;
+  let workDone = false;
+  let resolveDone;
+  const donePromise = new Promise((resolve) => { resolveDone = resolve; });
+
+  const scheduleNext = () => {
+    let dwellMs;
+    if (workDone) {
+      const [fastMin, fastMax] = DECOMPOSE_LOADING_FAST_MS;
+      dwellMs = fastMin + Math.random() * (fastMax - fastMin);
+    } else {
+      const { min, max } = decomposeStepDwellRange(stepIndex, total);
+      dwellMs = min + Math.random() * (max - min);
+    }
+    activeLoadingRotations.set(containerId, setTimeout(showStep, dwellMs));
+  };
+
+  const showStep = () => {
+    const phrase = Math.random() < LOADING_EASTER_EGG_CHANCE
+      ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
+      : DECOMPOSE_LOADING_STEPS[stepIndex % total];
+    const labelEl = container.querySelector(".goro-loading-label");
+    if (labelEl) labelEl.textContent = phrase;
+    else container.innerHTML = goroLoadingHtml(phrase);
+
+    stepIndex++;
+    if (stepIndex >= total) {
+      /* 全工程を出し切ったので、ここで初めて呼び出し側に完了を知らせる */
+      activeLoadingRotations.delete(containerId);
+      resolveDone();
+      return;
+    }
+    scheduleNext();
+  };
+  showStep();
+
+  return {
+    markWorkDone() {
+      if (workDone) return;
+      workDone = true;
+      /* 保留中の工程が長めの待ちで止まっている場合、早送りの待ち時間で
+         すぐ次へ進むよう仕切り直す（実際の分解がもう終わっているのに、
+         演出のためだけに長く待たせないため） */
+      const pending = activeLoadingRotations.get(containerId);
+      if (pending) {
+        clearTimeout(pending);
+        scheduleNext();
+      }
+    },
+    donePromise,
+  };
+}
+
+/* 語呂合わせ生成の待ち時間表示。こちらはgenerateGoro自身が今実際に
+   実行している処理を都度reportGoroStatusで報告してくるのを、
+   そのままラベルへ反映するだけ（タイマーによる自走はしていない）。
+   コンテナに読み込み中の枠がまだ無ければここで作る */
+function reportGoroStatus(containerId, phrase) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const labelEl = container.querySelector(".goro-loading-label");
+  if (labelEl) labelEl.textContent = phrase;
+  else container.innerHTML = goroLoadingHtml(phrase);
 }
 
 /* 接辞タイルの枠色の出し分けに使う。ローカル辞書に収録済みの定番の接辞か、
@@ -163,6 +277,131 @@ const AFFIX_SUFFIXES = {
 };
 
 const LOCAL_AFFIX_DICT = { ...AFFIX_PREFIXES, ...AFFIX_ROOTS, ...AFFIX_SUFFIXES };
+
+/* demo_words.csv の語呂合わせ本文にだけ登場する接辞（LOCAL_AFFIX_DICTに
+   収録の無いもの）の読み・意味・語源・発音記号。DEMO_WORD_DATAをCSVから
+   組み立てる際、goroText中の(part)注釈をここと LOCAL_AFFIX_DICT で解決する。
+   isKnownAffix()の判定には使わない（＝これらは常に「新しく調べた接辞」の
+   オレンジ色で表示される。実際、辞書未収録の語根として扱うのが正しい） */
+const DEMO_CUSTOM_MORPHEMES = {
+  "ation":  { reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
+  "or":     { reading: "オア", meaning: "〜する人・もの", origin: "ラテン語 -or", phonetic: "ɔːr" },
+  "ure":    { reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
+  "ing":    { reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
+  "lock":   { reading: "ロック", meaning: "錠・閉じる", origin: "古英語 loc", phonetic: "lɒk" },
+  "build":  { reading: "ビルド", meaning: "建てる", origin: "古英語 byldan", phonetic: "bɪld" },
+  "order":  { reading: "オーダー", meaning: "順序・命令", origin: "ラテン語 ordo", phonetic: "ˈɔːrdər" },
+  "view":   { reading: "ヴュー", meaning: "見る・眺め", origin: "ラテン語 videre", phonetic: "vjuː" },
+  "gradu":  { reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
+  "cult":   { reading: "カルト", meaning: "耕す・育てる", origin: "ラテン語 colere", phonetic: "kʌlt" },
+  "lat":    { reading: "ラト", meaning: "運ぶ・移す", origin: "ラテン語 latus", phonetic: "leɪt" },
+  "clud":   { reading: "クルード", meaning: "閉じる", origin: "ラテン語 claudere", phonetic: "kluːd" },
+  "oper":   { reading: "オペル", meaning: "働く", origin: "ラテン語 operari", phonetic: "ˈɒpər" },
+  "nect":   { reading: "ネクト", meaning: "結ぶ", origin: "ラテン語 nectere", phonetic: "nɛkt" },
+  "pact":   { reading: "パクト", meaning: "締める・固める", origin: "ラテン語 pangere", phonetic: "pækt" },
+  "leg":    { reading: "レグ", meaning: "法律", origin: "ラテン語 lex/legis", phonetic: "liːg" },
+  "poss":   { reading: "ポッス", meaning: "できる・力", origin: "ラテン語 posse", phonetic: "pɒs" },
+  "regul":  { reading: "レギュル", meaning: "規則・定める", origin: "ラテン語 regula", phonetic: "ˈregjʊl" },
+  "friend": { reading: "フレンド", meaning: "友", origin: "古英語 freond", phonetic: "frɛnd" },
+  "frost":  { reading: "フロスト", meaning: "霜・凍る", origin: "古英語 forst", phonetic: "frɒst" },
+  "sens":   { reading: "センス", meaning: "感じる", origin: "ラテン語 sentire", phonetic: "sɛns" },
+  "mat":    { reading: "マト", meaning: "自ら動く", origin: "ギリシャ語 -matos", phonetic: "mæt" },
+  "come":   { reading: "カム", meaning: "来る", origin: "古英語 cuman", phonetic: "kʌm" },
+  "estim":  { reading: "エスティム", meaning: "見積もる", origin: "ラテン語 aestimare", phonetic: "ˈɛstɪm" },
+  "vis":    { reading: "ヴィス", meaning: "見る", origin: "ラテン語 videre", phonetic: "vɪs" },
+  "fin":    { reading: "フィン", meaning: "終わり・限り", origin: "ラテン語 finis", phonetic: "fɪn" },
+  "ply":    { reading: "プライ", meaning: "折る・重ねる", origin: "ラテン語 plicare", phonetic: "plaɪ" },
+  "cast":   { reading: "キャスト", meaning: "投げる", origin: "古ノルド語 kasta", phonetic: "kæst" },
+  "norm":   { reading: "ノーム", meaning: "基準・規範", origin: "ラテン語 norma", phonetic: "nɔːrm" },
+  "vent":   { reading: "ヴェント", meaning: "来る", origin: "ラテン語 venire", phonetic: "vɛnt" },
+  "noon":   { reading: "ヌーン", meaning: "正午", origin: "ラテン語 nona", phonetic: "nuːn" },
+  "grade":  { reading: "グレード", meaning: "段階", origin: "ラテン語 gradus", phonetic: "greɪd" },
+  "act":    { reading: "アクト", meaning: "行う", origin: "ラテン語 agere", phonetic: "ækt" },
+  "road":   { reading: "ロード", meaning: "道", origin: "古英語 rad", phonetic: "roʊd" },
+  "load":   { reading: "ロード", meaning: "積む・荷", origin: "古英語 lad", phonetic: "loʊd" },
+  "system": { reading: "システム", meaning: "組織・体系", origin: "ギリシャ語 systema", phonetic: "ˈsɪstəm" },
+  "brace":  { reading: "ブレース", meaning: "腕・締める", origin: "ラテン語 bracchium", phonetic: "breɪs" },
+  "gene":   { reading: "ジーン", meaning: "生まれ・種", origin: "ギリシャ語 genos", phonetic: "dʒiːn" },
+  "struct": { reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
+  "scop":   { reading: "スコープ", meaning: "見る道具", origin: "ギリシャ語 skopein", phonetic: "skoʊp" },
+  "night":  { reading: "ナイト", meaning: "夜", origin: "古英語 niht", phonetic: "naɪt" },
+  "nat":    { reading: "ナト", meaning: "生まれる", origin: "ラテン語 nasci", phonetic: "næt" },
+  "stand":  { reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
+  "dox":    { reading: "ドクス", meaning: "意見・信条", origin: "ギリシャ語 doxa", phonetic: "dɒks" },
+  "fect":   { reading: "フェクト", meaning: "作る・行う", origin: "ラテン語 facere", phonetic: "fɛkt" },
+  "nym":    { reading: "ニム", meaning: "名前", origin: "ギリシャ語 onyma", phonetic: "nɪm" },
+  "chron":  { reading: "クロン", meaning: "時間", origin: "ギリシャ語 chronos", phonetic: "krɒn" },
+  "cycl":   { reading: "サイクル", meaning: "輪・円", origin: "ギリシャ語 kyklos", phonetic: "ˈsaɪkl" },
+  "viol":   { reading: "ヴァイオ", meaning: "紫・すみれ", origin: "ラテン語 viola", phonetic: "ˈvaɪə" },
+  "form":   { reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
+  "roy":    { reading: "ロイ", meaning: "王", origin: "ラテン語 rex/regis", phonetic: "rɔɪ" },
+  "milit":  { reading: "ミリト", meaning: "兵士", origin: "ラテン語 miles/militis", phonetic: "ˈmɪlɪt" },
+  "power":  { reading: "パワー", meaning: "力", origin: "ラテン語 posse", phonetic: "ˈpaʊər" },
+  "care":   { reading: "ケア", meaning: "気づかい", origin: "古英語 caru", phonetic: "kɛr" },
+  "equip":  { reading: "イクイプ", meaning: "備える", origin: "古フランス語 equiper", phonetic: "ɪˈkwɪp" },
+  "kind":   { reading: "カインド", meaning: "親切な・種類", origin: "古英語 gecynde", phonetic: "kaɪnd" },
+  "art":    { reading: "アート", meaning: "技・芸術", origin: "ラテン語 ars/artis", phonetic: "ɑːrt" },
+  "abil":   { reading: "アビル", meaning: "できる・力", origin: "ラテン語 habilis", phonetic: "əˈbɪl" },
+  "pack":   { reading: "パック", meaning: "包む", origin: "中世オランダ語 pak", phonetic: "pæk" },
+  "tour":   { reading: "ツアー", meaning: "巡る", origin: "ラテン語 tornus", phonetic: "tʊər" },
+  "simpl":  { reading: "シンプル", meaning: "単純な", origin: "ラテン語 simplex", phonetic: "ˈsɪmpl" },
+  "quick":  { reading: "クイック", meaning: "素早い", origin: "古英語 cwic", phonetic: "kwɪk" },
+  "child":  { reading: "チャイルド", meaning: "子ども", origin: "古英語 cild", phonetic: "tʃaɪld" },
+  "man":    { reading: "マン", meaning: "手", origin: "ラテン語 manus", phonetic: "mæn" },
+  "photo":  { reading: "フォト", meaning: "光", origin: "ギリシャ語 phos/photos", phonetic: "ˈfoʊtoʊ" },
+  "phon":   { reading: "フォン", meaning: "音・声", origin: "ギリシャ語 phone", phonetic: "foʊn" },
+  "audi":   { reading: "オーディ", meaning: "聞く", origin: "ラテン語 audire", phonetic: "ˈɔːdi" },
+  "path":   { reading: "パス", meaning: "感じる・苦しむ", origin: "ギリシャ語 pathos", phonetic: "pæθ" },
+  "sign":   { reading: "サイン", meaning: "印・しるし", origin: "ラテン語 signum", phonetic: "saɪn" },
+  "solu":   { reading: "ソル", meaning: "解く・ゆるめる", origin: "ラテン語 solvere", phonetic: "sɒl" },
+  "main":   { reading: "メイン", meaning: "手・主要な", origin: "ラテン語 manus", phonetic: "meɪn" },
+  "tain":   { reading: "テイン", meaning: "保つ", origin: "ラテン語 tenere", phonetic: "teɪn" },
+  "valu":   { reading: "ヴァル", meaning: "価値", origin: "ラテン語 valere", phonetic: "ˈvælju" },
+  "ver":    { reading: "ヴェル", meaning: "真実", origin: "ラテン語 verus", phonetic: "vɛr" },
+  "vinc":   { reading: "ヴィンク", meaning: "打ち勝つ", origin: "ラテン語 vincere", phonetic: "vɪns" },
+  "voc":    { reading: "ヴォク", meaning: "声・呼ぶ", origin: "ラテン語 vox/vocis", phonetic: "voʊk" },
+  "terr":   { reading: "テル", meaning: "土地", origin: "ラテン語 terra", phonetic: "tɛr" },
+  "ain":    { reading: "アイン", meaning: "〜に関する", origin: "ラテン語 -anus", phonetic: "eɪn" },
+  "mem":    { reading: "メモ", meaning: "記憶", origin: "ラテン語 memor", phonetic: "mɛm" },
+  "nov":    { reading: "ノヴ", meaning: "新しい", origin: "ラテン語 novus", phonetic: "nɒv" },
+  "prim":   { reading: "プリム", meaning: "最初の", origin: "ラテン語 primus", phonetic: "praɪm" },
+  "it":     { reading: "イト", meaning: "行く", origin: "ラテン語 ire", phonetic: "ɪt" },
+  "cor":    { reading: "コル", meaning: "共に（com-の異形）", origin: "ラテン語 com- の異形", phonetic: "kɔːr" },
+  "rupt":   { reading: "ラプト", meaning: "破る", origin: "ラテン語 rumpere", phonetic: "rʌpt" },
+  "sect":   { reading: "セクト", meaning: "切る", origin: "ラテン語 secare", phonetic: "sɛkt" },
+  "sequ":   { reading: "セク", meaning: "続く", origin: "ラテン語 sequi", phonetic: "siːkw" },
+  "son":    { reading: "ソン", meaning: "音", origin: "ラテン語 sonus", phonetic: "sɒn" },
+  "tact":   { reading: "タクト", meaning: "触れる", origin: "ラテン語 tangere", phonetic: "tækt" },
+  "ile":    { reading: "イル", meaning: "〜しやすい", origin: "ラテン語 -ilis", phonetic: "aɪl" },
+  "urb":    { reading: "ウルブ", meaning: "都市", origin: "ラテン語 urbs", phonetic: "ɜːrb" },
+  "an":     { reading: "アン", meaning: "〜に関する", origin: "ラテン語 -anus", phonetic: "ən" },
+  "sur":    { reading: "サー", meaning: "上に・超えて", origin: "ラテン語 super", phonetic: "sɜːr" },
+  "viv":    { reading: "ヴィヴ", meaning: "生きる", origin: "ラテン語 vivere", phonetic: "vɪv" },
+  "cap":    { reading: "キャプ", meaning: "取る・つかむ", origin: "ラテン語 capere", phonetic: "kæp" },
+  "af":     { reading: "アフ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad- の異形", phonetic: "əf" },
+  "flu":    { reading: "フル", meaning: "流れる", origin: "ラテン語 fluere", phonetic: "fluː" },
+  "fund":   { reading: "ファンド", meaning: "底・基礎", origin: "ラテン語 fundus", phonetic: "fʌnd" },
+  "col":    { reading: "コル", meaning: "共に（com-の異形）", origin: "ラテン語 com- の異形", phonetic: "kɒl" },
+  "lect":   { reading: "レクト", meaning: "集める・選ぶ", origin: "ラテン語 legere", phonetic: "lɛkt" },
+  "ar":     { reading: "アー", meaning: "〜の・〜に関する", origin: "ラテン語 -aris", phonetic: "ər" },
+  "as":     { reading: "アス", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad- の異形", phonetic: "əs" },
+  "at":     { reading: "アト", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad- の異形", phonetic: "æt" },
+  "dif":    { reading: "ディフ", meaning: "分離・異なる方向へ", origin: "ラテン語 dis- の異形", phonetic: "dɪf" },
+  "fer":    { reading: "ファー", meaning: "運ぶ", origin: "ラテン語 ferre", phonetic: "fɜːr" },
+  "sist":   { reading: "シスト", meaning: "立つ", origin: "ラテン語 sistere", phonetic: "sɪst" },
+  "duct":   { reading: "ダクト", meaning: "導く", origin: "ラテン語 ducere", phonetic: "dʌkt" },
+  "graph":  { reading: "グラフ", meaning: "書く・描く", origin: "ギリシャ語 graphein", phonetic: "græf" },
+  "lead":   { reading: "リード", meaning: "導く", origin: "古英語 lædan", phonetic: "liːd" },
+  "loc":    { reading: "ロク", meaning: "場所", origin: "ラテン語 locus", phonetic: "loʊk" },
+  "lumin":  { reading: "ルミン", meaning: "光", origin: "ラテン語 lumen", phonetic: "ˈluːmɪn" },
+  "mot":    { reading: "モート", meaning: "動く", origin: "ラテン語 movere", phonetic: "moʊt" },
+  "pend":   { reading: "ペンド", meaning: "ぶら下がる・重さを量る", origin: "ラテン語 pendere", phonetic: "pɛnd" },
+  "plic":   { reading: "プリク", meaning: "折る・重ねる", origin: "ラテン語 plicare", phonetic: "plɪk" },
+  "tens":   { reading: "テンス", meaning: "張る", origin: "ラテン語 tendere", phonetic: "tɛns" },
+  "test":   { reading: "テスト", meaning: "証言する", origin: "ラテン語 testis", phonetic: "tɛst" },
+  "funct":  { reading: "ファンクト", meaning: "働く・機能", origin: "ラテン語 fungi", phonetic: "fʌŋkt" },
+  "velop":  { reading: "ヴェロプ", meaning: "包む", origin: "古フランス語 voloper", phonetic: "ˈvɛləp" },
+};
 
 /* ------------------------------------------------------------------ *
  * 1. IndexedDB ラッパー
@@ -419,9 +658,9 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
     `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
     wordMeaning ? `この単語全体の意味は「${wordMeaning}」です。` : "",
 
-    /* ①動的Few-shot（RAG）。単語の意味が近い過去の語呂合わせ例を
-       embeddingで検索して見せる。丸写しされると新しいマンネリの
-       元になるため、型だけ参考にして言い回しは変えるよう明示する */
+    /* ①動的Few-shot。過去の語呂合わせ例から無作為に抽出して見せる。
+       丸写しされると新しいマンネリの元になるため、型だけ参考にして
+       言い回しは変えるよう明示する */
     (examples && examples.length)
       ? GORO_EXAMPLE_BLOCK(examples)
       : "",
@@ -1170,8 +1409,10 @@ async function validateGoroCandidates(word, morphemes, candidates, provider, api
  *   ユーザーの作風に寄っていく。すべてローカルのみでクラウド同期はしない。
  * ------------------------------------------------------------------ */
 /* 種データの本文を書き換えるたびに再シードが必要なため、ここを上げる
-   （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し） */
-const GORO_SEED_VERSION = "v4";
+   （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し /
+    v5: demo_words.csv化・126件に拡充 / v6: morphemesを追加し①の
+    お手本抽出で接辞の重なりを見られるようにした） */
+const GORO_SEED_VERSION = "v6";
 const GORO_EXAMPLE_TOPK = 4;
 /* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
    使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
@@ -1188,6 +1429,7 @@ function buildGoroSeedCorpus() {
     .filter(([, d]) => d && d.meaning && d.goroText)
     .map(([word, d]) => ({
       id: `seed:${word}`, word, meaning: d.meaning, goroText: d.goroText, source: "seed",
+      morphemes: d.morphemes || [],
       styleOk: goroViolations(d.goroText, d.morphemes || []).length === 0,
     }));
 }
@@ -1201,6 +1443,7 @@ async function ensureGoroCorpusReady(provider, apiKey) {
   if (provider !== "sakura" || !apiKey) return;
   if ((await kvGet("goro_seed_version", null)) === GORO_SEED_VERSION) return;
   try {
+    await demoWordDataReady;
     const seeds = buildGoroSeedCorpus();
     if (!seeds.length) return;
     const [meaningPassageVecs, meaningQueryVecs, goroVecs] = await Promise.all([
@@ -1212,9 +1455,11 @@ async function ensureGoroCorpusReady(provider, apiKey) {
     const threshold = Math.max(0, Math.min(...sims) - 0.03);
     await Promise.all(seeds.map((s, i) => idbPut("goro_corpus", {
       id: s.id, word: s.word, meaning: s.meaning, goroText: s.goroText,
-      /* vector: 意味のembedding（①のFew-shot検索用）
-         goroVector: 語呂合わせ本文のembedding（③のマンネリ検出用） */
-      vector: meaningPassageVecs[i], goroVector: goroVecs[i], source: "seed", styleOk: s.styleOk, createdAt: Date.now(),
+      /* vector: 意味のembedding（②意味整合ゲート用）
+         goroVector: 語呂合わせ本文のembedding（③のマンネリ検出用）
+         morphemes: ①お手本抽出で接辞の重なりを見るために持つ */
+      vector: meaningPassageVecs[i], goroVector: goroVecs[i], morphemes: s.morphemes,
+      source: "seed", styleOk: s.styleOk, createdAt: Date.now(),
     })));
     await kvSet("goro_gate_threshold", threshold);
     await kvSet("goro_seed_version", GORO_SEED_VERSION);
@@ -1226,7 +1471,7 @@ async function ensureGoroCorpusReady(provider, apiKey) {
 /* ユーザーが実際に採用して保存した語呂合わせを、種データと同じ形で
    goro_corpusに追加する。idはwordから決まるので、同じ単語を作り直して
    再保存した場合は自動的に最新の語呂合わせに上書きされる */
-async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, apiKey) {
+async function growGoroCorpusFromSave(word, wordMeaning, goroText, morphemes, provider, apiKey) {
   if (provider !== "sakura" || !apiKey || !wordMeaning || !goroText) return;
   if (!(await isRagEnabled())) return;
   try {
@@ -1234,7 +1479,7 @@ async function growGoroCorpusFromSave(word, wordMeaning, goroText, provider, api
     const [goroVec] = await embedTexts([goroText], apiKey, "passage");
     await idbPut("goro_corpus", {
       id: `user:${word.toLowerCase()}`, word, meaning: wordMeaning, goroText,
-      vector: meaningVec, goroVector: goroVec, source: "user", createdAt: Date.now(),
+      vector: meaningVec, goroVector: goroVec, morphemes: morphemes || [], source: "user", createdAt: Date.now(),
     });
   } catch (err) {
     console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err);
@@ -1261,7 +1506,11 @@ function phrasingReuseViolation(similarWord) {
    1回目で合格すれば追加のAPI呼び出しは発生しない */
 const GORO_MAX_ATTEMPTS = 3;
 
-async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts) {
+async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts, onStatus) {
+  /* 呼び出し元に今実際に何をしているかを知らせる。呼び出し元を
+     指定しない場合（バッチ処理など）は何もしない */
+  const report = onStatus || (() => {});
+
   /* 機械チェックで弾いた候補と、その不合格理由。次の試行でAIに具体的に
      伝えることで、同じ失敗の繰り返しを防ぐ */
   const rejectedNotes = [];
@@ -1278,18 +1527,34 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   let gateThreshold = null;
   if (useEmbeddings) {
     try {
+      report("お手本を準備中");
       await ensureGoroCorpusReady(provider, apiKey);
       corpus = await idbGetAll("goro_corpus");
       gateThreshold = await kvGet("goro_gate_threshold", null);
+      /* ①のFew-shot例は「同じ接辞をどう音として捌いたか」の実例を優先する。
+         意味の近さ（embedding類似度）は語呂の技法とあまり相関がなく
+         参考にならなかったが、接辞そのものが同じなら、その読みをどう
+         断片化して自然な日本語に溶け込ませたかがそのまま参考になる。
+         共有接辞数の多い順に並べ、同数の中はランダムにして、
+         GORO_EXAMPLE_TOPK件を選ぶ（一致が無ければ実質ランダム抽出のまま） */
+      examples = corpus
+        /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
+           ③のマンネリ検出には引き続き使うが、手本としては見せない */
+        .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && c.styleOk !== false)
+        .map((c) => ({
+          ...c,
+          affixOverlap: (c.morphemes || []).filter((cm) =>
+            morphemes.some((m) => (m.part || "").toLowerCase() === (cm.part || "").toLowerCase())
+          ).length,
+          sortKey: Math.random(),
+        }))
+        .sort((a, b) => b.affixOverlap - a.affixOverlap || a.sortKey - b.sortKey)
+        .slice(0, GORO_EXAMPLE_TOPK);
+      /* meaningQueryVecは②意味整合ゲートで使うため、examples抽出とは
+         切り離した上で引き続き取得する */
       if (wordMeaning) {
+        report("単語の意味を解析中");
         [meaningQueryVec] = await embedTexts([wordMeaning], apiKey, "query");
-        examples = corpus
-          /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
-             ③のマンネリ検出には引き続き使うが、手本としては見せない */
-          .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && Array.isArray(c.vector) && c.styleOk !== false)
-          .map((c) => ({ ...c, score: cosineSim(meaningQueryVec, c.vector) }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, GORO_EXAMPLE_TOPK);
       }
     } catch (err) {
       console.warn("語呂合わせのRAG準備に失敗しました（スキップします）:", err);
@@ -1297,11 +1562,13 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   }
 
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
+    report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
     const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples);
     const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
     const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
     if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
 
+    report("機械チェック中");
     const violations = goroViolations(candidates[0].text, morphemes);
 
     /* ②単語の意味との結びつきが弱い（読みの音を成立させるためだけの
@@ -1311,6 +1578,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
        無駄なembedding呼び出しをしない */
     if (useEmbeddings && !violations.length) {
       try {
+        report("意味の整合性を確認中");
         const [candVec] = await embedTexts([candidates[0].text], apiKey, "passage");
         if (meaningQueryVec && gateThreshold != null) {
           const alignScore = cosineSim(candVec, meaningQueryVec);
@@ -1335,6 +1603,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
 
     /* 機械チェックを通った候補だけ、AIによる自然さ・面白さの校閲にかける。
        校閲で新たな違反が入り込む場合は、校閲前の合格版をそのまま使う */
+    report("校閲中");
     const revised = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
     return goroViolations(revised[0]?.text, morphemes).length ? candidates : revised;
   }
@@ -1977,7 +2246,12 @@ const micOverlayBtn = document.getElementById("mic-overlay-btn");
 const micOverlayHint = document.getElementById("mic-overlay-hint");
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-const MIC_HINT_IDLE = "長押しで入力";
+/* PC（デスクトップ幅）では長押しではなくクリック開始・クリック終了の
+   トグル操作にする。#appの min-width:860px のレイアウト切り替えと
+   同じ基準に合わせている */
+const desktopMicQuery = window.matchMedia("(min-width: 860px)");
+const isDesktopMic = () => desktopMicQuery.matches;
+const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押しで入力");
 
 /* Whisper の文字起こしエンドポイント。OpenAI 互換で
    multipart/form-data の file + model を受け付ける。
@@ -2073,8 +2347,18 @@ if (!SpeechRecognitionCtor && !canRecord) {
   const resetMic = () => {
     busy = false;
     engineInUse = null;
-    setMicState(false, MIC_HINT_IDLE);
+    setMicState(false, micHintIdle());
   };
+
+  /* 操作説明（ヒント文言・aria-label）をPC/モバイルの現在のレイアウトに
+     合わせる。録音中に呼んでも表示中の状態文言を上書きしないよう、
+     アイドル時のみヒントを差し替える */
+  const refreshMicHintForLayout = () => {
+    if (!busy) micOverlayHint.textContent = micHintIdle();
+    micOverlayBtn.setAttribute("aria-label", isDesktopMic() ? "クリックで音声入力" : "長押しで音声入力");
+  };
+  refreshMicHintForLayout();
+  desktopMicQuery.addEventListener("change", refreshMicHintForLayout);
 
   const submitWord = (transcript) => {
     const word = transcriptToWord(transcript);
@@ -2238,27 +2522,121 @@ if (!SpeechRecognitionCtor && !canRecord) {
     if (engineInUse) engineInUse.stop();
   };
 
-  micOverlayBtn.addEventListener("pointerdown", startListening);
-  micOverlayBtn.addEventListener("pointerup", stopListening);
-  micOverlayBtn.addEventListener("pointercancel", stopListening);
+  /* モバイルは長押し（押している間だけ録音）、PCはクリックで開始・
+     もう一度クリックで終了のトグル。タップ操作の後にはブラウザが
+     合成のclickイベントも発火させるため、互いのハンドラは現在の
+     レイアウトに合わない方をその場で無視する（二重発火防止） */
+  micOverlayBtn.addEventListener("pointerdown", (e) => {
+    if (isDesktopMic()) return;
+    startListening(e);
+  });
+  micOverlayBtn.addEventListener("pointerup", (e) => {
+    if (isDesktopMic()) return;
+    stopListening();
+  });
+  micOverlayBtn.addEventListener("pointercancel", (e) => {
+    if (isDesktopMic()) return;
+    stopListening();
+  });
   /* pointerleave では止めない。指がボタンからわずかにずれただけで
      録音が切れてしまい、長い単語の途中で終わる原因になる */
+
+  micOverlayBtn.addEventListener("click", (e) => {
+    if (!isDesktopMic()) return;
+    if (busy) stopListening();
+    else startListening(e);
+  });
 }
 
-/* 単語履歴が少ない(初回起動時・6件に満たない間)に埋め合わせで表示する、
-   接辞分解しがいのある長め単語のサンプル */
-const SAMPLE_WORDS = [
-  "presentation", "reincarnation", "visualization", "immortality", "reconstruction",
-  "architecture", "transformation", "disqualification", "misunderstanding", "unbelievable",
-  "extraordinary", "international", "responsibility", "communication", "appreciation",
-  "imagination", "popularity", "opportunity", "personality", "information",
-  "application", "organization", "illustration", "examination", "celebration",
-  "inspiration", "exploration", "observation", "publication", "graduation",
-];
+/* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
+   デモ用の分解結果・語呂合わせを実行時に demo_words.csv から読み込んで
+   組み立てる（AI応答(decomposeWord/generateGoroの戻り値)と同じ形に揃える）。
+   単語を増やしたい・語呂を直したい場合はこのJSファイルを触らずに、
+   GitHub上で demo_words.csv （word, meaning, goroText の3列）を編集
+   するだけでよいようにするための仕組み。
+   goroText中の(part)注釈から使われている接辞を割り出し、
+   LOCAL_AFFIX_DICT → DEMO_CUSTOM_MORPHEMES の順で読み・意味・語源・
+   発音記号を引く。phonetic（単語全体の発音）とmemoryTipは、その接辞情報
+   から機械的に組み立てる（多少大まかだが、デモ表示としては十分） */
+let DEMO_WORD_DATA = {};
+
+/* RFC4180ふうの簡易CSVパーサ。ダブルクォートで囲んだフィールド内の
+   カンマ・改行・エスケープされたクォート("" )に対応する */
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field); field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      rows.push(row); row = [];
+    } else {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((f) => f.trim() !== ""));
+}
+
+function morphemesFromGoroText(goroText) {
+  const seen = [];
+  for (const m of goroText.matchAll(/[（(]([A-Za-z][A-Za-z'-]*)[）)]/g)) {
+    const part = m[1].toLowerCase();
+    if (!seen.includes(part)) seen.push(part);
+  }
+  return seen.map((part) => {
+    const d = LOCAL_AFFIX_DICT[part] || DEMO_CUSTOM_MORPHEMES[part];
+    if (!d) {
+      console.warn(`demo_words.csv: 接辞 "${part}" の辞書定義が見つかりません（このデモ単語では表示に空欄が出ます）`);
+      return { part, reading: "", meaning: "", origin: "", phonetic: "" };
+    }
+    return { part, ...d };
+  });
+}
+
+async function loadDemoWordData() {
+  try {
+    const res = await fetch("./demo_words.csv");
+    if (!res.ok) throw new Error(`demo_words.csv の取得に失敗しました (${res.status})`);
+    const rows = parseCsv(await res.text());
+    const [header, ...body] = rows;
+    const idx = {
+      word: header.indexOf("word"),
+      meaning: header.indexOf("meaning"),
+      goroText: header.indexOf("goroText"),
+    };
+    const data = {};
+    for (const r of body) {
+      const word = (r[idx.word] || "").trim().toLowerCase();
+      const meaning = (r[idx.meaning] || "").trim();
+      const goroText = (r[idx.goroText] || "").trim();
+      if (!word || !meaning || !goroText) continue;
+      const morphemes = morphemesFromGoroText(goroText);
+      const memoryTip = `${morphemes.map((m) => `${m.part}(${m.meaning})`).join("+")}で、${meaning}、と覚える。`;
+      const phonetic = morphemes.map((m) => m.phonetic).join("");
+      data[word] = { meaning, phonetic, memoryTip, morphemes, goroText };
+    }
+    DEMO_WORD_DATA = data;
+  } catch (err) {
+    console.warn("デモ単語データ(demo_words.csv)の読み込みに失敗しました（デモ体験なしで続行します）:", err);
+  }
+}
+const demoWordDataReady = loadDemoWordData();
 
 function pickSampleWords(count, exclude = []) {
   const excludeLower = new Set(exclude.map((w) => w.toLowerCase()));
-  const pool = SAMPLE_WORDS.filter((w) => !excludeLower.has(w.toLowerCase()));
+  const pool = Object.keys(DEMO_WORD_DATA).filter((w) => !excludeLower.has(w.toLowerCase()));
   const picked = [];
   while (picked.length < count && pool.length) {
     const idx = Math.floor(Math.random() * pool.length);
@@ -2267,314 +2645,8 @@ function pickSampleWords(count, exclude = []) {
   return picked;
 }
 
-/* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
-   SAMPLE_WORDS全単語ぶんの分解結果・語呂合わせをあらかじめ用意したデモ用データ。
-   AI応答(decomposeWord/generateGoroの戻り値)と同じ形に揃えてある */
-const DEMO_WORD_DATA = {
-  presentation: {
-    meaning: "発表・提示すること", phonetic: "prɛzənˈteɪʃən",
-    memoryTip: "pre(前もって)+sent(示す)+ation(すること)で、前もって示すこと=発表、と覚える。",
-    morphemes: [
-      { part: "pre", reading: "プリ", meaning: "前もって", origin: "ラテン語 prae-", phonetic: "priː" },
-      { part: "sent", reading: "セント", meaning: "感じる・示す", origin: "ラテン語 sentire", phonetic: "sɛnt" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！",
-  },
-  reincarnation: {
-    meaning: "生まれ変わり・輪廻転生", phonetic: "ˌriːɪnkɑːrˈneɪʃən",
-    memoryTip: "re(再び)+in(中へ)+carn(肉体)+ation(すること)で、再び肉体の中へ入ること=生まれ変わり、と覚える。",
-    morphemes: [
-      { part: "re", reading: "リ", meaning: "再び・戻す", origin: "ラテン語 re-", phonetic: "riː" },
-      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
-      { part: "carn", reading: "カーン", meaning: "肉体・肉", origin: "ラテン語 caro/carnis", phonetic: "kɑːrn" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "霊(re)が印(in)を結び缶(carn)の前で詠唱(ation)、生まれ変わり成功！",
-  },
-  visualization: {
-    meaning: "視覚化すること・可視化", phonetic: "ˌvɪʒuəlaɪˈzeɪʃən",
-    memoryTip: "vis(見る)+ual(〜の)+ization(〜化すること)で、見えるようにすること=視覚化、と覚える。",
-    morphemes: [
-      { part: "vis", reading: "ヴィス", meaning: "見る", origin: "ラテン語 videre", phonetic: "vɪs" },
-      { part: "ual", reading: "アル", meaning: "〜に関する", origin: "ラテン語 -alis", phonetic: "əl" },
-      { part: "ization", reading: "ゼーション", meaning: "〜化すること", origin: "ラテン語 -izatio", phonetic: "zeɪʃən" },
-    ],
-    goroText: "美(vis)人ある(ual)ある、税収(ization)グラフで可視化したら大爆笑",
-  },
-  immortality: {
-    meaning: "不死・不滅", phonetic: "ˌɪmɔːrˈtæləti",
-    memoryTip: "im(〜でない)+mort(死)+al(〜の)+ity(〜性)で、死なない性質=不死、と覚える。",
-    morphemes: [
-      { part: "im", reading: "イム", meaning: "〜でない", origin: "ラテン語 in- の異形", phonetic: "ɪm" },
-      { part: "mort", reading: "モート", meaning: "死", origin: "ラテン語 mors/mortis", phonetic: "mɔːrt" },
-      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "芋(im)もっと(mort)ある(al)ぞ、一(ity)生食える不死の体！",
-  },
-  reconstruction: {
-    meaning: "再建・再構築", phonetic: "ˌriːkənˈstrʌkʃən",
-    memoryTip: "re(再び)+con(共に)+struct(組み立てる)+ion(すること)で、再び共に組み立てること=再建、と覚える。",
-    morphemes: [
-      { part: "re", reading: "リ", meaning: "再び・戻す", origin: "ラテン語 re-", phonetic: "riː" },
-      { part: "con", reading: "コン", meaning: "共に", origin: "ラテン語 com- の異形", phonetic: "kən" },
-      { part: "struct", reading: "ストラクト", meaning: "組み立てる", origin: "ラテン語 struere", phonetic: "strʌkt" },
-      { part: "ion", reading: "イオン", meaning: "名詞化（〜すること）", origin: "ラテン語 -io", phonetic: "ən" },
-    ],
-    goroText: "離(re)婚(con)したがトラクター(struct)一台で家を再建、以(ion)上！",
-  },
-  architecture: {
-    meaning: "建築・構造", phonetic: "ˈɑːrkɪtektʃər",
-    memoryTip: "archi(主要な)+tect(建てる)+ure(こと)で、中心となって建てること=建築、と覚える。",
-    morphemes: [
-      { part: "archi", reading: "アーキ", meaning: "主要な・第一の", origin: "ギリシャ語 arkhi-", phonetic: "ɑːrki" },
-      { part: "tect", reading: "テクト", meaning: "建てる", origin: "ギリシャ語 tekton", phonetic: "tɛkt" },
-      { part: "ure", reading: "ユア", meaning: "〜すること・こと", origin: "ラテン語 -ura", phonetic: "jʊər" },
-    ],
-    goroText: "空き(archi)地に手作(tect)りの湯屋(ure)、これぞ建築の極み！",
-  },
-  transformation: {
-    meaning: "変形・変化", phonetic: "ˌtrænsfərˈmeɪʃən",
-    memoryTip: "trans(越えて)+form(形)+ation(すること)で、形を越えて変わること=変形、と覚える。",
-    morphemes: [
-      { part: "trans", reading: "トランス", meaning: "越えて・移す", origin: "ラテン語 trans-", phonetic: "trænz" },
-      { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "トランス(trans)状態のホーム(form)で、え〜っ(ation)電車が変形！",
-  },
-  disqualification: {
-    meaning: "資格取り消し・失格", phonetic: "ˌdɪskwɒlɪfɪˈkeɪʃən",
-    memoryTip: "dis(否定)+quali(資格)+fication(〜化すること)で、資格を無くすこと=失格、と覚える。",
-    morphemes: [
-      { part: "dis", reading: "ディス", meaning: "否定・分離", origin: "ラテン語 dis-", phonetic: "dɪs" },
-      { part: "quali", reading: "クオリ", meaning: "質・資格", origin: "ラテン語 qualis", phonetic: "kwɒli" },
-      { part: "fication", reading: "フィケーション", meaning: "〜化すること", origin: "ラテン語 facere 由来", phonetic: "fɪkeɪʃən" },
-    ],
-    goroText: "弟子(dis)がクオリティ(quali)低い引っ掛け(fication)技で失格、あーあ",
-  },
-  misunderstanding: {
-    meaning: "誤解", phonetic: "ˌmɪsʌndərˈstændɪŋ",
-    memoryTip: "mis(誤って)+under(下に)+stand(立つ)+ing(すること)で、誤った理解=誤解、と覚える。",
-    morphemes: [
-      { part: "mis", reading: "ミス", meaning: "誤って", origin: "古英語 mis-", phonetic: "mɪs" },
-      { part: "under", reading: "アンダー", meaning: "下に", origin: "古英語 under", phonetic: "ʌndər" },
-      { part: "stand", reading: "スタンド", meaning: "立つ", origin: "古英語 standan", phonetic: "stænd" },
-      { part: "ing", reading: "イング", meaning: "名詞化（動名詞）", origin: "古英語 -ing", phonetic: "ɪŋ" },
-    ],
-    goroText: "ミス(mis)で安(under)いスタンプ(stand)を押され、言(ing)い分は誤解",
-  },
-  unbelievable: {
-    meaning: "信じられない", phonetic: "ˌʌnbɪˈliːvəbl",
-    memoryTip: "un(〜でない)+believ(信じる)+able(〜できる)で、信じられない、と覚える。",
-    morphemes: [
-      { part: "un", reading: "アン", meaning: "〜でない・否定", origin: "古英語 un-", phonetic: "ʌn" },
-      { part: "believ", reading: "ビリーヴ", meaning: "信じる", origin: "古英語 belyfan", phonetic: "bɪliːv" },
-      { part: "able", reading: "アブル", meaning: "〜できる", origin: "ラテン語 -abilis", phonetic: "əbl" },
-    ],
-    goroText: "餡(un)がびりびり(believ)アブラ(able)ゼミに化けた、信じられん！",
-  },
-  extraordinary: {
-    meaning: "並外れた・驚くべき", phonetic: "ɪkˈstrɔːrdəneri",
-    memoryTip: "extra(超えて)+ordin(順序)+ary(〜に関する)で、普通の順序を超えたこと=並外れた、と覚える。",
-    morphemes: [
-      { part: "extra", reading: "エクストラ", meaning: "外に・超えて", origin: "ラテン語 extra", phonetic: "ɛkstrə" },
-      { part: "ordin", reading: "オーディン", meaning: "順序", origin: "ラテン語 ordo", phonetic: "ɔːrdɪn" },
-      { part: "ary", reading: "アリー", meaning: "〜に関する（名詞化）", origin: "ラテン語 -arius", phonetic: "ɛri" },
-    ],
-    goroText: "エキストラ(extra)が大どん(ordin)引きの蟻(ary)役、並外れた演技だ",
-  },
-  international: {
-    meaning: "国際的な", phonetic: "ˌɪntərˈnæʃənəl",
-    memoryTip: "inter(〜の間)+nation(国家)+al(〜の)で、国家の間の=国際的な、と覚える。",
-    morphemes: [
-      { part: "inter", reading: "インター", meaning: "〜の間", origin: "ラテン語 inter-", phonetic: "ˈɪntər" },
-      { part: "nation", reading: "ネーション", meaning: "国家・国民", origin: "ラテン語 natio", phonetic: "neɪʃən" },
-      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
-    ],
-    goroText: "インターホン(inter)に「ねえ(nation)ある(al)?」国際的な注文が届く",
-  },
-  responsibility: {
-    meaning: "責任", phonetic: "rɪˌspɒnsəˈbɪləti",
-    memoryTip: "respons(応じる)+ibil(〜できる)+ity(〜性)で、応じられる性質=責任、と覚える。",
-    morphemes: [
-      { part: "respons", reading: "レスポンス", meaning: "応じる", origin: "ラテン語 respondere", phonetic: "rɪspɒns" },
-      { part: "ibil", reading: "イビル", meaning: "〜できる", origin: "ラテン語 -ibilis", phonetic: "ɪbɪl" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "レストラン(respons)の意地悪(ibil)店主、一(ity)応は責任を取った",
-  },
-  communication: {
-    meaning: "伝達・意思疎通", phonetic: "kəˌmjuːnɪˈkeɪʃən",
-    memoryTip: "com(共に)+muni(共有する)+cation(〜化すること)で、共に分かち合うこと=伝達、と覚える。",
-    morphemes: [
-      { part: "com", reading: "コム", meaning: "共に", origin: "ラテン語 com-", phonetic: "kəm" },
-      { part: "muni", reading: "ミューニ", meaning: "共有する", origin: "ラテン語 munis", phonetic: "mjuːni" },
-      { part: "cation", reading: "ケーション", meaning: "〜化すること", origin: "ラテン語 -catio", phonetic: "keɪʃən" },
-    ],
-    goroText: "込(com)み合う無(muni)人島、ケータイ(cation)なしで意思疎通できた！",
-  },
-  appreciation: {
-    meaning: "感謝・鑑賞", phonetic: "əˌpriːʃiˈeɪʃən",
-    memoryTip: "ap(〜へ)+preci(価値)+ation(すること)で、価値を認めること=感謝、と覚える。",
-    morphemes: [
-      { part: "ap", reading: "アプ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad-", phonetic: "æp" },
-      { part: "preci", reading: "プレシ", meaning: "価値", origin: "ラテン語 pretium", phonetic: "prɛsi" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "アプリ(ap)のプレゼント(preci)に、え〜っ(ation)と叫ぶほど感謝！",
-  },
-  imagination: {
-    meaning: "想像力", phonetic: "ɪˌmædʒɪˈneɪʃən",
-    memoryTip: "imagin(心に描く)+ation(すること)で、想像すること=想像力、と覚える。",
-    morphemes: [
-      { part: "imagin", reading: "イマジン", meaning: "心に描く", origin: "ラテン語 imaginari", phonetic: "ɪmædʒɪn" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "今ジン(imagin)と来る映写(ation)で、子の想像力が爆発！",
-  },
-  popularity: {
-    meaning: "人気", phonetic: "ˌpɒpjuˈlærəti",
-    memoryTip: "popul(民衆)+ar(〜の)+ity(〜性)で、民衆に好かれる性質=人気、と覚える。",
-    morphemes: [
-      { part: "popul", reading: "ポピュル", meaning: "民衆", origin: "ラテン語 populus", phonetic: "pɒpjʊl" },
-      { part: "ar", reading: "アー", meaning: "〜の", origin: "ラテン語 -aris", phonetic: "ər" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "ポプリ(popul)がアート(ar)作品に、一(ity)夜で人気爆発だってさ",
-  },
-  opportunity: {
-    meaning: "好機・機会", phonetic: "ˌɒpərˈtjuːnəti",
-    memoryTip: "op(〜へ)+portun(港へ向いた)+ity(〜性)で、港へ向かう好い頃合い=好機、と覚える。",
-    morphemes: [
-      { part: "op", reading: "オプ", meaning: "〜へ向かって（ob-の異形）", origin: "ラテン語 ob-", phonetic: "ɒp" },
-      { part: "portun", reading: "ポーチュン", meaning: "港へ向いた・好機の", origin: "ラテン語 portus 由来", phonetic: "pɔːrtjuːn" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "落(op)ちたポーチ(portun)を拾ったら、一(ity)生分の好機が来た！",
-  },
-  personality: {
-    meaning: "個性・人格", phonetic: "ˌpɜːrsəˈnæləti",
-    memoryTip: "person(人)+al(〜の)+ity(〜性)で、人としての性質=個性、と覚える。",
-    morphemes: [
-      { part: "person", reading: "パーソン", meaning: "人", origin: "ラテン語 persona", phonetic: "pɜːrsən" },
-      { part: "al", reading: "アル", meaning: "〜の", origin: "ラテン語 -alis", phonetic: "əl" },
-      { part: "ity", reading: "イティ", meaning: "名詞化（〜性・〜さ）", origin: "ラテン語 -itas", phonetic: "ɪti" },
-    ],
-    goroText: "パーカー(person)にアル(al)ミ箔、一(ity)目でわかる強烈な個性",
-  },
-  information: {
-    meaning: "情報", phonetic: "ˌɪnfərˈmeɪʃən",
-    memoryTip: "in(中へ)+form(形)+ation(すること)で、中に形作られたもの=情報、と覚える。",
-    morphemes: [
-      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
-      { part: "form", reading: "フォーム", meaning: "形", origin: "ラテン語 forma", phonetic: "fɔːrm" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "インク(in)切れのホーム(form)掲示、え〜っ(ation)情報が読めない！",
-  },
-  application: {
-    meaning: "申請・応用・アプリ", phonetic: "ˌæplɪˈkeɪʃən",
-    memoryTip: "ap(〜へ)+plic(重ねる)+ation(すること)で、重ねて当てはめること=応用・申請、と覚える。",
-    morphemes: [
-      { part: "ap", reading: "アプ", meaning: "〜へ（ad-の異形）", origin: "ラテン語 ad-", phonetic: "æp" },
-      { part: "plic", reading: "プリク", meaning: "重ねる・折りたたむ", origin: "ラテン語 plicare", phonetic: "plɪk" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "アプリ(ap)からプリクラ(plic)写真を添え、A判(ation)で申請完了！",
-  },
-  organization: {
-    meaning: "組織・団体", phonetic: "ˌɔːrɡənaɪˈzeɪʃən",
-    memoryTip: "organ(組織)+iz(〜化する)+ation(すること)で、組織化すること=組織、と覚える。",
-    morphemes: [
-      { part: "organ", reading: "オーガン", meaning: "器官・組織", origin: "ギリシャ語 organon", phonetic: "ɔːrgən" },
-      { part: "iz", reading: "アイズ", meaning: "〜化する", origin: "ギリシャ語 -izein", phonetic: "aɪz" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "オルガン(organ)の合図(iz)で集合、え〜(ation)謎の組織が誕生",
-  },
-  illustration: {
-    meaning: "説明図・イラスト", phonetic: "ˌɪləˈstreɪʃən",
-    memoryTip: "il(〜の中へ)+lustr(輝かせる)+ation(すること)で、中を輝かせて示すこと=説明図、と覚える。",
-    morphemes: [
-      { part: "il", reading: "イル", meaning: "〜の中へ・〜の上に", origin: "ラテン語 in- の異形（否定ではない用法）", phonetic: "ɪl" },
-      { part: "lustr", reading: "ラストル", meaning: "輝かせる", origin: "ラテン語 lustrare", phonetic: "lʌstər" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "いる(il)かをラスト(lustr)に足し、映(ation)える説明図が完成",
-  },
-  examination: {
-    meaning: "試験・検査", phonetic: "ɪɡˌzæmɪˈneɪʃən",
-    memoryTip: "ex(外へ)+amin(調べる)+ation(すること)で、外に調べ出すこと=試験、と覚える。",
-    morphemes: [
-      { part: "ex", reading: "エクス", meaning: "外へ", origin: "ラテン語 ex-", phonetic: "ɛks" },
-      { part: "amin", reading: "アミン", meaning: "調べる", origin: "ラテン語 examinare", phonetic: "æmɪn" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "駅(ex)前の編み(amin)物試験、え〜(ation)こんなに難しいの!?",
-  },
-  celebration: {
-    meaning: "祝賀・お祝い", phonetic: "ˌsɛlɪˈbreɪʃən",
-    memoryTip: "celebr(祝う)+ation(すること)で、祝うこと=お祝い、と覚える。",
-    morphemes: [
-      { part: "celebr", reading: "セレブル", meaning: "祝う", origin: "ラテン語 celebrare", phonetic: "sɛləbr" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "セレブ(celebr)が栄光(ation)を祝い、鯛まで踊り出すお祝い",
-  },
-  inspiration: {
-    meaning: "ひらめき・霊感", phonetic: "ˌɪnspəˈreɪʃən",
-    memoryTip: "in(中へ)+spir(息をする)+ation(すること)で、中に息を吹き込むこと=ひらめき、と覚える。",
-    morphemes: [
-      { part: "in", reading: "イン", meaning: "中へ", origin: "ラテン語 in-", phonetic: "ɪn" },
-      { part: "spir", reading: "スピル", meaning: "息をする", origin: "ラテン語 spirare", phonetic: "spɪr" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "息(in)を吸(spir)った途端、映画(ation)のようなひらめきが降臨！",
-  },
-  exploration: {
-    meaning: "探検・探査", phonetic: "ˌɛkspləˈreɪʃən",
-    memoryTip: "ex(外へ)+plor(探し求める)+ation(すること)で、外へ探し求めること=探検、と覚える。",
-    morphemes: [
-      { part: "ex", reading: "エクス", meaning: "外へ", origin: "ラテン語 ex-", phonetic: "ɛks" },
-      { part: "plor", reading: "プロール", meaning: "叫ぶ・探し求める", origin: "ラテン語 plorare", phonetic: "plɔːr" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "駅(ex)を出てプロ(plor)と洞窟へ、え〜っ(ation)遺跡発見の大探検！",
-  },
-  observation: {
-    meaning: "観察", phonetic: "ˌɒbzərˈveɪʃən",
-    memoryTip: "ob(〜に向かって)+serv(見張る)+ation(すること)で、見張ること=観察、と覚える。",
-    morphemes: [
-      { part: "ob", reading: "オブ", meaning: "〜に向かって", origin: "ラテン語 ob-", phonetic: "ɒb" },
-      { part: "serv", reading: "サーヴ", meaning: "仕える・保つ", origin: "ラテン語 servare", phonetic: "sɜːrv" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "帯(ob)を締めた皿(serv)洗いが、衛生(ation)状態をじっくり観察",
-  },
-  publication: {
-    meaning: "出版・公表", phonetic: "ˌpʌblɪˈkeɪʃən",
-    memoryTip: "publ(民衆の)+ic(〜の)+ation(すること)で、公にすること=出版、と覚える。",
-    morphemes: [
-      { part: "publ", reading: "パブル", meaning: "民衆の", origin: "ラテン語 publicus", phonetic: "pʌbl" },
-      { part: "ic", reading: "イク", meaning: "〜の（形容詞化）", origin: "ラテン語 -icus", phonetic: "ɪk" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "パブ(publ)で幾(ic)晩も書いた話が、A賞(ation)取って出版された！",
-  },
-  graduation: {
-    meaning: "卒業", phonetic: "ˌɡrædʒuˈeɪʃən",
-    memoryTip: "gradu(段階を踏む)+ation(すること)で、段階を踏み終えること=卒業、と覚える。",
-    morphemes: [
-      { part: "gradu", reading: "グラジュ", meaning: "段階を踏む", origin: "ラテン語 gradus", phonetic: "grædʒu" },
-      { part: "ation", reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
-    ],
-    goroText: "グラグラ(gradu)の足で壇上へ、え〜ん(ation)と泣いて卒業した",
-  },
-};
-
 async function renderRecentChips() {
+  await demoWordDataReady;
   const recent = await kvGet("recent_words", []);
   /* チップは.chip-row側のCSSで3行分の高さに収まるようにしているので、
      ここでは行数に関わらず十分な数を用意しておけばよい */
@@ -2624,6 +2696,7 @@ async function startDecompose(rawWord) {
 
   const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
+  if (!apiKey) await demoWordDataReady;
   const demo = !apiKey ? DEMO_WORD_DATA[word.toLowerCase()] : null;
   if (!apiKey && !demo) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
@@ -2655,6 +2728,11 @@ async function startDecompose(rawWord) {
   placeholder.textContent = word;
   splitEl.appendChild(placeholder);
 
+  /* 分解の応答待ちの間、無言のパルス演出だけだと止まって見えるため、
+     下に「スペル精査中…」のような具体的な文言を切り替えながら出す */
+  spinnerRow.style.visibility = "visible";
+  const decomposeLoadingSeq = startDecomposeLoadingSequence("decompose-spinner");
+
   let morphemes;
   if (demo) {
     /* 本来はAI分解の応答待ちが入る箇所。デモ単語は即座にデータが揃ってしまい
@@ -2670,6 +2748,8 @@ async function startDecompose(rawWord) {
     try {
       const decomposed = await decomposeWord(word, provider, apiKey);
       if (decomposed.wordExists === false) {
+        stopLoadingRotation("decompose-spinner");
+        spinnerRow.style.visibility = "hidden";
         await playNotFoundError(placeholder, word);
         return;
       }
@@ -2687,13 +2767,19 @@ async function startDecompose(rawWord) {
       }
     } catch (err) {
       placeholder.remove();
+      stopLoadingRotation("decompose-spinner");
       spinnerRow.style.visibility = "visible";
+      spinnerRow.innerHTML = `<span class="spin-label">分解に失敗しました。ホームに戻ってお試しください。</span>`;
       document.getElementById("decompose-appbar").style.display = "flex";
-      document.getElementById("decompose-label").textContent = "分解に失敗しました。ホームに戻ってお試しください。";
       console.error(err);
       return;
     }
   }
+  /* 実際の分解はもう終わっているので、まだ見せていない工程があれば
+     早送りで消化してから次へ進む（一応、全工程を出し切ってから遷移する） */
+  decomposeLoadingSeq.markWorkDone();
+  await decomposeLoadingSeq.donePromise;
+  spinnerRow.style.visibility = "hidden";
   currentMorphemes = morphemes;
 
   /* 単語の意味・接辞を踏まえた一文は、後で表示するタイミングより先にここで
@@ -2716,19 +2802,17 @@ async function startDecompose(rawWord) {
   /* 新しい単語の初回生成では、別の単語の候補を「避けるべき前回の候補」として
      引き継いでしまわないようにリセットする */
   currentCandidates = [];
-  let goroDone = false;
-  let goroPromise;
   if (demo) {
     currentCandidates = [{ text: demo.goroText, highlight: [] }];
     renderGoroList();
-    goroDone = true;
-    goroPromise = Promise.resolve();
     document.getElementById("regen-btn").disabled = false;
   } else {
-    goroPromise = loadGoroCandidates(provider, apiKey).then(() => { goroDone = true; });
+    /* 待たずに裏側で先行実行する。完了はloadGoroCandidates内のrenderGoroList
+       が、進捗はgenerateGoroからのreportGoroStatusがgoro-listへ直接反映する */
+    loadGoroCandidates(provider, apiKey);
   }
 
-  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "crack"));
+  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
   /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
      分割演出そのものが意味を持たないため省略する */
   if (morphemes.length > 1) {
@@ -2759,6 +2843,7 @@ async function startDecompose(rawWord) {
     el.appendChild(partEl);
     el.appendChild(meaningEl);
     splitEl.appendChild(el);
+    animStyle.mountTile?.(el, i, mid);
   });
 
   await pushRecentWord(currentWord);
@@ -2784,12 +2869,11 @@ async function startDecompose(rawWord) {
      loadGoroCandidates が描画するので、遷移を止める必要はない */
   const DECOMPOSE_READ_MS = 3000;
   await sleep(lastMeaningDelay + DECOMPOSE_READ_MS);
-
-  /* 遷移した時点でまだ生成中なら、語呂合わせ欄が空のままだと
-     壊れて見えるので、文言なしの控えめなスピナーだけ置いておく */
-  if (!goroDone) {
-    document.getElementById("goro-list").innerHTML = goroLoadingHtml("創作中");
-  }
+  /* 遷移した時点でまだ生成中でも、goro-listにはgenerateGoro自身が
+     reportGoroStatusで書き込んだ現在の実況がすでに反映されている
+     （loadGoroCandidatesの初回reportが分解アニメーションの再生中に
+     とっくに発火しているため）ので、ここで別途プレースホルダーを
+     出す必要はない */
 
   renderResultScreen();
   showScreen("screen-result");
@@ -3418,6 +3502,691 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
   });
 }
 
+/* ---- 「マトリックス」アニメーション: 単語カードが上から緑の数字の雨へと
+   分解されて消え、続いて接辞カードが数字の雨として降ってきてカードの形へと
+   収束する。仕組みはひび割れ/爆発と同じく、無傷の見た目を一度オフスクリーン
+   に描いた上で、要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
+
+/* 単語カードを上から順に緑の数字の滝へと置き換えながら消し去る（分解アニメ本体） */
+async function runMatrixDissolve(placeholder, word, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = 24, padTop = 50, padBottom = 100;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "matrix-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  /* 無傷のカードを一度だけオフスクリーンに描き、消去ラインの下側を
+     そのまま切り出して見せるための元絵にする */
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+
+  const rainColor = "#39ff6a", rainGlow = "#c9ffda";
+  const CELL = 15, TRAIL = 7;
+  const colsCount = Math.ceil(rect.width / CELL) + 2;
+  const columns = [];
+  for (let c = -1; c < colsCount - 1; c++) {
+    columns.push({
+      x: c * CELL + CELL / 2,
+      jitter: (Math.random() - 0.5) * 70,
+      speed: 620 + Math.random() * 340,
+      seed: Math.floor(Math.random() * 999),
+    });
+  }
+
+  const ERASE_MS = 560, TAIL_MS = 420, TOTAL_MS = ERASE_MS + TAIL_MS;
+  const easeInQuad = (p) => p * p;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const eraseP = Math.min(1, t / ERASE_MS);
+      const boundaryY = -30 + easeInQuad(eraseP) * (rect.height + 60);
+
+      /* 消去ラインより下は、まだ無傷のカードそのまま */
+      if (boundaryY < rect.height) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, Math.max(0, boundaryY), rect.width, rect.height - Math.max(0, boundaryY));
+        ctx.clip();
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+
+        /* ラインのすぐ上、わずかな帯だけ左右にずらしたコピーを重ねて
+           デジタルノイズが走っているように見せる */
+        const glitchH = 8;
+        const gy = Math.max(0, boundaryY - glitchH);
+        if (gy < rect.height) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, gy, rect.width, Math.min(glitchH, rect.height - gy));
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = 0.5;
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, -3, 0, rect.width, rect.height);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 3, 0, rect.width, rect.height);
+          ctx.restore();
+        }
+      }
+
+      const overallFade = t > ERASE_MS ? Math.max(0, 1 - (t - ERASE_MS) / TAIL_MS) : 1;
+
+      /* 消去ラインの位置を示す、発光する走査線 */
+      if (overallFade > 0 && boundaryY > -10 && boundaryY < rect.height + 10) {
+        ctx.save();
+        ctx.globalAlpha = overallFade;
+        ctx.shadowColor = rainColor;
+        ctx.shadowBlur = 10;
+        ctx.strokeStyle = rainGlow;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, boundaryY);
+        ctx.lineTo(rect.width, boundaryY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      /* 消去ラインに寄り添いながら緑の数字が滝のように流れ落ちる */
+      if (overallFade > 0) {
+        ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        columns.forEach((col) => {
+          const headY = boundaryY + col.jitter + (t > ERASE_MS ? (t - ERASE_MS) * col.speed / 1000 : 0);
+          for (let k = 0; k < TRAIL; k++) {
+            const gy = headY - k * CELL;
+            if (gy < -padTop || gy > rect.height + padBottom) continue;
+            const a = (1 - k / TRAIL) * overallFade;
+            if (a <= 0.02) continue;
+            const digit = (col.seed + k * 7 + Math.floor(t / 70)) % 10;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = k === 0 ? rainGlow : rainColor;
+            if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 6; }
+            ctx.fillText(String(digit), col.x, gy);
+            ctx.restore();
+          }
+        });
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが緑の数字の雨として上から降ってきて、数字が定まるにつれて
+   実際のカードの見た目へと収束する（単語側の消去演出と対になる、逆方向の演出） */
+async function runMatrixTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const padX = 18, padTop = 60, padBottom = 18;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "matrix-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const partText = partEl ? partEl.textContent : "";
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(partText, rect.width / 2, partCenterY);
+
+  const rainColor = "#39ff6a", rainGlow = "#c9ffda";
+  const CELL = 13, TRAIL = 6;
+  const colsCount = Math.ceil(rect.width / CELL) + 2;
+  /* 収束ラインとは無関係に、各列が独立して上から降り続ける。
+     開始位置をカード上端よりさらに上(canvas天井付近)に散らし、
+     「数字が外から降ってきてカードの中に入っていく」瞬間から見せる */
+  const columns = [];
+  for (let c = -1; c < colsCount - 1; c++) {
+    columns.push({
+      x: c * CELL + CELL / 2,
+      headY0: -padTop + Math.random() * padTop * 0.6,
+      speed: 300 + Math.random() * 220,
+      seed: Math.floor(Math.random() * 999),
+    });
+  }
+
+  const RESOLVE_MS = 680;
+  const easeInOutCubic = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const p = Math.min(1, t / RESOLVE_MS);
+      const lineY = easeInOutCubic(p) * rect.height;
+
+      /* 収束ラインより上は、すでに定まった実際のカードの見た目 */
+      if (lineY > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, rect.width, Math.min(rect.height, lineY));
+        ctx.clip();
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+
+        /* ラインのすぐ下、わずかな帯だけ色ズレしたコピーを重ねてノイズを走らせる */
+        const glitchH = 6;
+        const gy = Math.max(0, lineY - glitchH);
+        if (gy < rect.height) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, gy, rect.width, Math.min(glitchH, rect.height - gy));
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = 0.5;
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, -2, 0, rect.width, rect.height);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 2, 0, rect.width, rect.height);
+          ctx.restore();
+        }
+      }
+
+      /* 収束ラインを示す、発光する走査線 */
+      if (lineY > -10 && lineY < rect.height + 10) {
+        ctx.save();
+        ctx.globalAlpha = 1 - p * 0.3;
+        ctx.shadowColor = rainColor;
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = rainGlow;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, lineY);
+        ctx.lineTo(rect.width, lineY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      /* まだ収束していない下側は、上から降り続ける数字の雨で満たしておく
+         （収束ラインより上の確定領域には重ねて描かないようクリップする） */
+      if (lineY < rect.height) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, Math.max(0, lineY), rect.width, rect.height - Math.max(0, lineY));
+        ctx.clip();
+        const fadeIn = Math.min(1, t / 90);
+        ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        columns.forEach((col) => {
+          const head = col.headY0 + (t * col.speed) / 1000;
+          for (let k = 0; k < TRAIL; k++) {
+            const gy = head - k * CELL;
+            if (gy < -padTop || gy > rect.height) continue;
+            const a = (1 - k / TRAIL) * fadeIn;
+            if (a <= 0.02) continue;
+            const digit = (col.seed + k * 7 + Math.floor(t / 60)) % 10;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = k === 0 ? rainGlow : rainColor;
+            if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 5; }
+            ctx.fillText(String(digit), col.x, gy);
+            ctx.restore();
+          }
+        });
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (t >= RESOLVE_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
+/* ---- 「活版印刷」アニメーション: 単語カードが活字のようにガコンと下へ
+   押し込まれ、インクが掠れながら消え去る。続いて接辞カードは上からハンコの
+   ように紙へ打ち付けられ、インクの飛沫・紙のへこみを残しながら現れる。
+   仕組みは他のスタイルと同じく、無傷の見た目を一度オフスクリーンに描いた
+   上で、要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
+
+/* 単語カードが活字のようにガコンと下に押し込まれ、掠れながら消え去る（分解アニメ本体） */
+async function runPressDissolve(placeholder, word, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = 30, padTop = 20, padBottom = 60;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "press-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+
+  const cx = rect.width / 2, cy = rect.height / 2;
+
+  /* 掠れ: 活字が擦り減っていくように、ランダムな箇所からインクが抜けていく */
+  const KASURE_COUNT = 7;
+  const kasure = Array.from({ length: KASURE_COUNT }, () => ({
+    x: Math.random() * rect.width,
+    y: Math.random() * rect.height,
+    r: rect.height * (0.18 + Math.random() * 0.22),
+    delayMs: 160 + Math.random() * 260,
+  }));
+
+  /* 紙くず: 打刻の瞬間に飛び散る小さな破片 */
+  const DEBRIS_COUNT = 10;
+  const debris = Array.from({ length: DEBRIS_COUNT }, () => {
+    const angle = Math.PI + Math.random() * Math.PI;
+    const speed = 90 + Math.random() * 160;
+    return {
+      x0: cx + (Math.random() - 0.5) * rect.width * 0.7,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 60,
+      size: 2 + Math.random() * 3,
+      rot: Math.random() * Math.PI,
+      vrot: (Math.random() - 0.5) * 10,
+    };
+  });
+
+  const IMPACT_MS = 130, DISSOLVE_MS = 680;
+  const gravity = 480;
+  const easeInCubic = (p) => p * p * p;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const ip = Math.min(1, t / IMPACT_MS);
+      const squash = 1 - easeInCubic(ip) * 0.42;
+      const dropY = easeInCubic(ip) * 8;
+
+      /* 打刻の瞬間、紙が白く光る */
+      if (t < IMPACT_MS + 90) {
+        const fp = Math.max(0, 1 - Math.max(0, t - IMPACT_MS * 0.5) / 140);
+        if (fp > 0) {
+          ctx.save();
+          ctx.globalAlpha = fp * 0.55;
+          ctx.fillStyle = "#ffffff";
+          roundRectPath(ctx, 0, 0, rect.width, rect.height, radius);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      const overallAlpha = t < IMPACT_MS ? 1 : Math.max(0, 1 - (t - IMPACT_MS) / (DISSOLVE_MS - IMPACT_MS));
+
+      if (overallAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = overallAlpha;
+        ctx.translate(cx, cy + dropY);
+        ctx.scale(1, squash);
+        ctx.translate(-cx, -cy);
+
+        /* 版ズレしたゴースト: わずかにずらして薄く重ねる */
+        if (t > IMPACT_MS) {
+          ctx.save();
+          ctx.globalAlpha *= 0.3;
+          ctx.translate(2.5, -1.5);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+          ctx.restore();
+        }
+
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+
+        /* 掠れ: インクが抜けていく部分を丸く消していく */
+        kasure.forEach((k) => {
+          const kt = t - k.delayMs;
+          if (kt < 0) return;
+          const kp = Math.min(1, kt / 260);
+          ctx.save();
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.globalAlpha = kp * 0.9;
+          const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r * kp);
+          g.addColorStop(0, "rgba(0,0,0,1)");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(k.x, k.y, k.r * kp, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+
+        ctx.restore();
+      }
+
+      /* 紙くず */
+      if (t >= IMPACT_MS) {
+        const ldt = (t - IMPACT_MS) / 1000;
+        const fade = Math.max(0, 1 - ldt / 0.5);
+        if (fade > 0) {
+          ctx.fillStyle = textColor;
+          debris.forEach((d) => {
+            const x = d.x0 + d.vx * ldt;
+            const y = rect.height + d.vy * ldt + 0.5 * gravity * ldt * ldt;
+            ctx.save();
+            ctx.globalAlpha = fade * 0.85;
+            ctx.translate(x, y);
+            ctx.rotate(d.rot + d.vrot * ldt);
+            ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
+            ctx.restore();
+          });
+        }
+      }
+
+      ctx.restore();
+
+      if (t >= DISSOLVE_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが活字ハンコのように上から落ちてきて紙に打ち付けられ、
+   インクの飛沫・紙のへこみを残しながら現れる（単語側の活版印刷演出と対になる） */
+async function runPressTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const padX = 16, padTop = 70, padBottom = 16;
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "press-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+  const ctx = canvas.getContext("2d");
+
+  const bg = cs.backgroundColor;
+  const borderColor = cs.borderTopColor;
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const textColor = cs.color;
+  const partText = partEl ? partEl.textContent : "";
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || "'JetBrains Mono',monospace"}`;
+
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = Math.round(rect.width * dpr);
+  srcCanvas.height = Math.round(rect.height * dpr);
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.scale(dpr, dpr);
+  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  srcCtx.fillStyle = bg;
+  srcCtx.fill();
+  srcCtx.lineWidth = borderWidth;
+  srcCtx.strokeStyle = borderColor;
+  srcCtx.stroke();
+  srcCtx.font = font;
+  srcCtx.fillStyle = textColor;
+  srcCtx.textAlign = "center";
+  srcCtx.textBaseline = "middle";
+  srcCtx.fillText(partText, rect.width / 2, partCenterY);
+
+  const cx = rect.width / 2;
+
+  /* インクの飛沫: 打刻の瞬間に周囲へ飛び散る小さな破片 */
+  const DEBRIS_COUNT = 8;
+  const debris = Array.from({ length: DEBRIS_COUNT }, () => {
+    const angle = Math.PI + Math.random() * Math.PI;
+    const speed = 60 + Math.random() * 110;
+    return {
+      x0: cx + (Math.random() - 0.5) * rect.width * 0.6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 40,
+      size: 1.6 + Math.random() * 2.6,
+      rot: Math.random() * Math.PI,
+      vrot: (Math.random() - 0.5) * 9,
+    };
+  });
+
+  /* 掠れ: 打刻直後はインクが均一でなく、じわっと馴染んで均される */
+  const KASURE_COUNT = 5;
+  const kasure = Array.from({ length: KASURE_COUNT }, () => ({
+    x: Math.random() * rect.width,
+    y: Math.random() * rect.height,
+    r: rect.height * (0.16 + Math.random() * 0.2),
+  }));
+
+  const FALL_MS = 300, TOTAL_MS = FALL_MS + 420;
+  const debrisGravity = 900;
+  const easeInQuad = (p) => p * p;
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const impacted = t >= FALL_MS;
+      let y, squash;
+      if (!impacted) {
+        const fp = t / FALL_MS;
+        y = -padTop * 0.85 * (1 - easeInQuad(fp));
+        squash = 1;
+      } else {
+        const bt = Math.min(1, (t - FALL_MS) / 220);
+        const bounce = Math.sin(bt * Math.PI) * (1 - bt);
+        squash = 1 - (1 - bt) * 0.3 + bounce * 0.08;
+        y = 0;
+      }
+
+      /* 活字ブロックの落下・打刻時の潰れ（下端を基準に縦へ潰す） */
+      ctx.save();
+      ctx.translate(0, y + rect.height * (1 - squash));
+      ctx.scale(1, squash);
+      ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+      ctx.restore();
+
+      if (impacted) {
+        /* 打刻直後、輪郭の内側にわずかな凹み影を落として紙のへこみを表現 */
+        const settleP = Math.min(1, (t - FALL_MS) / 260);
+        ctx.save();
+        ctx.globalAlpha = 0.22 * (1 - settleP * 0.5);
+        ctx.strokeStyle = "rgba(0,0,0,0.5)";
+        ctx.lineWidth = 2;
+        roundRectPath(ctx, borderWidth, borderWidth, rect.width - borderWidth * 2, rect.height - borderWidth * 2, Math.max(0, radius - 2));
+        ctx.stroke();
+        ctx.restore();
+
+        /* 掠れ: 打刻直後は薄く抜けていた箇所が徐々に馴染む */
+        const kp = Math.max(0, 1 - (t - FALL_MS) / 320);
+        if (kp > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = "destination-out";
+          kasure.forEach((k) => {
+            ctx.globalAlpha = kp * 0.5;
+            const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r);
+            g.addColorStop(0, "rgba(0,0,0,1)");
+            g.addColorStop(1, "rgba(0,0,0,0)");
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(k.x, k.y, k.r, 0, Math.PI * 2);
+            ctx.fill();
+          });
+          ctx.restore();
+        }
+
+        /* インクの飛沫 */
+        const ldt = (t - FALL_MS) / 1000;
+        const fade = Math.max(0, 1 - ldt / 0.4);
+        if (fade > 0) {
+          ctx.fillStyle = textColor;
+          debris.forEach((d) => {
+            const x = d.x0 + d.vx * ldt;
+            const dy = rect.height + d.vy * ldt + 0.5 * debrisGravity * ldt * ldt;
+            ctx.save();
+            ctx.globalAlpha = fade * 0.8;
+            ctx.translate(x, dy);
+            ctx.rotate(d.rot + d.vrot * ldt);
+            ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
+            ctx.restore();
+          });
+        }
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -3471,6 +4240,56 @@ const DECOMPOSE_ANIM_STYLES = {
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
       await runBurstExplosion(placeholder, word, morphemes, rect);
+    },
+  },
+
+  matrix: {
+    label: "マトリックス",
+    tileClass: "matrix-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語ブロックが上から緑の数字の雨へと分解されて消え去る */
+    async intro(placeholder, word) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runMatrixDissolve(placeholder, word, rect);
+    },
+    /* 接辞カードが数字の雨として降ってきて、カードの形へ収束する */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runMatrixTileResolve(el, i * 110);
+    },
+  },
+
+  press: {
+    label: "活版印刷",
+    tileClass: "press-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語ブロックが活字のようにガコンと下へ押し込まれ、掠れながら消え去る */
+    async intro(placeholder, word) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runPressDissolve(placeholder, word, rect);
+    },
+    /* 接辞カードが上からハンコのように紙へ打ち付けられて現れる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runPressTileResolve(el, i * 130);
     },
   },
 };
@@ -3590,7 +4409,7 @@ async function loadGoroCandidates(provider, apiKey) {
      同じような内容を繰り返さないようAIに明示的に伝える */
   const previousTexts = currentCandidates.map((c) => c.text).filter(Boolean);
   try {
-    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts);
+    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts, (phrase) => reportGoroStatus("goro-list", phrase));
   } catch (err) {
     const list = document.getElementById("goro-list");
     list.innerHTML = "";
@@ -3707,7 +4526,7 @@ async function toggleSaveWord() {
     /* ユーザーが良いと判断して保存した語呂合わせを、今後の①Few-shot例・
        ③マンネリ検出の材料として蓄積する。保存操作の成否には影響させない */
     loadApiKey(provider)
-      .then((apiKey) => growGoroCorpusFromSave(currentWord, currentWordMeaning, newGoroText, provider, apiKey))
+      .then((apiKey) => growGoroCorpusFromSave(currentWord, currentWordMeaning, newGoroText, currentMorphemes, provider, apiKey))
       .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
   }
   await refreshSaveWordBtn();
@@ -3725,7 +4544,7 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
     return;
   }
   document.getElementById("regen-btn").disabled = true;
-  document.getElementById("goro-list").innerHTML = goroLoadingHtml("推敲中", "💦");
+  reportGoroStatus("goro-list", "語呂合わせを作り直し中");
   await loadGoroCandidates(provider, apiKey);
 });
 
@@ -3985,10 +4804,10 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
 
   const btn = document.getElementById("word-detail-regen-btn");
   btn.disabled = true;
-  document.getElementById("word-detail-goro").innerHTML = goroLoadingHtml("推敲中", "💦");
+  reportGoroStatus("word-detail-goro", "語呂合わせを作り直し中");
 
   try {
-    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean));
+    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean), (phrase) => reportGoroStatus("word-detail-goro", phrase));
     const c = candidates[0];
     record.goro_text = c.text;
     record.goro_highlight = c.highlight || [];
@@ -4579,7 +5398,7 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
   });
 
-  const activeAnim = await kvGet("decompose_anim", "crack");
+  const activeAnim = await kvGet("decompose_anim", "random");
   document.querySelectorAll(".anim-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.anim === activeAnim);
   });
@@ -5709,6 +6528,9 @@ if ("serviceWorker" in navigator) {
 /* ホーム画面右上のビルドタグはこれまでPRをマージするたびに手動で
    書き換えていたが、更新を忘れて古いままになることがあったため、
    GitHub上で直近にmainへマージされたPR番号を自動取得して表示する。
+   検索APIをupdated順で引くとマージ後にコメント等が付いたPRが繰り上がり
+   最新マージと食い違うことがあるため、mainの最新コミット（常に
+   「Merge pull request #NNN from ...」の形になる）からPR番号を直接読む。
    取得できた値はkvにキャッシュし、オフライン時や取得失敗時は前回
    キャッシュ値（初回はHTMLの初期値）をそのまま表示し続ける */
 async function refreshBuildTag() {
@@ -5717,16 +6539,17 @@ async function refreshBuildTag() {
   const cached = await kvGet("build_tag_pr", null);
   if (cached) el.textContent = `#${cached}`;
   try {
-    const res = await fetch("https://api.github.com/search/issues?q=repo:gmgngnm%2Fsetsuguro+is:pr+is:merged+base:main&sort=updated&order=desc&per_page=1");
+    const res = await fetch("https://api.github.com/repos/gmgngnm/setsuguro/commits/main");
     if (!res.ok) return;
     const json = await res.json();
-    const number = json.items && json.items[0] && json.items[0].number;
+    const match = /Merge pull request #(\d+)/.exec((json.commit && json.commit.message) || "");
+    const number = match && match[1];
     if (number) {
       el.textContent = `#${number}`;
       await kvSet("build_tag_pr", number);
     }
   } catch (err) {
-    console.warn("ビルドタグの自動取得に失敗しました（キャッシュ値のまま表示します）:", err);
+    console.warn("ビルドタグの自動取得に失敗しました(キャッシュ値のまま表示します):", err);
   }
 }
 

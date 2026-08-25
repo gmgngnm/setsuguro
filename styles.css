@@ -174,6 +174,12 @@ button{font-family:inherit;cursor:pointer;}
 .morph.burst-in{
   animation:burstIn .8s cubic-bezier(.34,1.56,.64,1) both;
 }
+.morph.matrix-in{
+  animation:matrixTileIn .6s ease both;
+}
+.morph.press-in{
+  animation:pressTileIn .6s ease both;
+}
 .morph.card-flip-out{ animation:pop .5s ease both, cardFlipOut .25s ease-in forwards; color:var(--accent-2); }
 .morph.card-flip-in{ animation:pop .5s ease both, cardFlipIn .25s ease-out forwards; }
 .letter-fix{ color:var(--letter-fix-red); animation:letterFixBlink .34s ease-in-out 3; }
@@ -186,6 +192,8 @@ button{font-family:inherit;cursor:pointer;}
 .trash-can.show{ animation:trashPop .5s ease .3s forwards; }
 .crack-canvas{position:absolute;pointer-events:none;}
 .burst-canvas{position:absolute;pointer-events:none;}
+.matrix-canvas{position:absolute;pointer-events:none;}
+.press-canvas{position:absolute;pointer-events:none;}
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
 @keyframes shake{
@@ -202,6 +210,14 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes burstIn{
   from{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.3); opacity:0; }
   to{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
+}
+@keyframes matrixTileIn{
+  from{ opacity:0; transform:translateY(-10px) scale(.94); }
+  to{ opacity:1; transform:translateY(0) scale(1); }
+}
+@keyframes pressTileIn{
+  from{ opacity:0; transform:translateY(-14px) scaleY(.7); }
+  to{ opacity:1; transform:translateY(0) scaleY(1); }
 }
 @keyframes cardFlipOut{
   from{ transform:perspective(600px) rotateY(0deg); }
@@ -236,7 +252,7 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 @media (prefers-reduced-motion: reduce){
-  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in,
+  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.press-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
   .trash-can.show, .spinner, .goro-loading-dots::after,
   .letter-fix{animation:none;}
@@ -322,7 +338,7 @@ button{font-family:inherit;cursor:pointer;}
    届いたときにレイアウトが飛び跳ねないようにする */
 .goro-loading{
   display:flex;align-items:center;justify-content:center;min-height:76px;
-  font-size:14px;color:var(--ink-faint);letter-spacing:.04em;
+  font-size:19px;font-weight:400;color:var(--ink-faint);letter-spacing:.04em;
 }
 .goro-loading-suffix{margin-left:2px;}
 /* 点は0個→3個→0個を繰り返す。幅を固定しておかないと点の増減で
@@ -683,7 +699,7 @@ button{font-family:inherit;cursor:pointer;}
   /* デスクトップでは#appがmin-height:0のため、margin-top:autoによる
      下寄せが効かずマイクボタンがコンテンツ直下に詰まって表示される。
      ある程度の余白を明示して下方向に配置する */
-  .mic-section{margin-top:96px;}
+  .mic-section{margin-top:40px;}
 }
 
 /* ------------------------------------------------------------------ *
