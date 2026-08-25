@@ -1,4 +1,4 @@
-const CACHE = "engolo-shell-v3";
+const CACHE = "engolo-shell-v4";
 const SHELL = [
   "./index.html",
   "./styles.css",

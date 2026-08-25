@@ -783,3 +783,61 @@ button{font-family:inherit;cursor:pointer;}
   background:var(--bg);border-radius:12px;padding:10px 12px;
 }
 .batch-review-actions{display:flex;justify-content:flex-end;gap:8px;}
+
+/* ------------------------------------------------------------------ *
+ * RAGの効果検証
+ * ------------------------------------------------------------------ */
+.btn-wide{width:100%;padding:12px 16px;font-size:13px;border-radius:14px;}
+.rag-summary{display:flex;flex-direction:column;gap:10px;}
+.rag-block{
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:8px;
+}
+.rag-block-title{
+  font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:700;color:var(--accent-ink);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+}
+.rag-tag{
+  font-size:9.5px;font-weight:400;color:var(--ink-faint);
+  border:1px solid var(--line);border-radius:999px;padding:1px 7px;
+}
+/* embeddingが要るかどうかは、そのまま課金の有無になる。①が無料だと
+   一目で分かることが、この検証でいちばん伝えたいこと */
+.rag-tag.free{color:var(--accent-ink);border-color:var(--accent);}
+.rag-tag.paid{color:var(--accent-2);border-color:var(--accent-2);}
+.rag-grid{display:flex;gap:8px;flex-wrap:wrap;}
+.rag-cell{
+  flex:1 1 110px;min-width:0;background:var(--bg);border-radius:12px;padding:9px 11px;
+  display:flex;flex-direction:column;gap:2px;
+}
+.rag-cell.hot{background:color-mix(in srgb, var(--accent) 14%, var(--bg));}
+.rag-cell-label{font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;}
+.rag-cell b{font-family:'JetBrains Mono',monospace;font-size:19px;color:var(--ink);}
+.rag-cell-sub{font-size:10px;color:var(--ink-faint);}
+.rag-note{font-size:11px;line-height:1.6;color:var(--ink-soft);}
+.rag-codes{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.rag-codes-label{
+  flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);
+  border:1px solid var(--line);border-radius:999px;padding:1px 7px;
+}
+
+.rag-blind{display:flex;flex-direction:column;gap:10px;}
+.rag-item{
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.rag-item.judged{border-color:var(--accent);}
+.rag-side{display:flex;gap:10px;align-items:flex-start;}
+.rag-choice{
+  flex-shrink:0;width:30px;height:30px;padding:0;border-radius:10px;
+  border:1.5px solid var(--line);background:var(--surface);
+  font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--ink-soft);
+}
+.rag-choice.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+.rag-choice:disabled{opacity:.55;}
+.rag-side-body{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1;}
+.rag-side-text{font-size:14px;line-height:1.6;color:var(--ink);}
+.rag-reveal{font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;}
+.rag-gate-flag{color:var(--accent-2);}
+.rag-item-actions{display:flex;justify-content:flex-end;gap:8px;}
+.rag-tie.on{border-color:var(--accent);color:var(--accent-ink);}
