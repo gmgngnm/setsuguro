@@ -703,6 +703,36 @@ async function extractErrorDetail(res) {
   }
 }
 
+/* さくらのAI Engineのチャットモデル。分解は「英語の形態素解析」なので
+   指示追従の強い汎用モデルが向き、語呂合わせは「実在する日本語の言い回しを
+   探す」タスクなので日本語に強いモデルが向く可能性がある。別々に選べる
+   ようにするため、既定のモデルと選択肢をここに集める。
+   （日本語特化モデルを語呂に使う案の出所は本ファイル 12f の比較機能。
+     どちらが良いかは推論では決まらないので、実測で決められるようにしてある） */
+const SAKURA_DEFAULT_CHAT_MODEL = "gpt-oss-120b";
+
+/* 語呂合わせに選べるモデル。available:false のものは、そのAPIキーで
+   使えることが /v1/models で確認できるまで選択肢に出さない
+   （plamo-3.0-prime は申請制で、承認されていないキーでは弾かれるため）。
+   ここに無いIDでも、モデル一覧に載っていれば「その他」として選べる */
+const GORO_MODEL_CANDIDATES = [
+  {
+    id: SAKURA_DEFAULT_CHAT_MODEL,
+    label: "gpt-oss-120b（既定）",
+    note: "汎用モデル。規則の多い指示に沿うのが得意で、これまでの語呂合わせはすべてこのモデルで作られています。",
+  },
+  {
+    id: "llm-jp-3.1-8x13b-instruct4",
+    label: "llm-jp-3.1-8x13b（日本語特化）",
+    note: "日本語特化の国産モデル。言い回しの自然さで有利な可能性がある一方、注釈の書式や文字数の制約を外しやすい傾向もあります。",
+  },
+  {
+    id: "plamo-3.0-prime",
+    label: "PLaMo 3.0 Prime（日本語特化）",
+    note: "PFNの純国産フラッグシップ。利用には申請が必要で、無償プランでは使えません。承認済みのキーでのみ選べます。",
+  },
+];
+
 const AI_ADAPTERS = {
   groq: {
     label: "Groq",
@@ -751,12 +781,13 @@ const AI_ADAPTERS = {
   sakura: {
     label: "さくらのAI",
     modelsUrl: "https://api.ai.sakura.ad.jp/v1/models",
-    async chat(apiKey, systemPrompt, userPrompt, temperature) {
+    defaultModel: SAKURA_DEFAULT_CHAT_MODEL,
+    async chat(apiKey, systemPrompt, userPrompt, temperature, model) {
       const res = await fetch("https://api.ai.sakura.ad.jp/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: "gpt-oss-120b",
+          model: model || SAKURA_DEFAULT_CHAT_MODEL,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
@@ -881,7 +912,10 @@ function isJsonValidationFailure(err) {
   return /failed to validate json|json_validate_failed/i.test(err.message || "");
 }
 
-async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9) {
+/* model を省略すると、そのプロバイダの既定モデルを使う。語呂合わせだけ
+   別のモデルに切り替えられるようにするための引数で、分解や校閲など
+   他の呼び出しはこれまで通り既定のモデルで動く */
+async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, model = "") {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
   if (!apiKey) throw new Error("APIキーが設定されていません");
@@ -889,7 +923,7 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
   let lastErr;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature);
+      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature, model);
       await bumpUsage(tokens);
       return extractJson(text);
     } catch (err) {
@@ -1384,10 +1418,10 @@ function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
   ].filter(Boolean).join("\n");
 }
 
-async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning) {
+async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning, model = "") {
   try {
     const sys = goroValidationPrompt(word, morphemes, candidates, wordMeaning);
-    const json = await callAI(provider, apiKey, sys, "候補を精査し、必要なら書き直して、1件をJSON形式で出力してください。", 0.4);
+    const json = await callAI(provider, apiKey, sys, "候補を精査し、必要なら書き直して、1件をJSON形式で出力してください。", 0.4, model);
     const revised = (json.candidates || []).map((c, i) => ({
       text: (c && c.text) || candidates[i]?.text || "",
       highlight: candidates[i]?.highlight || [],
@@ -1506,10 +1540,14 @@ function phrasingReuseViolation(similarWord) {
    1回目で合格すれば追加のAPI呼び出しは発生しない */
 const GORO_MAX_ATTEMPTS = 3;
 
-async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts, onStatus) {
+async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts, onStatus, model) {
   /* 呼び出し元に今実際に何をしているかを知らせる。呼び出し元を
      指定しない場合（バッチ処理など）は何もしない */
   const report = onStatus || (() => {});
+
+  /* 語呂合わせに使うモデル。省略時は設定値を読む。比較機能のように
+     モデルを指定して呼びたい場合だけ、呼び出し元が明示的に渡す */
+  const goroModel = model === undefined ? await getGoroModel() : model;
 
   /* 機械チェックで弾いた候補と、その不合格理由。次の試行でAIに具体的に
      伝えることで、同じ失敗の繰り返しを防ぐ */
@@ -1564,7 +1602,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
     report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
     const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples);
-    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
+    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。", 0.9, goroModel);
     const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
     if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
 
@@ -1604,7 +1642,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
     /* 機械チェックを通った候補だけ、AIによる自然さ・面白さの校閲にかける。
        校閲で新たな違反が入り込む場合は、校閲前の合格版をそのまま使う */
     report("校閲中");
-    const revised = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
+    const revised = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning, goroModel);
     return goroViolations(revised[0]?.text, morphemes).length ? candidates : revised;
   }
 
@@ -1924,10 +1962,10 @@ function batchGoroValidationUserPrompt(states) {
 
 /* 機械チェックを通った候補だけを、まとめて校閲にかける。校閲で新たな
    違反が入り込んだ語は校閲前の合格版に戻す（1語ずつの経路と同じ扱い） */
-async function batchValidateGoro(states, provider, apiKey) {
+async function batchValidateGoro(states, provider, apiKey, model = "") {
   if (!states.length) return;
   try {
-    const json = await callAI(provider, apiKey, batchGoroValidationSystemPrompt(states.length), batchGoroValidationUserPrompt(states), 0.4);
+    const json = await callAI(provider, apiKey, batchGoroValidationSystemPrompt(states.length), batchGoroValidationUserPrompt(states), 0.4, model);
     const byWord = indexAiResultsByWord(json.results, states.map((s) => s.item.word));
     for (const s of states) {
       const row = byWord.get(s.item.word.toLowerCase());
@@ -1942,7 +1980,8 @@ async function batchValidateGoro(states, provider, apiKey) {
 
 /* items: [{ word, wordMeaning, morphemes }]（1チャンク分）
    戻り値: Map<word, {text, highlight}>。作れなかった語は入らない */
-async function batchGenerateGoro(items, provider, apiKey, rag) {
+async function batchGenerateGoro(items, provider, apiKey, rag, model) {
+  const goroModel = model === undefined ? await getGoroModel() : model;
   const states = items.map((item) => ({ item, notes: [], best: null, cand: null, passed: false }));
 
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
@@ -1951,7 +1990,7 @@ async function batchGenerateGoro(items, provider, apiKey, rag) {
 
     let json;
     try {
-      json = await callAI(provider, apiKey, batchGoroSystemPrompt(pending.length), batchGoroUserPrompt(pending, rag));
+      json = await callAI(provider, apiKey, batchGoroSystemPrompt(pending.length), batchGoroUserPrompt(pending, rag), 0.9, goroModel);
     } catch (err) {
       /* 1回目で失敗したら候補が1つも無いので呼び出し元に投げる。
          2回目以降は手元に候補があるので、作り直しを諦めてそれを使う */
@@ -1988,7 +2027,7 @@ async function batchGenerateGoro(items, provider, apiKey, rag) {
     state.cand = state.best.cand;
   }
 
-  await batchValidateGoro(states.filter((s) => s.passed), provider, apiKey);
+  await batchValidateGoro(states.filter((s) => s.passed), provider, apiKey, goroModel);
 
   const out = new Map();
   for (const state of states) if (state.cand) out.set(state.item.word, state.cand);
@@ -5408,6 +5447,7 @@ async function initSettingsScreen() {
 
   await refreshVoiceEngineUI();
   await refreshTtsSpeakerUI();
+  await refreshGoroModelUI();
   await initGoogleAuth();
 }
 
@@ -6424,6 +6464,414 @@ document.getElementById("batch-review-select-all").addEventListener("click", asy
   batchExcluded.clear();
   if (allOn) rows.forEach((r) => batchExcluded.add(r.id));
   await renderBatchReview();
+});
+
+/* ------------------------------------------------------------------ *
+ * 12f. 語呂合わせのモデル選択と実測比較
+ *   語呂合わせは「接辞のカタカナ読みを、実在する日本語の言い回しの中に
+ *   溶け込ませる」タスクで、求められる力が2つある。
+ *     ・日本語の語感（造語かどうかを見分ける力）  → 日本語特化モデルが有利かもしれない
+ *     ・規則の多い指示への追従（注釈の書式・文字数・JSON） → 汎用の大きいモデルが有利かもしれない
+ *   どちらが効くかは推論では決まらないので、モデルを差し替えられるように
+ *   したうえで、同じお題を各モデルに投げて機械チェックの初回合格率を
+ *   実測できるようにする。合格率が上がれば作り直しが減り、リクエスト数も
+ *   減るので、自然さとコストは同じ方向を向く。
+ *
+ *   分解（英語の形態素解析）は別のタスクなので、ここでの選択は語呂合わせ
+ *   （生成と校閲）にだけ効く。分解はこれまで通り既定のモデルで動く。
+ * ------------------------------------------------------------------ */
+
+async function getGoroModel() {
+  return await kvGet("goro_model", "");
+}
+
+/* /v1/models にはチャット以外（埋め込み・文字起こし・TTSの話者）も
+   混ざって返る。IDだけから確実に見分ける方法は無いので、明らかに
+   チャットでないものを名前で除く。取りこぼしても選択肢に余計な行が
+   出るだけで、実際に使えるかどうかは比較を走らせれば分かる */
+const NON_CHAT_MODEL_RE = /whisper|embedding|e5-|-e5|voicevox|\btts\b/i;
+
+function isLikelyChatModel(id) {
+  if (NON_CHAT_MODEL_RE.test(id)) return false;
+  return !TTS_SPEAKERS.some((s) => normalizeSpeakerId(s.id) === normalizeSpeakerId(id));
+}
+
+/* 選択肢は「既知の候補のうち、そのキーで使えることを確認できたもの」＋
+   「モデル一覧にあった見慣れないID」。一度も調べていない端末では、
+   これまで使ってきた既定モデルだけを出す（申請制のモデルを黙って
+   選ばせて、使う段になって弾かれる方が分かりにくいため） */
+async function loadAvailableGoroModels() {
+  const saved = await kvGet("goro_models_ok", null);
+  if (Array.isArray(saved) && saved.length) return saved;
+  return GORO_MODEL_CANDIDATES.filter((m) => m.id === SAKURA_DEFAULT_CHAT_MODEL);
+}
+
+async function detectAvailableGoroModels(apiKey) {
+  const adapter = AI_ADAPTERS.sakura;
+  const ids = await fetchModelIds(adapter, apiKey);
+  if (!ids.length) throw new Error("モデル一覧を取得できませんでした");
+
+  const known = new Set(GORO_MODEL_CANDIDATES.map((m) => m.id));
+  const available = GORO_MODEL_CANDIDATES.filter((m) => ids.includes(m.id));
+  /* 既定モデルは一覧に出ない構成もありうるので、必ず選べるようにしておく */
+  if (!available.some((m) => m.id === SAKURA_DEFAULT_CHAT_MODEL)) {
+    available.unshift(GORO_MODEL_CANDIDATES[0]);
+  }
+  for (const id of ids) {
+    if (known.has(id) || !isLikelyChatModel(id)) continue;
+    available.push({ id, label: id, note: "モデル一覧から見つかった、このアプリが把握していないモデルです。" });
+  }
+  await kvSet("goro_models_ok", available);
+  return available;
+}
+
+/* --- 設定画面 --- */
+
+async function refreshGoroModelUI() {
+  const select = document.getElementById("goro-model-select");
+  const detectBtn = document.getElementById("goro-model-detect-btn");
+  const note = document.getElementById("goro-model-note");
+  if (!select || !detectBtn || !note) return;
+
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) {
+    select.innerHTML = "";
+    select.appendChild(new Option(GORO_MODEL_CANDIDATES[0].label, SAKURA_DEFAULT_CHAT_MODEL));
+    select.disabled = true;
+    detectBtn.disabled = true;
+    note.textContent = "APIキーを保存すると、使えるモデルを調べられるようになります。";
+    return;
+  }
+
+  const models = await loadAvailableGoroModels();
+  const chosen = (await getGoroModel()) || SAKURA_DEFAULT_CHAT_MODEL;
+  select.disabled = false;
+  detectBtn.disabled = false;
+  select.innerHTML = "";
+  for (const m of models) select.appendChild(new Option(m.label, m.id));
+
+  /* 選ばれていたモデルが候補から消えた場合は既定へ戻す。使えないモデルを
+     選んだままにすると、語呂合わせだけが静かに失敗し続ける */
+  const ids = new Set(models.map((m) => m.id));
+  select.value = ids.has(chosen) ? chosen : SAKURA_DEFAULT_CHAT_MODEL;
+  if (select.value !== chosen) await kvSet("goro_model", "");
+
+  const current = models.find((m) => m.id === select.value);
+  note.textContent = current ? current.note : "";
+}
+
+document.getElementById("goro-model-select").addEventListener("change", async (e) => {
+  const id = e.target.value;
+  /* 既定モデルは空文字で持つ。プロバイダ側の既定が将来変わったときに、
+     古いIDを固定で持ち続けてしまわないようにする */
+  await kvSet("goro_model", id === SAKURA_DEFAULT_CHAT_MODEL ? "" : id);
+  await refreshGoroModelUI();
+  toast("語呂合わせのモデルを変更しました");
+});
+
+document.getElementById("goro-model-detect-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("goro-model-detect-btn");
+  const note = document.getElementById("goro-model-note");
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) { note.textContent = "先にAPIキーを保存してください。"; return; }
+
+  btn.disabled = true;
+  note.textContent = "モデル一覧を確認中…";
+  try {
+    const models = await detectAvailableGoroModels(apiKey);
+    await refreshGoroModelUI();
+    const jp = models.filter((m) => m.id !== SAKURA_DEFAULT_CHAT_MODEL).length;
+    note.textContent = jp
+      ? `${models.length}件のモデルが使えます。日本語特化モデルを選んだ場合は、実測で比べてから決めることをおすすめします。`
+      : "使えるモデルは既定のものだけでした。申請制のモデルは、コントロールパネルの「モデル一覧」から利用申請を行うと選べるようになります。";
+  } catch (err) {
+    console.error(err);
+    note.textContent = `モデル一覧を取得できませんでした（${err.message}）。`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* --- 実測比較 --- */
+
+const GORO_VIOLATION_LABELS = {
+  "gloss-in-parens": "意味の注釈",
+  "missing-morpheme": "接辞の抜け",
+  "duplicate-morpheme": "注釈の重複",
+  "adjacent-readings": "読みの連結",
+  "bare-reading-word": "読みの丸ごと使用",
+  "bare-reading-particle": "読み＋助詞",
+  "katakana-suru-verb": "カタカナ＋する",
+  "too-long": "長すぎ",
+  "semantic-drift": "意味とのずれ",
+  "phrasing-reuse": "言い回しの使い回し",
+};
+
+const COMPARE_COUNT_DEFAULT = 5;
+let compareRunning = false;
+/* 選択中のモデルとお題の設定。結果はkvに残すので画面を離れても消えないが、
+   選択の途中経過まで持ち回る必要はないのでメモリだけで持つ */
+const compareSelected = new Set();
+let compareCount = COMPARE_COUNT_DEFAULT;
+let compareSource = "book";
+
+/* お題は「接辞まで分解済みの単語」でなければならない。単語帳のレコードと
+   デモ単語はどちらも分解済みなので、分解のためのリクエストを1回も
+   使わずに比較できる */
+async function pickComparisonWords(count, source) {
+  const fromBook = (await idbGetAll("words"))
+    .filter((r) => Array.isArray(r.morphemes) && r.morphemes.length && r.word_meaning)
+    .map((r) => ({ word: r.word, wordMeaning: r.word_meaning, morphemes: r.morphemes, reference: r.goro_text || "" }));
+  await demoWordDataReady;
+  const fromDemo = Object.entries(DEMO_WORD_DATA)
+    .filter(([, d]) => d && d.morphemes && d.morphemes.length && d.meaning)
+    .map(([word, d]) => ({ word, wordMeaning: d.meaning, morphemes: d.morphemes, reference: d.goroText || "" }));
+
+  const shuffle = (list) => list.map((v) => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  const primary = source === "demo" ? fromDemo : fromBook;
+  const backup = source === "demo" ? fromBook : fromDemo;
+  const picked = shuffle(primary).slice(0, count);
+  /* 足りない分は反対側から埋める。単語帳が空でも比較を始められるようにする */
+  if (picked.length < count) {
+    const have = new Set(picked.map((w) => w.word.toLowerCase()));
+    picked.push(...shuffle(backup).filter((w) => !have.has(w.word.toLowerCase())).slice(0, count - picked.length));
+  }
+  return picked;
+}
+
+/* 1語・1モデルにつき1回だけ生成し、機械チェックにかける。作り直し・
+   校閲・RAGはすべて外してある。モデルそのものの「一発目の出来」を
+   比べたいので、後段の作り込みで差が埋まってしまわないようにする */
+async function generateGoroOnce(item, provider, apiKey, model) {
+  const startedAt = Date.now();
+  try {
+    const sys = goroSystemPrompt(item.word, item.morphemes, item.wordMeaning, [], [], []);
+    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。", 0.9, model);
+    const text = (json.candidates || [])[0]?.text?.trim() || "";
+    if (!text) return { text: "", violations: [], error: "候補が返りませんでした", ms: Date.now() - startedAt };
+    return { text, violations: goroViolations(text, item.morphemes), error: "", ms: Date.now() - startedAt };
+  } catch (err) {
+    return { text: "", violations: [], error: err.message, ms: Date.now() - startedAt };
+  }
+}
+
+function summarizeComparison(models, rows) {
+  return models.map((model) => {
+    const mine = rows.filter((r) => r.model === model);
+    const done = mine.filter((r) => !r.error);
+    const passed = done.filter((r) => !r.violations.length);
+    const byCode = {};
+    for (const r of done) {
+      for (const v of r.violations) byCode[v.code] = (byCode[v.code] || 0) + 1;
+    }
+    return {
+      model,
+      total: mine.length,
+      errors: mine.length - done.length,
+      passed: passed.length,
+      passRate: done.length ? passed.length / done.length : 0,
+      avgViolations: done.length ? done.reduce((a, r) => a + r.violations.length, 0) / done.length : 0,
+      avgMs: mine.length ? Math.round(mine.reduce((a, r) => a + r.ms, 0) / mine.length) : 0,
+      byCode,
+    };
+  });
+}
+
+async function runGoroComparison() {
+  if (compareRunning) return;
+  const models = [...compareSelected];
+  if (models.length < 1) { toast("比べるモデルを選んでください"); return; }
+
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) { toast("設定画面でAPIキーを登録してください"); return; }
+
+  const words = await pickComparisonWords(compareCount, compareSource);
+  if (!words.length) { toast("お題にできる単語がありません"); return; }
+
+  compareRunning = true;
+  await renderCompareControls();
+  const rows = [];
+  const total = words.length * models.length;
+  setCompareProgress(`実測中… 0 / ${total}`);
+
+  try {
+    for (const item of words) {
+      for (const model of models) {
+        const result = await generateGoroOnce(item, provider, apiKey, model);
+        rows.push({ model, word: item.word, wordMeaning: item.wordMeaning, reference: item.reference, ...result });
+        setCompareProgress(`実測中… ${rows.length} / ${total}（${item.word}）`);
+        await renderCompareResult({ models, words, rows, ranAt: Date.now() });
+      }
+    }
+    await kvSet("goro_compare_result", { models, words, rows, ranAt: Date.now() });
+    toast("実測が終わりました");
+  } catch (err) {
+    console.error("モデル比較に失敗しました:", err);
+    toast(`実測に失敗しました（${err.message}）`);
+  } finally {
+    compareRunning = false;
+    setCompareProgress("");
+    await renderCompareControls();
+  }
+}
+
+function setCompareProgress(label) {
+  const row = document.getElementById("compare-progress");
+  const text = document.getElementById("compare-progress-label");
+  if (!row || !text) return;
+  row.style.display = label ? "flex" : "none";
+  text.textContent = label || "";
+}
+
+function modelLabel(id, models) {
+  const known = (models || []).find((m) => m.id === id) || GORO_MODEL_CANDIDATES.find((m) => m.id === id);
+  return known ? known.label : id;
+}
+
+async function renderCompareControls() {
+  const listEl = document.getElementById("compare-model-list");
+  const noteEl = document.getElementById("compare-cost-note");
+  const runBtn = document.getElementById("compare-run-btn");
+  if (!listEl) return;
+
+  const models = await loadAvailableGoroModels();
+  /* 初回は「今使っているモデル」と「それ以外の先頭」を既定で選んでおく。
+     比較は2つ以上ないと意味がないため */
+  if (!compareSelected.size) {
+    const current = (await getGoroModel()) || SAKURA_DEFAULT_CHAT_MODEL;
+    compareSelected.add(current);
+    const other = models.find((m) => m.id !== current);
+    if (other) compareSelected.add(other.id);
+  }
+
+  listEl.innerHTML = "";
+  if (models.length < 2) {
+    listEl.innerHTML = `<div class="empty-note">選べるモデルが1つだけです。設定画面の「使えるモデルを調べる」を実行してください。</div>`;
+  }
+  models.forEach((m) => {
+    const on = compareSelected.has(m.id);
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `compare-model-row${on ? " on" : ""}`;
+    row.innerHTML = `
+      <span class="compare-model-check">${on ? "✓" : ""}</span>
+      <span class="compare-model-text">
+        <span class="compare-model-label">${escapeHtml(m.label)}</span>
+        <span class="compare-model-note">${escapeHtml(m.note)}</span>
+      </span>`;
+    row.addEventListener("click", async () => {
+      if (compareSelected.has(m.id)) compareSelected.delete(m.id); else compareSelected.add(m.id);
+      await renderCompareControls();
+    });
+    listEl.appendChild(row);
+  });
+
+  document.querySelectorAll("#compare-count-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", Number(p.dataset.compareCount) === compareCount);
+  });
+  document.querySelectorAll("#compare-source-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.compareSource === compareSource);
+  });
+
+  const calls = compareCount * compareSelected.size;
+  if (noteEl) {
+    noteEl.textContent = `${compareSelected.size}モデル × ${compareCount}語で、AIへの呼び出しは${calls}回です。お題は分解済みの単語から選ぶので、分解のリクエストは発生しません。作り直し・校閲・RAGは外して、一発目の出来だけを比べます。`;
+  }
+  if (runBtn) {
+    runBtn.disabled = compareRunning || !compareSelected.size;
+    runBtn.textContent = compareRunning ? "実測中…" : `⚖ ${calls}回で実測する`;
+  }
+}
+
+function violationChips(violations) {
+  if (!violations.length) return `<span class="compare-chip ok">合格</span>`;
+  return violations
+    .map((v) => `<span class="compare-chip ng">${escapeHtml(GORO_VIOLATION_LABELS[v.code] || v.code)}</span>`)
+    .join("");
+}
+
+async function renderCompareResult(data) {
+  const summaryEl = document.getElementById("compare-summary");
+  const detailEl = document.getElementById("compare-detail");
+  if (!summaryEl || !detailEl) return;
+
+  const saved = data || await kvGet("goro_compare_result", null);
+  if (!saved || !saved.rows.length) {
+    summaryEl.innerHTML = "";
+    detailEl.innerHTML = `<div class="empty-note">まだ実測していません</div>`;
+    return;
+  }
+
+  const models = await loadAvailableGoroModels();
+  const summary = summarizeComparison(saved.models, saved.rows);
+  const best = Math.max(...summary.map((s) => s.passRate));
+
+  summaryEl.innerHTML = summary.map((s) => {
+    const codes = Object.entries(s.byCode).sort((a, b) => b[1] - a[1]);
+    const codeHtml = codes.length
+      ? codes.map(([code, n]) => `<span class="compare-chip ng">${escapeHtml(GORO_VIOLATION_LABELS[code] || code)} ${n}</span>`).join("")
+      : `<span class="compare-chip ok">違反なし</span>`;
+    /* 同率首位が複数あることもあるので「勝者」ではなく「最良」を印にする */
+    const top = s.passRate === best && s.total > 0 ? " top" : "";
+    return `
+      <div class="compare-summary-card${top}">
+        <div class="compare-summary-head">
+          <span class="compare-summary-name">${escapeHtml(modelLabel(s.model, models))}</span>
+          <span class="compare-summary-rate">${s.passed}/${s.total - s.errors} 合格</span>
+        </div>
+        <div class="compare-summary-meta">平均違反 ${s.avgViolations.toFixed(1)}件 ・ 平均 ${(s.avgMs / 1000).toFixed(1)}秒${s.errors ? ` ・ エラー${s.errors}件` : ""}</div>
+        <div class="compare-chips">${codeHtml}</div>
+      </div>`;
+  }).join("");
+
+  const byWord = new Map();
+  for (const r of saved.rows) {
+    if (!byWord.has(r.word)) byWord.set(r.word, []);
+    byWord.get(r.word).push(r);
+  }
+  detailEl.innerHTML = [...byWord.entries()].map(([word, rows]) => {
+    const head = rows[0];
+    const ref = head.reference
+      ? `<div class="compare-ref"><span class="compare-ref-label">既存</span>${escapeHtml(head.reference)}</div>`
+      : "";
+    const body = rows.map((r) => `
+      <div class="compare-row">
+        <div class="compare-row-model">${escapeHtml(modelLabel(r.model, models))}</div>
+        <div class="compare-row-text">${r.error ? `<span class="compare-error">${escapeHtml(r.error)}</span>` : escapeHtml(r.text)}</div>
+        <div class="compare-chips">${r.error ? "" : violationChips(r.violations)}</div>
+      </div>`).join("");
+    return `
+      <div class="compare-word-card">
+        <div class="compare-word-head">${escapeHtml(word)}<span class="compare-word-meaning">${escapeHtml(head.wordMeaning || "")}</span></div>
+        ${ref}
+        ${body}
+      </div>`;
+  }).join("");
+}
+
+function openGoroCompareScreen() {
+  showScreen("screen-goro-compare");
+  renderCompareControls();
+  renderCompareResult();
+}
+
+document.getElementById("goro-compare-entry-btn").addEventListener("click", openGoroCompareScreen);
+document.getElementById("compare-run-btn").addEventListener("click", runGoroComparison);
+
+document.querySelectorAll("#compare-count-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    compareCount = Number(pill.dataset.compareCount);
+    await renderCompareControls();
+  });
+});
+document.querySelectorAll("#compare-source-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    compareSource = pill.dataset.compareSource;
+    await renderCompareControls();
+  });
 });
 
 /* ------------------------------------------------------------------ *
