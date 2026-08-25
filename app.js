@@ -719,19 +719,40 @@ const GORO_MODEL_CANDIDATES = [
   {
     id: SAKURA_DEFAULT_CHAT_MODEL,
     label: "gpt-oss-120b（既定）",
+    contextTokens: 128000,
     note: "汎用モデル。規則の多い指示に沿うのが得意で、これまでの語呂合わせはすべてこのモデルで作られています。",
   },
   {
     id: "llm-jp-3.1-8x13b-instruct4",
     label: "llm-jp-3.1-8x13b（日本語特化）",
-    note: "日本語特化の国産モデル。言い回しの自然さで有利な可能性がある一方、注釈の書式や文字数の制約を外しやすい傾向もあります。",
+    contextTokens: 4096,
+    /* 実測の記録。日本語は上手いはずのモデルだが、語呂合わせの指示が
+       文脈に収まらず、冒頭の「あなたは日本語の語呂合わせ作家です」
+       だけを読んで、日本語で最も一般的な「数字の語呂合わせ」
+       （例: 0721→ねじ）を作って返してきた。対象の英単語にも接辞にも
+       一切触れない応答になる。書式の癖ではなくタスクの取り違えなので、
+       応答の読み取りを寛容にしても直らない */
+    note: "日本語特化の国産モデルですが、文脈が4Kトークンと狭く、語呂合わせの長い指示を最後まで保てません。実測では対象の単語も接辞も無視して、日本語で最も一般的な「数字の語呂合わせ」を返してきました。このアプリでは使えません。",
   },
   {
     id: "plamo-3.0-prime",
     label: "PLaMo 3.0 Prime（日本語特化）",
-    note: "PFNの純国産フラッグシップ。利用には申請が必要で、無償プランでは使えません。承認済みのキーでのみ選べます。",
+    contextTokens: 256000,
+    note: "PFNの純国産フラッグシップ。文脈は256Kトークンあるので指示は十分に入ります。利用には申請が必要で、無償プランでは使えません。",
   },
 ];
+
+/* 語呂合わせのシステムプロンプトは日本語で約2900文字ある。トークン化の
+   仕方によっては文字数に近いトークン数になり、さらにRAGの例示と出力ぶんも
+   要る。文脈がこれに対して十分広くないモデルは、規則の多い指示を最後まで
+   保てず、冒頭の役割だけを見て別のタスク（数字の語呂合わせ）に流れる。
+   実測でそうなったのが llm-jp-3.1-8x13b（4Kトークン）。「入りきらない」と
+   断定できるほど厳密な計算ではないので、余裕をみた目安として置く */
+const GORO_MIN_CONTEXT_TOKENS = 8192;
+
+function isContextTooSmallForGoro(model) {
+  return !!model.contextTokens && model.contextTokens < GORO_MIN_CONTEXT_TOKENS;
+}
 
 const AI_ADAPTERS = {
   groq: {
@@ -6605,6 +6626,7 @@ async function refreshGoroModelUI() {
 
   const current = models.find((m) => m.id === select.value);
   note.textContent = current ? current.note : "";
+  note.classList.toggle("warn", !!current && isContextTooSmallForGoro(current));
 }
 
 document.getElementById("goro-model-select").addEventListener("change", async (e) => {
@@ -6804,13 +6826,14 @@ async function renderCompareControls() {
   }
   models.forEach((m) => {
     const on = compareSelected.has(m.id);
+    const tight = isContextTooSmallForGoro(m);
     const row = document.createElement("button");
     row.type = "button";
-    row.className = `compare-model-row${on ? " on" : ""}`;
+    row.className = `compare-model-row${on ? " on" : ""}${tight ? " tight" : ""}`;
     row.innerHTML = `
       <span class="compare-model-check">${on ? "✓" : ""}</span>
       <span class="compare-model-text">
-        <span class="compare-model-label">${escapeHtml(m.label)}</span>
+        <span class="compare-model-label">${escapeHtml(m.label)}${tight ? `<span class="compare-warn">文脈が狭い</span>` : ""}</span>
         <span class="compare-model-note">${escapeHtml(m.note)}</span>
       </span>`;
     row.addEventListener("click", async () => {
