@@ -276,6 +276,15 @@
     </div>
     <div class="usage-note" id="tts-note"></div>
 
+    <div class="section-label" style="margin-top:6px;">語呂合わせのモデル</div>
+    <div class="tts-voice-row">
+      <select id="goro-model-select" aria-label="語呂合わせのモデル"></select>
+      <button class="btn-ghost" id="goro-model-detect-btn" type="button">使えるモデルを調べる</button>
+    </div>
+    <div class="usage-note" id="goro-model-note"></div>
+    <button class="btn-ghost btn-wide" id="goro-compare-entry-btn" type="button">⚖ モデルごとの語呂を実測で比べる</button>
+    <div class="usage-note">接辞への分解はこの設定の影響を受けません（英語の形態素解析には既定のモデルを使います）。</div>
+
     <div class="section-label" style="margin-top:6px;">表示モード</div>
     <div class="provider-row" id="mode-row">
       <button class="mode-pill" data-mode="auto">システム</button>
@@ -342,6 +351,40 @@
     <div class="bottom-actions">
       <button class="save-word-btn" id="batch-review-save-btn">💾 単語帳に保存</button>
     </div>
+  </section>
+
+  <!-- ============ SCREEN 10: 語呂モデルの実測比較 ============ -->
+  <section id="screen-goro-compare" class="screen">
+    <div class="appbar">
+      <span class="logo">モデルの実測比較</span>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="settings" title="設定へ戻る" aria-label="設定へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+      </div>
+    </div>
+    <div class="usage-note">同じ単語を各モデルに1回ずつ投げ、機械チェックの初回合格率を測ります。合格率が高いほど作り直しが減るので、自然さとリクエスト数の両方で有利になります。最後は生成された語呂そのものを読んで決めてください。</div>
+
+    <div class="section-label">比べるモデル</div>
+    <div class="compare-model-list" id="compare-model-list"></div>
+
+    <div class="section-label" style="margin-top:6px;">お題の単語</div>
+    <div class="provider-row" id="compare-source-row">
+      <button class="mode-pill on" data-compare-source="book">単語帳から</button>
+      <button class="mode-pill" data-compare-source="demo">見本の単語から</button>
+    </div>
+    <div class="provider-row" id="compare-count-row">
+      <button class="mode-pill" data-compare-count="3">3語</button>
+      <button class="mode-pill on" data-compare-count="5">5語</button>
+      <button class="mode-pill" data-compare-count="8">8語</button>
+    </div>
+    <div class="usage-note" id="compare-cost-note"></div>
+    <button class="btn-solid" id="compare-run-btn" type="button">⚖ 実測する</button>
+    <div class="spinner-row" id="compare-progress" style="display:none;">
+      <div class="spinner"></div>
+      <span class="spin-label" id="compare-progress-label"></span>
+    </div>
+
+    <div class="compare-summary" id="compare-summary"></div>
+    <div class="compare-detail" id="compare-detail"></div>
   </section>
 
   <div id="toast"></div>
