@@ -1419,6 +1419,31 @@ const GORO_EXAMPLE_TOPK = 4;
    調整できるよう定数として独立させている */
 const GORO_REPEAT_SIM_THRESHOLD = 0.93;
 
+/* ①のFew-shot例を選ぶ。「同じ接辞をどう音として捌いたか」の実例を優先する。
+   意味の近さ（embedding類似度）は語呂の技法とあまり相関がなく参考に
+   ならなかったが、接辞そのものが同じなら、その読みをどう断片化して
+   自然な日本語に溶け込ませたかがそのまま参考になる。共有接辞数の多い順に
+   並べ、同数の中はランダムにして GORO_EXAMPLE_TOPK 件を選ぶ
+   （一致が無ければ実質ランダム抽出のまま）。
+
+   ここは embedding を一切使わない。効果検証（12g）が本番とまったく同じ
+   選び方を測れるよう、生成側と検証側で必ずこの関数を共有する */
+function pickGoroExamples(word, morphemes, corpus) {
+  return (corpus || [])
+    /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
+       ③のマンネリ検出には引き続き使うが、手本としては見せない */
+    .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && c.styleOk !== false)
+    .map((c) => ({
+      ...c,
+      affixOverlap: (c.morphemes || []).filter((cm) =>
+        (morphemes || []).some((m) => (m.part || "").toLowerCase() === (cm.part || "").toLowerCase())
+      ).length,
+      sortKey: Math.random(),
+    }))
+    .sort((a, b) => b.affixOverlap - a.affixOverlap || a.sortKey - b.sortKey)
+    .slice(0, GORO_EXAMPLE_TOPK);
+}
+
 /* 種データは、単語の意味と語呂合わせの対応そのものは正しいが、書かれた
    のが品質ルールを厳しくする前なので、現在の機械チェック（長さ・読みの
    丸ごと使用など）には通らないものが多い。②の閾値校正には「意味と語呂が
@@ -1537,19 +1562,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
          断片化して自然な日本語に溶け込ませたかがそのまま参考になる。
          共有接辞数の多い順に並べ、同数の中はランダムにして、
          GORO_EXAMPLE_TOPK件を選ぶ（一致が無ければ実質ランダム抽出のまま） */
-      examples = corpus
-        /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
-           ③のマンネリ検出には引き続き使うが、手本としては見せない */
-        .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && c.styleOk !== false)
-        .map((c) => ({
-          ...c,
-          affixOverlap: (c.morphemes || []).filter((cm) =>
-            morphemes.some((m) => (m.part || "").toLowerCase() === (cm.part || "").toLowerCase())
-          ).length,
-          sortKey: Math.random(),
-        }))
-        .sort((a, b) => b.affixOverlap - a.affixOverlap || a.sortKey - b.sortKey)
-        .slice(0, GORO_EXAMPLE_TOPK);
+      examples = pickGoroExamples(word, morphemes, corpus);
       /* meaningQueryVecは②意味整合ゲートで使うため、examples抽出とは
          切り離した上で引き続き取得する */
       if (wordMeaning) {
@@ -1855,17 +1868,19 @@ async function prepareBatchGoroRag(items, provider, apiKey) {
     const gateThreshold = await kvGet("goro_gate_threshold", null);
     const meaningVecs = new Map();
     const examples = new Map();
+    /* ①のお手本は1語ずつの経路と同じ選び方（接辞の重なり）にする。
+       以前はここだけ意味の類似度で選んでいたが、1語ずつの経路が接辞ベースに
+       変わったときに取り残され、同じ単語でも経路によって別のお手本が
+       出る状態になっていた。embeddingが要らないので、意味の有無に関わらず
+       全ての単語に付けられる */
+    for (const it of items) {
+      examples.set(it.word, pickGoroExamples(it.word, it.morphemes, corpus));
+    }
+    /* meaningVecs は②意味整合ゲートで使うため、お手本抽出とは切り離して取る */
     const withMeaning = items.filter((it) => it.wordMeaning);
     if (withMeaning.length) {
       const vecs = await embedTexts(withMeaning.map((it) => it.wordMeaning), apiKey, "query");
-      withMeaning.forEach((it, i) => {
-        meaningVecs.set(it.word, vecs[i]);
-        examples.set(it.word, corpus
-          .filter((c) => c.word.toLowerCase() !== it.word.toLowerCase() && Array.isArray(c.vector) && c.styleOk !== false)
-          .map((c) => ({ ...c, score: cosineSim(vecs[i], c.vector) }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, GORO_EXAMPLE_TOPK));
-      });
+      withMeaning.forEach((it, i) => meaningVecs.set(it.word, vecs[i]));
     }
     return { corpus, gateThreshold, meaningVecs, examples };
   } catch (err) {
@@ -6424,6 +6439,420 @@ document.getElementById("batch-review-select-all").addEventListener("click", asy
   batchExcluded.clear();
   if (allOn) rows.forEach((r) => batchExcluded.add(r.id));
   await renderBatchReview();
+});
+
+/* ------------------------------------------------------------------ *
+ * 12g. RAGの効果検証
+ *   「RAG」と呼んでいるものは、コストも仕組みも違う4つの寄せ集めになっている。
+ *     ① お手本のFew-shot     … embeddingは要らない（接辞の重なりで選ぶ）
+ *     ② 意味整合ゲート        … 候補1件につきembedding 1回
+ *     ③ マンネリ検出          … ②と同じ呼び出しで済む
+ *     ④ 接辞表記の統合        … 分解側。ここでは測らない（下記）
+ *   オン/オフで一括比較すると、無料の①と有料の②③が混ざってしまい、
+ *   どこが効いているのか分からない。ここでは①を独立した実験群として測り、
+ *   ②③は「発火させずにスコアだけ記録」して、後から突き合わせる。
+ *
+ *   公平に測るための決め事:
+ *     ・合否の物差しは goroViolations（機械チェック）だけにする。②③は
+ *       違反の種類を増やすので、そのまま合格率を比べると必ずRAG側が
+ *       不利になり、比較にならない
+ *     ・②③のスコアは全ての候補について記録する。「ゲートが発火したか」と
+ *       「機械チェックに通ったか」を掛け合わせると、ゲートが独自に
+ *       何かを捕まえているのか、既に落ちている候補に重ねて発火して
+ *       いるだけなのかが分かる
+ *     ・自然さ・面白さは機械では測れない。ラベルを伏せた2件を並べて
+ *       人に選んでもらい、勝敗を数える
+ *
+ *   ④を測っていない理由: 接辞表記の統合は分解側の機能で、同じ接辞が
+ *   複数の単語にまたがって初めて効果が出る。1回の実行で測れる形に
+ *   落とせなかったため、この画面の対象外にしている。
+ * ------------------------------------------------------------------ */
+
+const RAG_EVAL_COUNT_DEFAULT = 5;
+let ragEvalRunning = false;
+let ragEvalCount = RAG_EVAL_COUNT_DEFAULT;
+let ragEvalSource = "demo";
+
+/* お題は接辞まで分解済みの単語でなければならない。単語帳のレコードと
+   デモ単語はどちらも分解済みなので、分解のリクエストを使わずに測れる */
+async function pickRagEvalWords(count, source) {
+  const fromBook = (await idbGetAll("words"))
+    .filter((r) => Array.isArray(r.morphemes) && r.morphemes.length && r.word_meaning)
+    .map((r) => ({ word: r.word, wordMeaning: r.word_meaning, morphemes: r.morphemes }));
+  await demoWordDataReady;
+  const fromDemo = Object.entries(DEMO_WORD_DATA)
+    .filter(([, d]) => d && d.morphemes && d.morphemes.length && d.meaning)
+    .map(([word, d]) => ({ word, wordMeaning: d.meaning, morphemes: d.morphemes }));
+
+  const shuffle = (list) => list.map((v) => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  const primary = source === "book" ? fromBook : fromDemo;
+  const backup = source === "book" ? fromDemo : fromBook;
+  const picked = shuffle(primary).slice(0, count);
+  if (picked.length < count) {
+    const have = new Set(picked.map((w) => w.word.toLowerCase()));
+    picked.push(...shuffle(backup).filter((w) => !have.has(w.word.toLowerCase())).slice(0, count - picked.length));
+  }
+  return picked;
+}
+
+/* 1回だけ生成する。作り直し・校閲・②③のゲートはすべて外す。
+   お手本の有無だけが違う2本を、同じ条件で並べたいため */
+async function generateForRagEval(item, examples, provider, apiKey) {
+  try {
+    const sys = goroSystemPrompt(item.word, item.morphemes, item.wordMeaning, [], [], examples);
+    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
+    const text = (json.candidates || [])[0]?.text?.trim() || "";
+    if (!text) return { text: "", violations: [], error: "候補が返りませんでした" };
+    return { text, violations: goroViolations(text, item.morphemes), error: "" };
+  } catch (err) {
+    return { text: "", violations: [], error: err.message };
+  }
+}
+
+/* 全候補と全単語の意味をまとめてembeddingし、②③のスコアを埋める。
+   発火はさせず、記録だけする。埋め込みは1リクエストで複数テキストを
+   送れるので、単語数によらず2回で済む */
+async function scoreRagGates(items, corpus, gateThreshold, apiKey) {
+  const arms = [];
+  for (const it of items) {
+    for (const key of ["none", "shots"]) {
+      if (it.arms[key].text) arms.push({ it, key });
+    }
+  }
+  if (!arms.length) return;
+
+  const withMeaning = items.filter((it) => it.wordMeaning);
+  const [meaningVecs, candVecs] = await Promise.all([
+    withMeaning.length ? embedTexts(withMeaning.map((it) => it.wordMeaning), apiKey, "query") : Promise.resolve([]),
+    embedTexts(arms.map((a) => a.it.arms[a.key].text), apiKey, "passage"),
+  ]);
+  const meaningVecOf = new Map();
+  withMeaning.forEach((it, i) => meaningVecOf.set(it.word, meaningVecs[i]));
+
+  arms.forEach((a, i) => {
+    const arm = a.it.arms[a.key];
+    const meaningVec = meaningVecOf.get(a.it.word);
+    if (meaningVec && gateThreshold != null) {
+      arm.alignScore = cosineSim(candVecs[i], meaningVec);
+      arm.gateWouldReject = arm.alignScore < gateThreshold;
+    }
+    let best = null;
+    for (const c of corpus) {
+      if (!Array.isArray(c.goroVector) || c.word.toLowerCase() === a.it.word.toLowerCase()) continue;
+      const sim = cosineSim(candVecs[i], c.goroVector);
+      if (!best || sim > best.sim) best = { sim, word: c.word, goroText: c.goroText };
+    }
+    if (best) {
+      arm.maxRepeatSim = best.sim;
+      arm.repeatWord = best.word;
+      arm.repeatText = best.goroText;
+      arm.repeatWouldReject = best.sim >= GORO_REPEAT_SIM_THRESHOLD;
+    }
+  });
+}
+
+function setRagEvalProgress(label) {
+  const row = document.getElementById("rag-eval-progress");
+  const text = document.getElementById("rag-eval-progress-label");
+  if (!row || !text) return;
+  row.style.display = label ? "flex" : "none";
+  text.textContent = label || "";
+}
+
+async function runRagEvaluation() {
+  if (ragEvalRunning) return;
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) { toast("設定画面でAPIキーを登録してください"); return; }
+
+  const words = await pickRagEvalWords(ragEvalCount, ragEvalSource);
+  if (!words.length) { toast("お題にできる単語がありません"); return; }
+
+  ragEvalRunning = true;
+  await renderRagEvalControls();
+  setRagEvalProgress("お手本コーパスを準備中…");
+
+  try {
+    /* ②③のスコアを出すにはコーパスと閾値が要る。設定のRAGトグルとは
+       独立に、この検証のためだけに用意する（検証にはembeddingが要るが、
+       ①自体にembeddingが要らないことは、この検証で確かめる対象） */
+    await ensureGoroCorpusReady(provider, apiKey);
+    const corpus = await idbGetAll("goro_corpus");
+    const gateThreshold = await kvGet("goro_gate_threshold", null);
+
+    const items = [];
+    for (const w of words) {
+      const examples = pickGoroExamples(w.word, w.morphemes, corpus);
+      setRagEvalProgress(`生成中… ${items.length * 2} / ${words.length * 2}（${w.word}）`);
+      const none = await generateForRagEval(w, [], provider, apiKey);
+      const shots = await generateForRagEval(w, examples, provider, apiKey);
+      items.push({
+        word: w.word,
+        wordMeaning: w.wordMeaning,
+        examples: examples.map((e) => ({ word: e.word, goroText: e.goroText, affixOverlap: e.affixOverlap })),
+        arms: { none, shots },
+        /* ブラインド評価の表示順。どちらが左に来るかを毎回入れ替え、
+           位置の癖で選ばれることがないようにする */
+        order: Math.random() < 0.5 ? ["none", "shots"] : ["shots", "none"],
+        choice: null,
+      });
+      await renderRagEvalResult({ ranAt: Date.now(), items, gateThreshold, corpusSize: corpus.length });
+    }
+
+    setRagEvalProgress("②③のスコアを計算中…");
+    await scoreRagGates(items, corpus, gateThreshold, apiKey);
+
+    const data = { ranAt: Date.now(), items, gateThreshold, corpusSize: corpus.length };
+    await kvSet("rag_eval_result", data);
+    await renderRagEvalResult(data);
+    toast("検証が終わりました。ブラインド評価に進んでください");
+  } catch (err) {
+    console.error("RAGの効果検証に失敗しました:", err);
+    toast(`検証に失敗しました（${err.message}）`);
+  } finally {
+    ragEvalRunning = false;
+    setRagEvalProgress("");
+    await renderRagEvalControls();
+  }
+}
+
+async function renderRagEvalControls() {
+  const noteEl = document.getElementById("rag-eval-cost-note");
+  const runBtn = document.getElementById("rag-eval-run-btn");
+  if (!runBtn) return;
+
+  document.querySelectorAll("#rag-eval-count-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", Number(p.dataset.ragEvalCount) === ragEvalCount);
+  });
+  document.querySelectorAll("#rag-eval-source-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.ragEvalSource === ragEvalSource);
+  });
+
+  if (noteEl) {
+    noteEl.textContent = `${ragEvalCount}語をお手本なし・お手本ありの2通りで生成するため、生成の呼び出しは${ragEvalCount * 2}回です。②③のスコア計算に埋め込みを2回使います（初回のみ、お手本コーパスの作成に3回）。お題は分解済みの単語から選ぶので、分解のリクエストは発生しません。`;
+  }
+  runBtn.disabled = ragEvalRunning;
+  runBtn.textContent = ragEvalRunning ? "検証中…" : `🔬 ${ragEvalCount * 2}回で検証する`;
+}
+
+/* --- 集計 --- */
+
+function summarizeRagEval(items) {
+  const armStats = (key) => {
+    const done = items.filter((it) => it.arms[key].text && !it.arms[key].error);
+    const passed = done.filter((it) => !it.arms[key].violations.length);
+    const byCode = {};
+    for (const it of done) {
+      for (const v of it.arms[key].violations) byCode[v.code] = (byCode[v.code] || 0) + 1;
+    }
+    return {
+      total: items.length,
+      done: done.length,
+      passed: passed.length,
+      passRate: done.length ? passed.length / done.length : 0,
+      byCode,
+    };
+  };
+
+  /* ②③のクロス集計。機械チェックに通った候補にゲートが発火したかどうかが
+     肝心で、そこが「ゲートが独自に捕まえている件数」になる。既に機械チェックで
+     落ちている候補への発火は、重ねて弾いているだけで価値がない */
+  const gateCross = { firedOnPass: 0, firedOnFail: 0, quietOnPass: 0, quietOnFail: 0, scored: 0 };
+  const repeatCross = { firedOnPass: 0, firedOnFail: 0, scored: 0 };
+  for (const it of items) {
+    for (const key of ["none", "shots"]) {
+      const arm = it.arms[key];
+      if (!arm.text || arm.error) continue;
+      const mechPass = !arm.violations.length;
+      if (arm.gateWouldReject !== undefined) {
+        gateCross.scored++;
+        if (arm.gateWouldReject) mechPass ? gateCross.firedOnPass++ : gateCross.firedOnFail++;
+        else mechPass ? gateCross.quietOnPass++ : gateCross.quietOnFail++;
+      }
+      if (arm.repeatWouldReject !== undefined) {
+        repeatCross.scored++;
+        if (arm.repeatWouldReject) mechPass ? repeatCross.firedOnPass++ : repeatCross.firedOnFail++;
+      }
+    }
+  }
+
+  const judged = items.filter((it) => it.choice);
+  const wins = { shots: 0, none: 0, tie: 0 };
+  /* 選ばれた候補のうち、②のゲートなら弾かれていたもの。ゲートの
+     偽陽性（人が良いと判断した候補を弾く）を直接数える */
+  let preferredButGated = 0;
+  for (const it of judged) {
+    if (it.choice === "tie") { wins.tie++; continue; }
+    const key = it.choice === "left" ? it.order[0] : it.order[1];
+    wins[key]++;
+    if (it.arms[key].gateWouldReject) preferredButGated++;
+  }
+
+  return {
+    none: armStats("none"),
+    shots: armStats("shots"),
+    gateCross,
+    repeatCross,
+    judged: judged.length,
+    wins,
+    preferredButGated,
+  };
+}
+
+function ragViolationChips(violations) {
+  if (!violations.length) return `<span class="compare-chip ok">機械チェック合格</span>`;
+  return violations
+    .map((v) => `<span class="compare-chip ng">${escapeHtml(GORO_VIOLATION_LABELS[v.code] || v.code)}</span>`)
+    .join("");
+}
+
+const GORO_VIOLATION_LABELS = {
+  "gloss-in-parens": "意味の注釈",
+  "missing-morpheme": "接辞の抜け",
+  "duplicate-morpheme": "注釈の重複",
+  "adjacent-readings": "読みの連結",
+  "bare-reading-word": "読みの丸ごと使用",
+  "bare-reading-particle": "読み＋助詞",
+  "katakana-suru-verb": "カタカナ＋する",
+  "too-long": "長すぎ",
+};
+
+function pct(n, d) {
+  return d ? `${Math.round((n / d) * 100)}%` : "—";
+}
+
+async function renderRagEvalResult(data) {
+  const summaryEl = document.getElementById("rag-eval-summary");
+  const blindEl = document.getElementById("rag-eval-blind");
+  if (!summaryEl || !blindEl) return;
+
+  const saved = data || await kvGet("rag_eval_result", null);
+  if (!saved || !saved.items.length) {
+    summaryEl.innerHTML = "";
+    blindEl.innerHTML = `<div class="empty-note">まだ検証していません</div>`;
+    return;
+  }
+  const s = summarizeRagEval(saved.items);
+
+  const codeChips = (byCode) => {
+    const codes = Object.entries(byCode).sort((a, b) => b[1] - a[1]);
+    return codes.length
+      ? codes.map(([c, n]) => `<span class="compare-chip ng">${escapeHtml(GORO_VIOLATION_LABELS[c] || c)} ${n}</span>`).join("")
+      : `<span class="compare-chip ok">違反なし</span>`;
+  };
+
+  const gateUseful = s.gateCross.firedOnPass;
+  summaryEl.innerHTML = `
+    <div class="rag-block">
+      <div class="rag-block-title">① お手本のFew-shot<span class="rag-tag free">embedding不要</span></div>
+      <div class="rag-grid">
+        <div class="rag-cell"><span class="rag-cell-label">お手本なし</span><b>${s.none.passed}/${s.none.done}</b><span class="rag-cell-sub">${pct(s.none.passed, s.none.done)}</span></div>
+        <div class="rag-cell"><span class="rag-cell-label">お手本あり</span><b>${s.shots.passed}/${s.shots.done}</b><span class="rag-cell-sub">${pct(s.shots.passed, s.shots.done)}</span></div>
+      </div>
+      <div class="rag-note">機械チェックの初回合格率。両群とも同じ物差し（goroViolations）で測っています。</div>
+      <div class="rag-codes"><span class="rag-codes-label">なし</span><span class="compare-chips">${codeChips(s.none.byCode)}</span></div>
+      <div class="rag-codes"><span class="rag-codes-label">あり</span><span class="compare-chips">${codeChips(s.shots.byCode)}</span></div>
+    </div>
+
+    <div class="rag-block">
+      <div class="rag-block-title">② 意味整合ゲート<span class="rag-tag paid">embedding必要</span></div>
+      <div class="rag-grid">
+        <div class="rag-cell${gateUseful ? " hot" : ""}"><span class="rag-cell-label">機械OKなのに発火</span><b>${gateUseful}</b><span class="rag-cell-sub">ゲート独自の判定</span></div>
+        <div class="rag-cell"><span class="rag-cell-label">機械NGに重ねて発火</span><b>${s.gateCross.firedOnFail}</b><span class="rag-cell-sub">既に落ちている</span></div>
+      </div>
+      <div class="rag-note">${s.gateCross.scored}件を採点。「機械OKなのに発火」した件数だけが、ゲートが独自に効いている量です。0ならゲートは何も足していません。その候補を人が良いと判断していれば、逆に良い候補を弾いていることになります（下の突き合わせを参照）。</div>
+    </div>
+
+    <div class="rag-block">
+      <div class="rag-block-title">③ マンネリ検出<span class="rag-tag paid">②と同じ呼び出し</span></div>
+      <div class="rag-grid">
+        <div class="rag-cell"><span class="rag-cell-label">発火</span><b>${s.repeatCross.firedOnPass + s.repeatCross.firedOnFail}</b><span class="rag-cell-sub">/ ${s.repeatCross.scored}件</span></div>
+      </div>
+      <div class="rag-note">既存の語呂との類似度が${GORO_REPEAT_SIM_THRESHOLD}以上だった件数です。コーパスは${saved.corpusSize}件。</div>
+    </div>
+
+    <div class="rag-block">
+      <div class="rag-block-title">ブラインド評価<span class="rag-tag">${s.judged}/${saved.items.length}件 判定済み</span></div>
+      <div class="rag-grid">
+        <div class="rag-cell"><span class="rag-cell-label">お手本あり</span><b>${s.wins.shots}</b><span class="rag-cell-sub">勝ち</span></div>
+        <div class="rag-cell"><span class="rag-cell-label">お手本なし</span><b>${s.wins.none}</b><span class="rag-cell-sub">勝ち</span></div>
+        <div class="rag-cell"><span class="rag-cell-label">引き分け</span><b>${s.wins.tie}</b><span class="rag-cell-sub"></span></div>
+      </div>
+      ${s.judged ? `<div class="rag-note">あなたが選んだ候補のうち <b>${s.preferredButGated}件</b> は、②のゲートなら弾かれていました。ここが大きいほど、ゲートは良い候補を落としていることになります。</div>` : `<div class="rag-note">下の2件からどちらが良いかを選んでください。どちらがどちらかは伏せてあり、左右も毎回入れ替えています。</div>`}
+    </div>`;
+
+  blindEl.innerHTML = "";
+  saved.items.forEach((it, idx) => {
+    const card = document.createElement("div");
+    card.className = `rag-item${it.choice ? " judged" : ""}`;
+    const armHtml = (key, side) => {
+      const arm = it.arms[key];
+      if (!arm.text) return `<div class="rag-side"><div class="rag-side-text"><span class="compare-error">${escapeHtml(arm.error || "生成できませんでした")}</span></div></div>`;
+      const reveal = it.choice
+        ? `<div class="rag-reveal">${key === "shots" ? "お手本あり" : "お手本なし"}${arm.gateWouldReject ? ` ・ <span class="rag-gate-flag">②なら弾かれた</span>` : ""}${arm.alignScore !== undefined ? ` ・ 意味の一致 ${arm.alignScore.toFixed(3)}` : ""}</div>`
+        : "";
+      return `
+        <div class="rag-side">
+          <button class="rag-choice${it.choice === side ? " on" : ""}" type="button" data-idx="${idx}" data-side="${side}" ${it.choice ? "disabled" : ""}>${side === "left" ? "A" : "B"}</button>
+          <div class="rag-side-body">
+            <div class="rag-side-text">${escapeHtml(arm.text)}</div>
+            <div class="compare-chips">${ragViolationChips(arm.violations)}</div>
+            ${reveal}
+          </div>
+        </div>`;
+    };
+    const examplesHtml = it.examples.length
+      ? `<details class="compare-raw"><summary>お手本ありの群に見せた例（${it.examples.length}件）</summary><pre>${escapeHtml(it.examples.map((e) => `${e.word}（接辞の重なり${e.affixOverlap}）→ ${e.goroText}`).join("\n"))}</pre></details>`
+      : "";
+    card.innerHTML = `
+      <div class="compare-word-head">${escapeHtml(it.word)}<span class="compare-word-meaning">${escapeHtml(it.wordMeaning || "")}</span></div>
+      ${armHtml(it.order[0], "left")}
+      ${armHtml(it.order[1], "right")}
+      <div class="rag-item-actions">
+        <button class="btn-ghost rag-tie${it.choice === "tie" ? " on" : ""}" type="button" data-idx="${idx}" ${it.choice ? "disabled" : ""}>差がない</button>
+        ${it.choice ? `<button class="btn-ghost rag-undo" type="button" data-idx="${idx}">選び直す</button>` : ""}
+      </div>
+      ${it.choice ? examplesHtml : ""}`;
+    blindEl.appendChild(card);
+  });
+
+  const record = async (idx, choice) => {
+    const stored = await kvGet("rag_eval_result", null);
+    if (!stored || !stored.items[idx]) return;
+    stored.items[idx].choice = choice;
+    await kvSet("rag_eval_result", stored);
+    await renderRagEvalResult(stored);
+  };
+  blindEl.querySelectorAll(".rag-choice").forEach((b) => {
+    b.addEventListener("click", () => record(Number(b.dataset.idx), b.dataset.side));
+  });
+  blindEl.querySelectorAll(".rag-tie").forEach((b) => {
+    b.addEventListener("click", () => record(Number(b.dataset.idx), "tie"));
+  });
+  blindEl.querySelectorAll(".rag-undo").forEach((b) => {
+    b.addEventListener("click", () => record(Number(b.dataset.idx), null));
+  });
+}
+
+function openRagEvalScreen() {
+  showScreen("screen-rag-eval");
+  renderRagEvalControls();
+  renderRagEvalResult();
+}
+
+document.getElementById("rag-eval-entry-btn").addEventListener("click", openRagEvalScreen);
+document.getElementById("rag-eval-run-btn").addEventListener("click", runRagEvaluation);
+document.querySelectorAll("#rag-eval-count-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    ragEvalCount = Number(pill.dataset.ragEvalCount);
+    await renderRagEvalControls();
+  });
+});
+document.querySelectorAll("#rag-eval-source-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    ragEvalSource = pill.dataset.ragEvalSource;
+    await renderRagEvalControls();
+  });
 });
 
 /* ------------------------------------------------------------------ *

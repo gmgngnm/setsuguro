@@ -260,6 +260,7 @@
       <button class="mode-pill on" data-rag-toggle="off">オフ</button>
     </div>
     <div class="usage-note">語呂合わせの例文検索・意味整合チェック・接辞表記の統一にembeddingsを使用します。さくらのAIの無料枠に含まれないため、有効にすると別途課金が発生する場合があります。</div>
+    <button class="btn-ghost btn-wide" id="rag-eval-entry-btn" type="button">🔬 RAGの効果を実測で検証する</button>
 
     <div class="section-label" style="margin-top:6px;">音声入力</div>
     <div class="provider-row" id="voice-engine-row">
@@ -342,6 +343,38 @@
     <div class="bottom-actions">
       <button class="save-word-btn" id="batch-review-save-btn">💾 単語帳に保存</button>
     </div>
+  </section>
+
+  <!-- ============ SCREEN 10: RAGの効果検証 ============ -->
+  <section id="screen-rag-eval" class="screen">
+    <div class="appbar">
+      <span class="logo">RAGの効果検証</span>
+      <div class="nav-icons">
+        <button class="icon-btn" data-nav="settings" title="設定へ戻る" aria-label="設定へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+      </div>
+    </div>
+    <div class="usage-note">同じ単語を「お手本なし」「お手本あり」の2通りで生成し、機械チェックの初回合格率を比べます。意味整合ゲートとマンネリ検出は発火させず、スコアだけ記録して後から突き合わせます。自然さは機械では測れないので、最後にラベルを伏せた2件から良い方を選んでください。</div>
+
+    <div class="section-label">お題の単語</div>
+    <div class="provider-row" id="rag-eval-source-row">
+      <button class="mode-pill on" data-rag-eval-source="demo">見本の単語から</button>
+      <button class="mode-pill" data-rag-eval-source="book">単語帳から</button>
+    </div>
+    <div class="provider-row" id="rag-eval-count-row">
+      <button class="mode-pill" data-rag-eval-count="3">3語</button>
+      <button class="mode-pill on" data-rag-eval-count="5">5語</button>
+      <button class="mode-pill" data-rag-eval-count="10">10語</button>
+    </div>
+    <div class="usage-note" id="rag-eval-cost-note"></div>
+    <button class="btn-solid" id="rag-eval-run-btn" type="button">🔬 検証する</button>
+    <div class="spinner-row" id="rag-eval-progress" style="display:none;">
+      <div class="spinner"></div>
+      <span class="spin-label" id="rag-eval-progress-label"></span>
+    </div>
+
+    <div class="rag-summary" id="rag-eval-summary"></div>
+    <div class="section-label" style="margin-top:6px;">ブラインド評価</div>
+    <div class="rag-blind" id="rag-eval-blind"></div>
   </section>
 
   <div id="toast"></div>
