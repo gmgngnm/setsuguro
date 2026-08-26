@@ -177,9 +177,6 @@ button{font-family:inherit;cursor:pointer;}
 .morph.matrix-in{
   animation:matrixTileIn .6s ease both;
 }
-.morph.press-in{
-  animation:pressTileIn .6s ease both;
-}
 .morph.prism-in{
   animation:prismTileIn .6s ease both;
 }
@@ -196,7 +193,6 @@ button{font-family:inherit;cursor:pointer;}
 .crack-canvas{position:absolute;pointer-events:none;}
 .burst-canvas{position:absolute;pointer-events:none;}
 .matrix-canvas{position:absolute;pointer-events:none;}
-.press-canvas{position:absolute;pointer-events:none;}
 .prism-canvas{position:absolute;pointer-events:none;}
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
@@ -218,10 +214,6 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes matrixTileIn{
   from{ opacity:0; transform:translateY(-10px) scale(.94); }
   to{ opacity:1; transform:translateY(0) scale(1); }
-}
-@keyframes pressTileIn{
-  from{ opacity:0; transform:translateY(-14px) scaleY(.7); }
-  to{ opacity:1; transform:translateY(0) scaleY(1); }
 }
 @keyframes prismTileIn{
   from{ opacity:0; transform:scale(.9); }
@@ -260,7 +252,7 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 @media (prefers-reduced-motion: reduce){
-  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.press-in, .morph.prism-in,
+  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.prism-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
   .trash-can.show, .spinner, .goro-loading-dots::after,
   .letter-fix{animation:none;}

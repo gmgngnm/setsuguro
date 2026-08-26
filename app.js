@@ -614,7 +614,36 @@ const GORO_RULE_MATERIAL = [
   "お手本: dict(ジクト)/ion(イオン)/ary(アリー)、意味「辞書」 → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！」",
 ].join("\n");
 
-const GORO_RULE_MEANING_ALIGN = "一文が描く情景・オチは、単語全体の意味（上記）を連想できる内容にしてください。読みの音を成立させるためだけのこじつけの情景ではなく、音と意味の両方を一度に思い出せる一文にしてください。";
+/* 「意味を連想できる情景にする」だけでは、読みの断片化に気を取られて
+   意味と無関係な場面になりがちだったため、意味を表す言葉そのものを
+   本文にそのまま含めるよう明示する。単語ごとの具体的な意味は、この
+   定数の外側（1語ずつの経路ならプロンプト冒頭、まとめ経路なら
+   単語ごとのブロック）で既に示されているため、ここでは特定の単語の
+   意味を書き写さず「上記で示した意味」とだけ参照する（1語ずつ/
+   まとめ両方の経路から同じ文面で共有するため） */
+const GORO_RULE_MEANING_ALIGN = "一文の中に、単語全体の意味（上記で示した日本語）を表す言葉そのものを、読みの断片とは別にそのまま含めてください。単語に複数の意味がある場合は、全てを1文に詰め込もうとせず、自然に組み込める意味を1つだけ選んでください。読みの音を成立させるためだけのこじつけの情景にはせず、音と意味の両方をこの一文だけで思い出せるようにしてください。";
+
+/* wordMeaningを「・」「/」区切りで複数の意味に分ける。区切りが無ければ
+   全体を1つの意味として扱う（demo_words.csvの意味欄はこの書式で複数の
+   意味を持たせている。例:「混乱・障害」「試写・下見」） */
+function splitWordMeanings(wordMeaning) {
+  return String(wordMeaning || "").split(/[・/]/).map((s) => s.trim()).filter(Boolean);
+}
+
+/* 複数の意味を持つ単語を作り直す(avoidTexts有り)場合、既に使われた意味を
+   避けて別の意味を選ぶよう促す。「複数の意味がある場合は無理がなければ
+   複数の文章に分けて含める」という狙いを、作り直しのたびに違う意味へ
+   誘導することで実現する（1回の一文に全部詰め込ませるのは不自然になる
+   ため避ける）。1つ目の生成(avoidTextsが空)や意味が1つしか無い場合、
+   全ての意味が既に出尽くしている場合は何もしない */
+function goroUnusedMeaningHint(wordMeaning, avoidTexts) {
+  const senses = splitWordMeanings(wordMeaning);
+  if (senses.length < 2 || !avoidTexts || !avoidTexts.length) return "";
+  const usedSenses = senses.filter((s) => avoidTexts.some((t) => stripGoroAnnotations(t).includes(s)));
+  const unusedSenses = senses.filter((s) => !usedSenses.includes(s));
+  if (!usedSenses.length || !unusedSenses.length) return "";
+  return `この単語の複数の意味のうち「${usedSenses.join("」「")}」は既に登場済みです。今回は「${unusedSenses.join("」「")}」側の意味を含めることを優先してください（自然に書けない場合は無理に含めなくて構いません）。`;
+}
 
 const GORO_RULE_BAD_PATTERNS = [
   "次のパターンは日本語として不自然になるため禁止します。いずれも「読みをカタカナの塊のまま置く」ことが原因なので、上の断片化の指示を徹底すれば避けられます。",
@@ -668,6 +697,7 @@ function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNote
     GORO_RULE_MATERIAL,
 
     wordMeaning ? GORO_RULE_MEANING_ALIGN : "",
+    wordMeaning ? goroUnusedMeaningHint(wordMeaning, avoidTexts) : "",
 
     GORO_RULE_BAD_PATTERNS,
 
@@ -1365,7 +1395,7 @@ const GORO_VALIDATION_CRITERIA = (wordMeaning) => [
   "④簡潔であること（接辞の注釈を除いて10〜18文字程度、長くても22文字までが目安）。無くても意味が通る語、特に情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」など）や飾りだけの修飾語が残っていないこと。残っていれば削って短くすること。",
   "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
   "⑤読み手に伝わること: この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられること。関係のない出来事を「〜したら、〜」で並べただけの、何を言っているのか分からない文は不可（例:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」）。描かれている出来事は一つに絞られていること。",
-  wordMeaning ? "⑥一文が描く情景・オチが、単語全体の意味（上記）を連想できる内容になっていること。" : "",
+  wordMeaning ? "⑥単語全体の意味（上記で示した日本語）を表す言葉そのものが、読みの断片とは別に一文の中にそのまま含まれていること（活用形・助詞の変化は可）。複数の意味がある場合は、そのうち自然に組み込める1つが含まれていれば十分で、全てを詰め込む必要はない。含まれていない場合は、無理のない範囲でその言葉を足して書き直すこと。" : "",
 ].filter(Boolean).join("\n");
 
 function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
@@ -3522,7 +3552,7 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
    に描いた上で、要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
 
 /* 単語カードを上から順に緑の数字の滝へと置き換えながら消し去る（分解アニメ本体） */
-async function runMatrixDissolve(placeholder, word, rect) {
+async function runMatrixDissolve(placeholder, word, morphemes, rect) {
   const cs = getComputedStyle(placeholder);
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
@@ -3571,21 +3601,52 @@ async function runMatrixDissolve(placeholder, word, rect) {
   srcCtx.textBaseline = "middle";
   srcCtx.fillText(word, rect.width / 2, rect.height / 2);
 
+  /* 各接辞の文字数比率の位置で、カードを縦に区切る（crackの境界線と同じ考え方）。
+     区切ったセグメントごとに消去の開始時刻をずらすことで、単語全体が
+     一斉にではなく接辞ごとに順番に数字の雨へ分解されていくように見せる */
+  let acc = 0;
+  const boundaryFracs = [];
+  morphemes.slice(0, -1).forEach((m) => {
+    acc += (m.part || "").length;
+    boundaryFracs.push(acc / word.length);
+  });
+  const fracs = [0, ...boundaryFracs, 1];
+  const segments = fracs.slice(0, -1).map((f, i) => ({ xStart: f * rect.width, xEnd: fracs[i + 1] * rect.width }));
+
   const rainColor = "#39ff6a", rainGlow = "#c9ffda";
   const CELL = 15, TRAIL = 7;
   const colsCount = Math.ceil(rect.width / CELL) + 2;
   const columns = [];
   for (let c = -1; c < colsCount - 1; c++) {
+    const x = c * CELL + CELL / 2;
+    /* このコラムがどのセグメント（接辞）に属するかを、中心のx座標から決める */
+    let segIndex = segments.findIndex((s) => x >= s.xStart && x < s.xEnd);
+    if (segIndex === -1) segIndex = x < 0 ? 0 : segments.length - 1;
     columns.push({
-      x: c * CELL + CELL / 2,
+      x, segIndex,
       jitter: (Math.random() - 0.5) * 70,
       speed: 620 + Math.random() * 340,
       seed: Math.floor(Math.random() * 999),
     });
   }
 
-  const ERASE_MS = 560, TAIL_MS = 420, TOTAL_MS = ERASE_MS + TAIL_MS;
+  /* セグメント数が多い（＝接辞が多い）ほど全体の再生時間が伸びすぎないよう、
+     ずらし幅はセグメント数に応じて少し詰める */
+  const SEG_STAGGER = segments.length >= 4 ? 100 : 140;
+  const ERASE_MS = 560, TAIL_MS = 420;
+  const lastSegDelay = (segments.length - 1) * SEG_STAGGER;
+  const TOTAL_MS = lastSegDelay + ERASE_MS + TAIL_MS;
   const easeInQuad = (p) => p * p;
+
+  /* セグメントiの消去進捗と、それに基づく消去ラインの高さ */
+  function segState(i, t) {
+    const segT = Math.max(0, t - i * SEG_STAGGER);
+    const eraseP = Math.min(1, segT / ERASE_MS);
+    const boundaryY = -30 + easeInQuad(eraseP) * (rect.height + 60);
+    const fade = segT > ERASE_MS ? Math.max(0, 1 - (segT - ERASE_MS) / TAIL_MS) : 1;
+    return { segT, boundaryY, fade };
+  }
+
   const start = performance.now();
 
   return new Promise((resolve) => {
@@ -3596,74 +3657,77 @@ async function runMatrixDissolve(placeholder, word, rect) {
       ctx.save();
       ctx.translate(padX, padTop);
 
-      const eraseP = Math.min(1, t / ERASE_MS);
-      const boundaryY = -30 + easeInQuad(eraseP) * (rect.height + 60);
+      /* セグメントごとに、無傷部分の描画・ノイズ帯・消去ラインを個別に描く。
+         こうすると各接辞の破片が、自分の番が来るまでは無傷のまま待ち、
+         順番が来たら自分の幅の範囲だけ数字の雨へ変わっていくように見える */
+      segments.forEach((seg, i) => {
+        const { boundaryY, fade } = segState(i, t);
+        const segW = seg.xEnd - seg.xStart;
 
-      /* 消去ラインより下は、まだ無傷のカードそのまま */
-      if (boundaryY < rect.height) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, Math.max(0, boundaryY), rect.width, rect.height - Math.max(0, boundaryY));
-        ctx.clip();
-        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-        ctx.restore();
-
-        /* ラインのすぐ上、わずかな帯だけ左右にずらしたコピーを重ねて
-           デジタルノイズが走っているように見せる */
-        const glitchH = 8;
-        const gy = Math.max(0, boundaryY - glitchH);
-        if (gy < rect.height) {
+        if (boundaryY < rect.height) {
           ctx.save();
           ctx.beginPath();
-          ctx.rect(0, gy, rect.width, Math.min(glitchH, rect.height - gy));
+          ctx.rect(seg.xStart, Math.max(0, boundaryY), segW, rect.height - Math.max(0, boundaryY));
           ctx.clip();
-          ctx.globalCompositeOperation = "lighter";
-          ctx.globalAlpha = 0.5;
-          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, -3, 0, rect.width, rect.height);
-          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 3, 0, rect.width, rect.height);
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
           ctx.restore();
-        }
-      }
 
-      const overallFade = t > ERASE_MS ? Math.max(0, 1 - (t - ERASE_MS) / TAIL_MS) : 1;
-
-      /* 消去ラインの位置を示す、発光する走査線 */
-      if (overallFade > 0 && boundaryY > -10 && boundaryY < rect.height + 10) {
-        ctx.save();
-        ctx.globalAlpha = overallFade;
-        ctx.shadowColor = rainColor;
-        ctx.shadowBlur = 10;
-        ctx.strokeStyle = rainGlow;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, boundaryY);
-        ctx.lineTo(rect.width, boundaryY);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      /* 消去ラインに寄り添いながら緑の数字が滝のように流れ落ちる */
-      if (overallFade > 0) {
-        ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        columns.forEach((col) => {
-          const headY = boundaryY + col.jitter + (t > ERASE_MS ? (t - ERASE_MS) * col.speed / 1000 : 0);
-          for (let k = 0; k < TRAIL; k++) {
-            const gy = headY - k * CELL;
-            if (gy < -padTop || gy > rect.height + padBottom) continue;
-            const a = (1 - k / TRAIL) * overallFade;
-            if (a <= 0.02) continue;
-            const digit = (col.seed + k * 7 + Math.floor(t / 70)) % 10;
+          /* ラインのすぐ上、わずかな帯だけ左右にずらしたコピーを重ねて
+             デジタルノイズが走っているように見せる */
+          const glitchH = 8;
+          const gy = Math.max(0, boundaryY - glitchH);
+          if (gy < rect.height) {
             ctx.save();
-            ctx.globalAlpha = a;
-            ctx.fillStyle = k === 0 ? rainGlow : rainColor;
-            if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 6; }
-            ctx.fillText(String(digit), col.x, gy);
+            ctx.beginPath();
+            ctx.rect(seg.xStart, gy, segW, Math.min(glitchH, rect.height - gy));
+            ctx.clip();
+            ctx.globalCompositeOperation = "lighter";
+            ctx.globalAlpha = 0.5;
+            ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, -3, 0, rect.width, rect.height);
+            ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 3, 0, rect.width, rect.height);
             ctx.restore();
           }
-        });
-      }
+        }
+
+        /* 消去ラインの位置を示す、発光する走査線（このセグメントの幅だけ） */
+        if (fade > 0 && boundaryY > -10 && boundaryY < rect.height + 10) {
+          ctx.save();
+          ctx.globalAlpha = fade;
+          ctx.shadowColor = rainColor;
+          ctx.shadowBlur = 10;
+          ctx.strokeStyle = rainGlow;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(seg.xStart, boundaryY);
+          ctx.lineTo(seg.xEnd, boundaryY);
+          ctx.stroke();
+          ctx.restore();
+        }
+      });
+
+      /* 消去ラインに寄り添いながら緑の数字が滝のように流れ落ちる。
+         各コラムは自分が属するセグメントの消去タイミングに従う */
+      ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      columns.forEach((col) => {
+        const { segT, boundaryY, fade } = segState(col.segIndex, t);
+        if (fade <= 0) return;
+        const headY = boundaryY + col.jitter + (segT > ERASE_MS ? (segT - ERASE_MS) * col.speed / 1000 : 0);
+        for (let k = 0; k < TRAIL; k++) {
+          const gy = headY - k * CELL;
+          if (gy < -padTop || gy > rect.height + padBottom) continue;
+          const a = (1 - k / TRAIL) * fade;
+          if (a <= 0.02) continue;
+          const digit = (col.seed + k * 7 + Math.floor(t / 70)) % 10;
+          ctx.save();
+          ctx.globalAlpha = a;
+          ctx.fillStyle = k === 0 ? rainGlow : rainColor;
+          if (k === 0) { ctx.shadowColor = rainColor; ctx.shadowBlur = 6; }
+          ctx.fillText(String(digit), col.x, gy);
+          ctx.restore();
+        }
+      });
 
       ctx.restore();
 
@@ -3846,361 +3910,6 @@ async function runMatrixTileResolve(el, delayMs) {
   el.style.visibility = "visible";
 }
 
-/* ---- 「活版印刷」アニメーション: 単語カードが活字のようにガコンと下へ
-   押し込まれ、インクが掠れながら消え去る。続いて接辞カードは上からハンコの
-   ように紙へ打ち付けられ、インクの飛沫・紙のへこみを残しながら現れる。
-   仕組みは他のスタイルと同じく、無傷の見た目を一度オフスクリーンに描いた
-   上で、要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
-
-/* 単語カードが活字のようにガコンと下に押し込まれ、掠れながら消え去る（分解アニメ本体） */
-async function runPressDissolve(placeholder, word, rect) {
-  const cs = getComputedStyle(placeholder);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-
-  const padX = 30, padTop = 20, padBottom = 60;
-  const canvasW = rect.width + padX * 2;
-  const canvasH = rect.height + padTop + padBottom;
-
-  const canvas = document.createElement("canvas");
-  canvas.className = "press-canvas";
-  canvas.style.left = `${-padX}px`;
-  canvas.style.top = `${-padTop}px`;
-  canvas.width = Math.round(canvasW * dpr);
-  canvas.height = Math.round(canvasH * dpr);
-  canvas.style.width = `${canvasW}px`;
-  canvas.style.height = `${canvasH}px`;
-
-  placeholder.appendChild(canvas);
-  placeholder.style.visibility = "hidden";
-  canvas.style.visibility = "visible";
-
-  const ctx = canvas.getContext("2d");
-
-  const bg = cs.backgroundColor;
-  const borderColor = cs.borderTopColor;
-  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
-  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
-  const textColor = cs.color;
-  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
-
-  const srcCanvas = document.createElement("canvas");
-  srcCanvas.width = Math.round(rect.width * dpr);
-  srcCanvas.height = Math.round(rect.height * dpr);
-  const srcCtx = srcCanvas.getContext("2d");
-  srcCtx.scale(dpr, dpr);
-  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
-  srcCtx.fillStyle = bg;
-  srcCtx.fill();
-  srcCtx.lineWidth = borderWidth;
-  srcCtx.strokeStyle = borderColor;
-  srcCtx.stroke();
-  srcCtx.font = font;
-  srcCtx.fillStyle = textColor;
-  srcCtx.textAlign = "center";
-  srcCtx.textBaseline = "middle";
-  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
-
-  const cx = rect.width / 2, cy = rect.height / 2;
-
-  /* 掠れ: 活字が擦り減っていくように、ランダムな箇所からインクが抜けていく */
-  const KASURE_COUNT = 7;
-  const kasure = Array.from({ length: KASURE_COUNT }, () => ({
-    x: Math.random() * rect.width,
-    y: Math.random() * rect.height,
-    r: rect.height * (0.18 + Math.random() * 0.22),
-    delayMs: 160 + Math.random() * 260,
-  }));
-
-  /* 紙くず: 打刻の瞬間に飛び散る小さな破片 */
-  const DEBRIS_COUNT = 10;
-  const debris = Array.from({ length: DEBRIS_COUNT }, () => {
-    const angle = Math.PI + Math.random() * Math.PI;
-    const speed = 90 + Math.random() * 160;
-    return {
-      x0: cx + (Math.random() - 0.5) * rect.width * 0.7,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 60,
-      size: 2 + Math.random() * 3,
-      rot: Math.random() * Math.PI,
-      vrot: (Math.random() - 0.5) * 10,
-    };
-  });
-
-  const IMPACT_MS = 130, DISSOLVE_MS = 680;
-  const gravity = 480;
-  const easeInCubic = (p) => p * p * p;
-  const start = performance.now();
-
-  return new Promise((resolve) => {
-    function frame(now) {
-      const t = Math.max(0, now - start);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, canvasW, canvasH);
-      ctx.save();
-      ctx.translate(padX, padTop);
-
-      const ip = Math.min(1, t / IMPACT_MS);
-      const squash = 1 - easeInCubic(ip) * 0.42;
-      const dropY = easeInCubic(ip) * 8;
-
-      /* 打刻の瞬間、紙が白く光る */
-      if (t < IMPACT_MS + 90) {
-        const fp = Math.max(0, 1 - Math.max(0, t - IMPACT_MS * 0.5) / 140);
-        if (fp > 0) {
-          ctx.save();
-          ctx.globalAlpha = fp * 0.55;
-          ctx.fillStyle = "#ffffff";
-          roundRectPath(ctx, 0, 0, rect.width, rect.height, radius);
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-
-      const overallAlpha = t < IMPACT_MS ? 1 : Math.max(0, 1 - (t - IMPACT_MS) / (DISSOLVE_MS - IMPACT_MS));
-
-      if (overallAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = overallAlpha;
-        ctx.translate(cx, cy + dropY);
-        ctx.scale(1, squash);
-        ctx.translate(-cx, -cy);
-
-        /* 版ズレしたゴースト: わずかにずらして薄く重ねる */
-        if (t > IMPACT_MS) {
-          ctx.save();
-          ctx.globalAlpha *= 0.3;
-          ctx.translate(2.5, -1.5);
-          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-          ctx.restore();
-        }
-
-        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-
-        /* 掠れ: インクが抜けていく部分を丸く消していく */
-        kasure.forEach((k) => {
-          const kt = t - k.delayMs;
-          if (kt < 0) return;
-          const kp = Math.min(1, kt / 260);
-          ctx.save();
-          ctx.globalCompositeOperation = "destination-out";
-          ctx.globalAlpha = kp * 0.9;
-          const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r * kp);
-          g.addColorStop(0, "rgba(0,0,0,1)");
-          g.addColorStop(1, "rgba(0,0,0,0)");
-          ctx.fillStyle = g;
-          ctx.beginPath();
-          ctx.arc(k.x, k.y, k.r * kp, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        });
-
-        ctx.restore();
-      }
-
-      /* 紙くず */
-      if (t >= IMPACT_MS) {
-        const ldt = (t - IMPACT_MS) / 1000;
-        const fade = Math.max(0, 1 - ldt / 0.5);
-        if (fade > 0) {
-          ctx.fillStyle = textColor;
-          debris.forEach((d) => {
-            const x = d.x0 + d.vx * ldt;
-            const y = rect.height + d.vy * ldt + 0.5 * gravity * ldt * ldt;
-            ctx.save();
-            ctx.globalAlpha = fade * 0.85;
-            ctx.translate(x, y);
-            ctx.rotate(d.rot + d.vrot * ldt);
-            ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
-            ctx.restore();
-          });
-        }
-      }
-
-      ctx.restore();
-
-      if (t >= DISSOLVE_MS) { resolve(); return; }
-      requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
-  });
-}
-
-/* 接辞カードが活字ハンコのように上から落ちてきて紙に打ち付けられ、
-   インクの飛沫・紙のへこみを残しながら現れる（単語側の活版印刷演出と対になる） */
-async function runPressTileResolve(el, delayMs) {
-  await ensureMorphFontLoaded();
-  el.style.position = "relative";
-  const rect = { width: el.offsetWidth, height: el.offsetHeight };
-  const partEl = el.querySelector(".morph-part");
-  const elBox = el.getBoundingClientRect();
-  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
-  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
-
-  el.style.visibility = "hidden";
-  if (delayMs > 0) await sleep(delayMs);
-  if (!el.isConnected) return;
-
-  const cs = getComputedStyle(el);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  const padX = 16, padTop = 70, padBottom = 16;
-  const canvasW = rect.width + padX * 2;
-  const canvasH = rect.height + padTop + padBottom;
-
-  const canvas = document.createElement("canvas");
-  canvas.className = "press-canvas";
-  canvas.style.left = `${-padX}px`;
-  canvas.style.top = `${-padTop}px`;
-  canvas.width = Math.round(canvasW * dpr);
-  canvas.height = Math.round(canvasH * dpr);
-  canvas.style.width = `${canvasW}px`;
-  canvas.style.height = `${canvasH}px`;
-  el.appendChild(canvas);
-  canvas.style.visibility = "visible";
-  const ctx = canvas.getContext("2d");
-
-  const bg = cs.backgroundColor;
-  const borderColor = cs.borderTopColor;
-  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
-  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
-  const textColor = cs.color;
-  const partText = partEl ? partEl.textContent : "";
-  const partCs = partEl ? getComputedStyle(partEl) : cs;
-  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || "'JetBrains Mono',monospace"}`;
-
-  const srcCanvas = document.createElement("canvas");
-  srcCanvas.width = Math.round(rect.width * dpr);
-  srcCanvas.height = Math.round(rect.height * dpr);
-  const srcCtx = srcCanvas.getContext("2d");
-  srcCtx.scale(dpr, dpr);
-  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
-  srcCtx.fillStyle = bg;
-  srcCtx.fill();
-  srcCtx.lineWidth = borderWidth;
-  srcCtx.strokeStyle = borderColor;
-  srcCtx.stroke();
-  srcCtx.font = font;
-  srcCtx.fillStyle = textColor;
-  srcCtx.textAlign = "center";
-  srcCtx.textBaseline = "middle";
-  srcCtx.fillText(partText, rect.width / 2, partCenterY);
-
-  const cx = rect.width / 2;
-
-  /* インクの飛沫: 打刻の瞬間に周囲へ飛び散る小さな破片 */
-  const DEBRIS_COUNT = 8;
-  const debris = Array.from({ length: DEBRIS_COUNT }, () => {
-    const angle = Math.PI + Math.random() * Math.PI;
-    const speed = 60 + Math.random() * 110;
-    return {
-      x0: cx + (Math.random() - 0.5) * rect.width * 0.6,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 40,
-      size: 1.6 + Math.random() * 2.6,
-      rot: Math.random() * Math.PI,
-      vrot: (Math.random() - 0.5) * 9,
-    };
-  });
-
-  /* 掠れ: 打刻直後はインクが均一でなく、じわっと馴染んで均される */
-  const KASURE_COUNT = 5;
-  const kasure = Array.from({ length: KASURE_COUNT }, () => ({
-    x: Math.random() * rect.width,
-    y: Math.random() * rect.height,
-    r: rect.height * (0.16 + Math.random() * 0.2),
-  }));
-
-  const FALL_MS = 300, TOTAL_MS = FALL_MS + 420;
-  const debrisGravity = 900;
-  const easeInQuad = (p) => p * p;
-  const start = performance.now();
-
-  await new Promise((resolve) => {
-    function frame(now) {
-      const t = Math.max(0, now - start);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, canvasW, canvasH);
-      ctx.save();
-      ctx.translate(padX, padTop);
-
-      const impacted = t >= FALL_MS;
-      let y, squash;
-      if (!impacted) {
-        const fp = t / FALL_MS;
-        y = -padTop * 0.85 * (1 - easeInQuad(fp));
-        squash = 1;
-      } else {
-        const bt = Math.min(1, (t - FALL_MS) / 220);
-        const bounce = Math.sin(bt * Math.PI) * (1 - bt);
-        squash = 1 - (1 - bt) * 0.3 + bounce * 0.08;
-        y = 0;
-      }
-
-      /* 活字ブロックの落下・打刻時の潰れ（下端を基準に縦へ潰す） */
-      ctx.save();
-      ctx.translate(0, y + rect.height * (1 - squash));
-      ctx.scale(1, squash);
-      ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-      ctx.restore();
-
-      if (impacted) {
-        /* 打刻直後、輪郭の内側にわずかな凹み影を落として紙のへこみを表現 */
-        const settleP = Math.min(1, (t - FALL_MS) / 260);
-        ctx.save();
-        ctx.globalAlpha = 0.22 * (1 - settleP * 0.5);
-        ctx.strokeStyle = "rgba(0,0,0,0.5)";
-        ctx.lineWidth = 2;
-        roundRectPath(ctx, borderWidth, borderWidth, rect.width - borderWidth * 2, rect.height - borderWidth * 2, Math.max(0, radius - 2));
-        ctx.stroke();
-        ctx.restore();
-
-        /* 掠れ: 打刻直後は薄く抜けていた箇所が徐々に馴染む */
-        const kp = Math.max(0, 1 - (t - FALL_MS) / 320);
-        if (kp > 0) {
-          ctx.save();
-          ctx.globalCompositeOperation = "destination-out";
-          kasure.forEach((k) => {
-            ctx.globalAlpha = kp * 0.5;
-            const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r);
-            g.addColorStop(0, "rgba(0,0,0,1)");
-            g.addColorStop(1, "rgba(0,0,0,0)");
-            ctx.fillStyle = g;
-            ctx.beginPath();
-            ctx.arc(k.x, k.y, k.r, 0, Math.PI * 2);
-            ctx.fill();
-          });
-          ctx.restore();
-        }
-
-        /* インクの飛沫 */
-        const ldt = (t - FALL_MS) / 1000;
-        const fade = Math.max(0, 1 - ldt / 0.4);
-        if (fade > 0) {
-          ctx.fillStyle = textColor;
-          debris.forEach((d) => {
-            const x = d.x0 + d.vx * ldt;
-            const dy = rect.height + d.vy * ldt + 0.5 * debrisGravity * ldt * ldt;
-            ctx.save();
-            ctx.globalAlpha = fade * 0.8;
-            ctx.translate(x, dy);
-            ctx.rotate(d.rot + d.vrot * ldt);
-            ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
-            ctx.restore();
-          });
-        }
-      }
-
-      ctx.restore();
-
-      if (t >= TOTAL_MS) { resolve(); return; }
-      requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
-  });
-
-  canvas.remove();
-  el.style.visibility = "visible";
-}
-
 /* ---- 「プリズム」アニメーション: 単語カードに白色光が差し込み、プリズムのように
    七色へ分光しながら砕け、万華鏡状に対称なスペクトル粒子となって拡散して消える。
    続く接辞カードは、外側の万華鏡から粒子が渦を巻いて収束し、ずれていた七色の像が
@@ -4209,9 +3918,12 @@ async function runPressTileResolve(el, delayMs) {
    要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
 
 /* プリズムが白色光を分解したときの七色帯。分光ゴーストの着色に使う。
-   彩度・明度を抑えたパステル寄りの色で、加算合成で重ねても
-   ネオンサインのように刺さらない柔らかい発色にしている */
-const PRISM_BANDS = ["#ff9aa0", "#ffc48a", "#fff1a8", "#a8f0c0", "#a0e6f0", "#aab8f5", "#dcb3f5"];
+   彩度を大きく抑えたくすみ寄りの色で、加算合成で重ねても
+   派手なネオンにならない、控えめな発色にしている */
+const PRISM_BANDS = [
+  "hsl(355,38%,78%)", "hsl(32,38%,76%)", "hsl(50,38%,78%)", "hsl(140,32%,74%)",
+  "hsl(195,32%,76%)", "hsl(228,32%,78%)", "hsl(280,32%,80%)",
+];
 const prismEaseOut = (p) => 1 - Math.pow(1 - p, 3);
 const prismEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 
@@ -4231,13 +3943,13 @@ function prismGlowSprite(hue) {
   c.width = c.height = size;
   const g = c.getContext("2d");
   const h = idx * step;
-  /* 彩度を70%程度に抑え、中心の不透明度も1未満にして、
-     加算合成で重なっても白飛びしにくい淡い光にする */
+  /* 彩度を35%程度まで抑え、中心の不透明度も1未満にして、
+     加算合成で重なっても白飛びしない、控えめな光にする */
   const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, `hsla(${h},70%,92%,.82)`);
-  grad.addColorStop(0.2, `hsla(${h},70%,80%,.62)`);
-  grad.addColorStop(0.52, `hsla(${h},70%,68%,.2)`);
-  grad.addColorStop(1, `hsla(${h},70%,64%,0)`);
+  grad.addColorStop(0, `hsla(${h},35%,90%,.7)`);
+  grad.addColorStop(0.2, `hsla(${h},35%,80%,.52)`);
+  grad.addColorStop(0.52, `hsla(${h},35%,70%,.16)`);
+  grad.addColorStop(1, `hsla(${h},35%,66%,0)`);
   g.fillStyle = grad;
   g.fillRect(0, 0, size, size);
   prismSpriteCache[idx] = c;
@@ -4315,22 +4027,9 @@ function prismTintedCopy(src, color, solid = false) {
   return c;
 }
 
-/* 万華鏡のロゼット（放射状の虹の扇）。半径だけが引数なので一度作れば使い回せる */
-function prismFanGradients(ctx, inner, outer) {
-  const grads = [];
-  for (let j = 0; j < 12; j++) {
-    const grad = ctx.createRadialGradient(0, 0, inner, 0, 0, outer);
-    grad.addColorStop(0, `hsla(${j * 30},60%,80%,.7)`);
-    grad.addColorStop(0.55, `hsla(${j * 30},60%,72%,.3)`);
-    grad.addColorStop(1, `hsla(${j * 30},60%,68%,0)`);
-    grads.push(grad);
-  }
-  return grads;
-}
-
 /* 単語カードが白色光で分光し、七色の像へ割れたのち、
    万華鏡状のスペクトル粒子となって飛散する（分解アニメ本体） */
-async function runPrismDissolve(placeholder, word, rect) {
+async function runPrismDissolve(placeholder, word, morphemes, rect) {
   const cs = getComputedStyle(placeholder);
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
@@ -4364,8 +4063,6 @@ async function runPrismDissolve(placeholder, word, rect) {
   /* 光の届く半径は「カード中心からcanvasの縁までの最短距離」で頭打ちにする。
      これを超えると扇や暗幕がcanvasの縁で直線に切れて、四角い切り口が見えてしまう */
   const reach = Math.min(padX + cx, padY + cy);
-  const fanR = reach * 0.99;
-  const fanGrads = prismFanGradients(ctx, rect.height * 0.28, fanR);
   const flashSprite = prismFlashSprite();
 
   /* 加算合成のスペクトルは明るい紙の上では白く飛んでしまうため、
@@ -4380,12 +4077,28 @@ async function runPrismDissolve(placeholder, word, rect) {
   const T_SPLIT0 = 200;           // 分光が始まる
   const T_SPLIT1 = 640;           // 七色が開ききる
   const T_BEAM = 300;             // 白色光が走査しきる
-  const T_BURST = 580;            // 粒子として砕け散り始める
-  const T_FADE = 1180;            // 全体が消え始める
-  const TOTAL_MS = 1460;
+  const T_BURST = 580;            // 最初のセグメントが砕け散り始める
+
+  /* 各接辞の文字数比率の位置で、カードを縦にセグメント分けする
+     （matrix/crackの境界線と同じ考え方）。セグメントごとに砕ける時刻を
+     ずらすことで、単語全体が一斉にではなく接辞ごとに順番に砕けていく
+     ように見せる */
+  let acc = 0;
+  const boundaryFracs = [];
+  morphemes.slice(0, -1).forEach((m) => {
+    acc += (m.part || "").length;
+    boundaryFracs.push(acc / word.length);
+  });
+  const fracs = [0, ...boundaryFracs, 1];
+  const segments = fracs.slice(0, -1).map((f, i) => ({ xStart: f * rect.width, xEnd: fracs[i + 1] * rect.width }));
+  const SEG_STAGGER = segments.length >= 4 ? 90 : 130;
+  const lastBurstT = T_BURST + (segments.length - 1) * SEG_STAGGER;
+  const T_FADE = lastBurstT + 600;    // 全体が消え始める
+  const TOTAL_MS = lastBurstT + 880;
 
   /* 生成位置はカード面上に散らし、中心から見た方角で色相を決める。
-     同じ方角の粒子が同じ色になるので、放射状に虹が並ぶ */
+     同じ方角の粒子が同じ色になるので、放射状に虹が並ぶ。
+     どのセグメント（接辞）の上に生まれたかで、砕け始める時刻を決める */
   const parts = [];
   for (let i = 0; i < 96; i++) {
     const px = Math.random() * rect.width;
@@ -4393,6 +4106,8 @@ async function runPrismDissolve(placeholder, word, rect) {
     const ang = Math.atan2(py - cy, px - cx) + (Math.random() - 0.5) * 0.35;
     const speed = 70 + Math.random() * 240;
     const shard = Math.random() < 0.42;
+    let segIndex = segments.findIndex((s) => px >= s.xStart && px < s.xEnd);
+    if (segIndex === -1) segIndex = px < 0 ? 0 : segments.length - 1;
     parts.push({
       x: px, y: py,
       vx: Math.cos(ang) * speed * (1 + Math.random() * 0.5),
@@ -4405,6 +4120,7 @@ async function runPrismDissolve(placeholder, word, rect) {
       delay: Math.random() * 220,
       life: 620 + Math.random() * 430,
       mirror: Math.random() < 0.55,   // 万華鏡側にも複製するか
+      burstT: T_BURST + segIndex * SEG_STAGGER,
     });
   }
 
@@ -4412,7 +4128,7 @@ async function runPrismDissolve(placeholder, word, rect) {
      毎フレーム積分しないので、フレームレートが揺れても軌道が変わらない */
   const TAU = 0.42;
   function drawParticle(p, t, mul) {
-    const lt = t - T_BURST - p.delay;
+    const lt = t - p.burstT - p.delay;
     if (lt <= 0) return;
     const lp = lt / p.life;
     if (lp >= 1) return;
@@ -4429,7 +4145,7 @@ async function runPrismDissolve(placeholder, word, rect) {
       ctx.globalAlpha = a;
       ctx.translate(x, y);
       ctx.rotate(p.rot + p.spin * s);
-      ctx.fillStyle = `hsl(${hue % 360},65%,80%)`;
+      ctx.fillStyle = `hsl(${hue % 360},35%,82%)`;
       ctx.beginPath();
       ctx.moveTo(0, -p.size * 1.9);
       ctx.lineTo(p.size * 0.5, 0);
@@ -4470,24 +4186,6 @@ async function runPrismDissolve(placeholder, word, rect) {
         ctx.restore();
       }
 
-      /* 1) 背景に開く虹の扇（万華鏡のロゼット） */
-      const fanA = t < T_SPLIT0 ? 0 : Math.min(1, (t - T_SPLIT0) / 420) * Math.max(stage, 0.25) * outFade;
-      if (fanA > 0.01) {
-        ctx.save();
-        ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = 0.22 * fanA;
-        ctx.translate(cx, cy);
-        ctx.rotate(t / 2600);
-        for (let j = 0; j < fanGrads.length; j++) {
-          ctx.fillStyle = fanGrads[j];
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.arc(0, 0, fanR, (j / 12) * Math.PI * 2, ((j + 0.55) / 12) * Math.PI * 2);
-          ctx.closePath();
-          ctx.fill();
-        }
-        ctx.restore();
-      }
 
       /* 2) カード本体と、分散軸に沿って扇状に開いていく七色のゴースト */
       const sp = t <= T_SPLIT0 ? 0 : Math.min(1, (t - T_SPLIT0) / (T_SPLIT1 - T_SPLIT0));
@@ -4543,24 +4241,22 @@ async function runPrismDissolve(placeholder, word, rect) {
         }
       }
 
-      /* 4) 砕けた瞬間の閃光 */
-      const rw = t - T_BURST;
-      if (rw > -70 && rw < 300) {
+      /* 4) 各セグメント（接辞）が砕ける瞬間の閃光。セグメントごとに
+            タイミングをずらし、その場所だけで光るようにする */
+      segments.forEach((seg, i) => {
+        const rw = t - (T_BURST + i * SEG_STAGGER);
+        if (rw <= -70 || rw >= 300) return;
         const fa = (rw < 0 ? (rw + 70) / 70 : Math.max(0, 1 - rw / 300)) * outFade;
-        if (fa > 0.01) {
-          const fr = (rect.width * 0.55) * (1 + Math.max(0, rw) / 300);
-          ctx.save();
-          ctx.globalCompositeOperation = "lighter";
-          ctx.globalAlpha = fa * 0.7;
-          ctx.drawImage(flashSprite, cx - fr, cy - fr, fr * 2, fr * 2);
-          /* 同じ発光スプライトを横に引き伸ばし、レンズが起こす横一文字の光条にする */
-          const fw = rect.width * (1.5 + Math.max(0, rw) / 260);
-          const fh = Math.max(3, 16 * (1 - Math.max(0, rw) / 300));
-          ctx.globalAlpha = fa * 0.6;
-          ctx.drawImage(flashSprite, cx - fw, cy - fh, fw * 2, fh * 2);
-          ctx.restore();
-        }
-      }
+        if (fa <= 0.01) return;
+        const segCx = (seg.xStart + seg.xEnd) / 2;
+        const segW = Math.max(seg.xEnd - seg.xStart, rect.height * 0.6);
+        const fr = segW * 0.55 * (1 + Math.max(0, rw) / 300);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = fa * 0.65;
+        ctx.drawImage(flashSprite, segCx - fr, cy - fr, fr * 2, fr * 2);
+        ctx.restore();
+      });
 
       /* 5) スペクトル粒子。中心まわりに回転・鏡像を重ねて万華鏡の対称模様にする。
             反射コピーは淡くして、本体の粒子が埋もれないようにする */
@@ -4694,7 +4390,7 @@ async function runPrismTileResolve(el, delayMs) {
       ctx.globalAlpha = a;
       ctx.translate(x, y);
       ctx.rotate(ang + p.spin * (lt / 1000));
-      ctx.fillStyle = `hsl(${hue % 360},65%,82%)`;
+      ctx.fillStyle = `hsl(${hue % 360},35%,84%)`;
       ctx.beginPath();
       ctx.moveTo(0, -p.size * 1.8);
       ctx.lineTo(p.size * 0.5, 0);
@@ -4808,11 +4504,11 @@ async function runPrismTileResolve(el, delayMs) {
         const bx = -span / 2 + wp * span;
         const bw = 22;
         const grad = ctx.createLinearGradient(bx - bw, 0, bx + bw, 0);
-        grad.addColorStop(0, "rgba(255,170,190,0)");
-        grad.addColorStop(0.3, "rgba(255,225,150,.55)");
-        grad.addColorStop(0.5, "rgba(255,255,255,.75)");
-        grad.addColorStop(0.7, "rgba(150,225,255,.55)");
-        grad.addColorStop(1, "rgba(190,170,255,0)");
+        grad.addColorStop(0, "rgba(225,210,215,0)");
+        grad.addColorStop(0.3, "rgba(230,220,200,.4)");
+        grad.addColorStop(0.5, "rgba(255,255,255,.6)");
+        grad.addColorStop(0.7, "rgba(205,220,225,.4)");
+        grad.addColorStop(1, "rgba(215,205,220,0)");
         ctx.fillStyle = grad;
         ctx.fillRect(bx - bw, -span, bw * 2, span * 2);
         ctx.restore();
@@ -4892,8 +4588,8 @@ const DECOMPOSE_ANIM_STYLES = {
     tileVars() {
       return {};
     },
-    /* 単語ブロックが上から緑の数字の雨へと分解されて消え去る */
-    async intro(placeholder, word) {
+    /* 単語ブロックが接辞ごとに順番に、上から緑の数字の雨へと分解されて消え去る */
+    async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
       await ensureMorphFontLoaded();
 
@@ -4902,37 +4598,12 @@ const DECOMPOSE_ANIM_STYLES = {
       placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
-      await runMatrixDissolve(placeholder, word, rect);
+      await runMatrixDissolve(placeholder, word, morphemes, rect);
     },
     /* 接辞カードが数字の雨として降ってきて、カードの形へ収束する */
     mountTile(el, i) {
       if (reducedMotion()) return;
       runMatrixTileResolve(el, i * 110);
-    },
-  },
-
-  press: {
-    label: "活版印刷",
-    tileClass: "press-in",
-    tileVars() {
-      return {};
-    },
-    /* 単語ブロックが活字のようにガコンと下へ押し込まれ、掠れながら消え去る */
-    async intro(placeholder, word) {
-      if (reducedMotion()) return;
-      await ensureMorphFontLoaded();
-
-      placeholder.classList.remove("word-pulse");
-      placeholder.style.whiteSpace = "nowrap";
-      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
-      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
-      placeholder.style.position = "relative";
-      await runPressDissolve(placeholder, word, rect);
-    },
-    /* 接辞カードが上からハンコのように紙へ打ち付けられて現れる */
-    mountTile(el, i) {
-      if (reducedMotion()) return;
-      runPressTileResolve(el, i * 130);
     },
   },
 
@@ -4942,8 +4613,9 @@ const DECOMPOSE_ANIM_STYLES = {
     tileVars() {
       return {};
     },
-    /* 単語ブロックが白色光で七色に分光し、万華鏡状のスペクトル粒子となって砕け散る */
-    async intro(placeholder, word) {
+    /* 単語ブロックが白色光で七色に分光し、接辞ごとに順番に
+       万華鏡状のスペクトル粒子となって砕け散る */
+    async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
       await ensureMorphFontLoaded();
 
@@ -4952,7 +4624,7 @@ const DECOMPOSE_ANIM_STYLES = {
       placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
-      await runPrismDissolve(placeholder, word, rect);
+      await runPrismDissolve(placeholder, word, morphemes, rect);
     },
     /* 接辞カードが万華鏡から渦を巻いて集まり、七色の像が重なって結像する */
     mountTile(el, i) {
