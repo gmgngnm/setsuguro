@@ -6578,8 +6578,7 @@ function batchRowToWordRecord(row, existing) {
   };
 }
 
-async function addBatchWords(text) {
-  const words = parseBatchWordInput(text);
+async function addBatchWords(words) {
   if (!words.length) { toast("英単語が見つかりませんでした"); return; }
 
   const queued = new Set((await loadBatchQueue()).map((r) => r.id));
@@ -6593,6 +6592,28 @@ async function addBatchWords(text) {
   }
   toast(skipped ? `${added}語を追加（${skipped}語は登録済みのため除外）` : `${added}語を追加しました`);
   await renderBatchQueue();
+}
+
+/* まとめて登録用のCSVは、単語帳のCSV(CSV_COLUMNS)とは別物で、
+   ユーザーが手で書くことを前提にした「wordの1列だけ」の最小の書式。
+   単語帳のCSVをそのまま読ませても、word列だけを拾って動く */
+function batchCsvTemplate() {
+  return ["word", "abandon", "bereavement", "competition"].join("\r\n");
+}
+
+/* CSVから英単語を取り出す。word列があればそれを、無ければ全セルを対象に
+   parseBatchWordInputへ渡して、英単語として妥当なものだけを拾う
+   （ヘッダ行の"word"という文字自体は英単語として拾われうるが、
+   word列を持つCSVではヘッダ行を読み飛ばすので混入しない） */
+function batchWordsFromCsv(text) {
+  const rows = parseCSV(text);
+  if (!rows.length) return [];
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const wordCol = headers.indexOf("word");
+  const cells = wordCol >= 0
+    ? rows.slice(1).map((r) => r[wordCol] ?? "")
+    : rows.flat();
+  return parseBatchWordInput(cells.join("\n"));
 }
 
 function setBatchProgress(label) {
@@ -6874,8 +6895,24 @@ document.getElementById("batch-review-save-btn").addEventListener("click", saveB
 
 document.getElementById("batch-add-btn").addEventListener("click", async () => {
   const input = document.getElementById("batch-input");
-  await addBatchWords(input.value);
+  await addBatchWords(parseBatchWordInput(input.value));
   input.value = "";
+});
+
+document.getElementById("batch-csv-template-btn").addEventListener("click", () => {
+  downloadCSV(batchCsvTemplate(), "engolo-batch-template");
+});
+
+const batchCsvInput = document.getElementById("batch-csv-input");
+document.getElementById("batch-csv-import-btn").addEventListener("click", () => batchCsvInput.click());
+batchCsvInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const text = await file.text();
+  const words = batchWordsFromCsv(text);
+  if (!words.length) { toast("読み込める英単語が見つかりませんでした"); return; }
+  await addBatchWords(words);
 });
 
 document.getElementById("batch-review-select-all").addEventListener("click", async () => {
