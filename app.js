@@ -2712,6 +2712,27 @@ async function pushRecentWord(word) {
   renderRecentChips();
 }
 
+/* 高さが不明な内容を後から流し込む要素を、現在の高さへ一旦固定してから
+   mutateで中身を差し替え、必要になる高さへCSSのtransitionで滑らかに
+   伸ばす。中身の自然な高さ(auto)はそのままではtransitionできず、内容を
+   差し込んだ瞬間に一気にその高さへスナップしてしまう（単語ごとに長さが
+   違うため、決め打ちの高さでは実際の高さとずれる）ため、height+
+   overflow:hiddenで一旦固定してから目的の高さへ動かす、autoheightを
+   アニメーションさせる定石を使う。要素側にtransition:height / min-heightを
+   持たせず、box-sizingがcontent-boxであることが前提 */
+function growToFitContent(el, mutate) {
+  const from = el.offsetHeight;
+  el.style.height = `${from}px`;
+  el.style.overflow = "hidden";
+  mutate();
+  /* 固定した高さが一度描画されてから、次のフレームで目的の高さへ動かす。
+     同じフレーム内で連続してheightを書き換えると、ブラウザは中間状態を
+     描画せず最終値へ直接ジャンプしてしまいtransitionが起きない */
+  requestAnimationFrame(() => {
+    el.style.height = `${el.scrollHeight}px`;
+  });
+}
+
 /* ------------------------------------------------------------------ *
  * 9. 分解アニメーション → 結果画面フロー
  * ------------------------------------------------------------------ */
@@ -2754,8 +2775,12 @@ async function startDecompose(rawWord) {
   const decomposeWordMeaningEl = document.getElementById("decompose-word-meaning");
   decomposeWordMeaningEl.innerHTML = "";
   decomposeWordMeaningEl.classList.remove("show");
+  decomposeWordMeaningEl.style.height = "";
+  decomposeWordMeaningEl.style.overflow = "";
   const decomposeMemoryTipEl = document.getElementById("decompose-memory-tip");
   decomposeMemoryTipEl.textContent = "";
+  decomposeMemoryTipEl.style.height = "";
+  decomposeMemoryTipEl.style.overflow = "";
   decomposeMemoryTipEl.classList.remove("show");
   const errorMsgEl = document.getElementById("word-error-msg");
   errorMsgEl.textContent = "";
@@ -2817,19 +2842,26 @@ async function startDecompose(rawWord) {
 
   /* 単語の意味・接辞を踏まえた一文は、後で表示するタイミングより先にここで
      コンテンツを流し込んでおく（要素自体はopacity:0/visibility:hiddenで
-     レイアウト上の高さだけ確保された状態）。こうすることで、実際に表示する
-     瞬間はopacityのフェードだけで済み、接辞カードなどが後から押し上げられる
-     ようなレイアウトのずれが起きない。
+     見えないまま）。こうすることで、実際に表示する瞬間はopacityのフェード
+     だけで済み、接辞カードなどが後から押し上げられるようなレイアウトの
+     ずれが起きない。
      ここで流し込むのは「まだ見せていない工程の早送り」より前、データが
      揃った直後：これより後（ローディング演出の帳尻合わせの待ち時間の後）に
-     流し込むと、空(26px相当)から実際の高さへと箱がここで初めて伸び、
-     まだ脈打っているプレースホルダーが数px不自然にずれて見えるため */
+     流し込むと、空の状態から実際の高さへと箱がここで初めて伸び、まだ
+     脈打っているプレースホルダーや下の「〜中…」の文字が数px不自然に
+     ずれて見えてしまう。中身の長さは単語ごとに違い固定値では読めないため、
+     ずれを完全には避けられないが、growToFitContentでスナップではなく
+     滑らかな伸びに変えることで、突然ずれたようには見えなくする */
   if (currentWordMeaning) {
     const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
-    decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+    growToFitContent(decomposeWordMeaningEl, () => {
+      decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+    });
   }
   if (currentMemoryTip) {
-    decomposeMemoryTipEl.textContent = currentMemoryTip;
+    growToFitContent(decomposeMemoryTipEl, () => {
+      decomposeMemoryTipEl.textContent = currentMemoryTip;
+    });
   }
 
   /* 実際の分解はもう終わっているので、まだ見せていない工程があれば
