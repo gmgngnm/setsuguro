@@ -31,6 +31,7 @@ create table public.words (
   goro_highlight jsonb,
   provider text,
   memorized boolean default false,
+  deleted boolean not null default false,
   created_at bigint,
   updated_at bigint,
   primary key (user_id, id)
@@ -40,6 +41,12 @@ create policy "individuals manage their own words"
   on public.words for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- 別端末での保存・削除をその場で受け取るために、wordsテーブルの
+-- Realtime配信を有効にする
+alter publication supabase_realtime add table public.words;
+-- 削除イベントに単語のidを載せるため（既定では主キーのみ配信される）
+alter table public.words replica identity full;
 
 create table public.recent_words (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -55,6 +62,26 @@ create policy "individuals manage their own recent words"
 
 RLSにより、各行は自分の`user_id`のものしか読み書きできない。anon keyだけを
 配布していても、他人のデータが見えたり書き換えられたりすることはない。
+
+### 既存プロジェクトへの追加（deleted 列 / Realtime）
+
+端末をまたいだ単語帳の統合とリアルタイム反映のために、削除済みの目印を
+持つ `deleted` 列と、`words` テーブルのRealtime配信が必要になった。既に
+テーブルを作成済みの場合は、SQL Editorで以下を一度だけ実行する。
+
+```sql
+alter table public.words
+  add column if not exists deleted boolean not null default false;
+
+alter publication supabase_realtime add table public.words;
+alter table public.words replica identity full;
+```
+
+`deleted` 列が無いままでも保存・同期は止まらない（アプリ側が列の不在を
+検出して、削除の同期だけ従来の物理削除に自動で切り替える）。ただしその
+場合、片方の端末で消した単語が、削除を知らない別端末との突き合わせで
+復活することがある。Realtimeが未設定の場合も同期は止まらず、次に画面へ
+戻ったタイミングでの突き合わせで反映される。
 
 ### 既存プロジェクトへの追加（synonyms / antonyms 列）
 
@@ -101,11 +128,22 @@ let SUPABASE_ANON_KEY = "";  // ← 手順1で控えたanon key
 
 ## 補足: 同期の仕組み
 
-- サインイン直後に一度だけ、ローカル（IndexedDB）とクラウドをすり合わせる
-  （`updated_at` が新しい方を採用する単純な last-write-wins）
-- 以降、単語の保存・削除・暗記フラグの変更・履歴の更新のたびに、ローカルへの
-  書き込みと同時にクラウドへも書き込む（ローカルの操作は先に完了するため、
-  クラウド側が失敗してもUIは止まらずトーストで知らせるだけ）
-- 複数タブ・複数端末間のリアルタイム反映（Supabase Realtime）には対応していない。
-  次にその端末で保存・削除などの操作をしたタイミングか、次回サインイン時に
-  すり合わされる
+同じGoogleアカウントでサインインしている端末は、**単語帳を1つに統合して共有する**。
+
+- **突き合わせ**: サインイン直後・Realtimeの購読が切れて張り直した直後・画面に
+  戻ってきた時に、ローカル（IndexedDB）とクラウドをすり合わせる。両方にある単語は
+  `updated_at` が新しい方を採用し（last-write-wins）、片方にしか無い単語は両方へ
+  行き渡らせる。単語のidは見出し語そのもの（小文字）なので、2つの端末が別々に同じ
+  単語を保存していても重複せず1件にまとまる
+- **リアルタイム反映**: `words` テーブルの変更をSupabase Realtimeで購読しており、
+  片方の端末で保存・削除すると、もう片方の単語帳にもその場で反映される。短時間に
+  複数件届く場合（まとめて登録など）は少しまとめてから描画する。自分が書き込んだ
+  変更も返ってくるが、`updated_at` の比較で打ち消されるため二重には反映されない
+- **削除**: 行をそのまま消すのではなく `deleted = true` の目印（tombstone）を残す。
+  物理削除だと、その削除を知らない別端末が次の突き合わせで「クラウドに無い＝自分
+  だけが持っている単語」と見なして再アップロードし、消したはずの単語が復活して
+  しまうため
+- 単語の保存・削除・暗記フラグの変更・履歴の更新のたびに、ローカルへの書き込みと
+  同時にクラウドへも書き込む（ローカルの操作は先に完了するため、クラウド側が失敗
+  してもUIは止まらずトーストで知らせるだけ）
+- サインインしない場合の挙動はこれまで通りで、ネットワークには一切触れない

@@ -6709,8 +6709,28 @@ async function withCloudRetry(fn, attempts = 3) {
   }
 }
 
-function localWordToCloudRow(w) {
-  return {
+/* 1アカウントの単語帳を端末間で1つに保つため、削除は行そのものを消すの
+   ではなく「削除済み」の目印(tombstone)を残す。物理削除だと、その削除を
+   知らない別端末が次の突き合わせで同じ単語を「クラウドに無い＝自分だけが
+   持っている単語」と見なして再アップロードしてしまい、消したはずの単語が
+   復活してしまう。
+   deleted列がまだ無いプロジェクト（SUPABASE_SETUP.mdの移行SQLを流す前）
+   では、列が無いと言われた時点でこのフラグを倒し、従来通りの物理削除に
+   戻す（同期そのものが止まってしまわないようにするため） */
+let cloudTombstonesSupported = true;
+
+function isMissingDeletedColumn(error) {
+  const msg = `${error?.message || ""} ${error?.details || ""}`;
+  return /deleted/.test(msg) && (error?.code === "PGRST204" || error?.code === "42703" || /column/i.test(msg));
+}
+
+function warnTombstonesUnsupported() {
+  console.warn("Supabaseのwordsテーブルにdeleted列が無いため、削除の同期は簡易版で動きます"
+    + "（SUPABASE_SETUP.mdの移行SQLを実行してください）");
+}
+
+function localWordToCloudRow(w, deleted = false) {
+  const row = {
     id: w.id, user_id: cloudUserId, word: w.word, word_meaning: w.word_meaning || "",
     word_phonetic: w.word_phonetic || "", word_memory_tip: w.word_memory_tip || "",
     morphemes: w.morphemes || [], synonyms: w.synonyms || [], antonyms: w.antonyms || [],
@@ -6718,6 +6738,21 @@ function localWordToCloudRow(w) {
     provider: w.provider || "", memorized: !!w.memorized, created_at: w.created_at || Date.now(),
     updated_at: w.updated_at || Date.now(),
   };
+  if (cloudTombstonesSupported) row.deleted = deleted;
+  return row;
+}
+
+/* 通常の保存用のupsert。deleted列が無いプロジェクトでも保存が止まらない
+   よう、列が無いと言われた場合だけ一度検出してdeleted抜きでやり直す */
+async function cloudWordsUpsert(records) {
+  const send = () => supabaseClient.from("words").upsert(records.map((r) => localWordToCloudRow(r, false)));
+  let { error } = await send();
+  if (error && isMissingDeletedColumn(error)) {
+    cloudTombstonesSupported = false;
+    warnTombstonesUnsupported();
+    ({ error } = await send());
+  }
+  if (error) throw error;
 }
 function cloudRowToLocalWord(r) {
   return {
@@ -6729,13 +6764,25 @@ function cloudRowToLocalWord(r) {
   };
 }
 
-/* サインイン直後に一度だけ、クラウドとローカルをすり合わせる。
-   同じidが両方にあれば updated_at が新しい方を採用する、単純な
-   last-write-winsマージ（端末を跨いで使う場合の想定） */
-async function pullAndMergeCloudData() {
+/* 同じアカウントの単語帳を1つに統合する突き合わせ。両方にある単語は
+   updated_at が新しい方を採用し（last-write-wins）、片方にしか無い単語は
+   両方に行き渡らせる。削除は目印(tombstone)として伝わる。
+   サインイン直後のほか、Realtimeの購読が切れて張り直した時と、画面に
+   戻ってきた時にも呼ばれる（その間の取りこぼしを埋めるため）。
+   quiet:true では「同期中…」を出さずに静かに走らせる */
+let cloudMergeInFlight = null;
+
+function pullAndMergeCloudData(options) {
+  /* 復帰と再購読が同時に起きると二重に走るため、走行中は同じ実行に相乗りする */
+  if (cloudMergeInFlight) return cloudMergeInFlight;
+  cloudMergeInFlight = runCloudMerge(options || {}).finally(() => { cloudMergeInFlight = null; });
+  return cloudMergeInFlight;
+}
+
+async function runCloudMerge({ quiet = false } = {}) {
   const sb = supabaseClient;
   if (!sb || !cloudUserId) return;
-  setSyncStatus("同期中…", "syncing");
+  if (!quiet) setSyncStatus("同期中…", "syncing");
   try {
     await withCloudRetry(async () => {
       const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }] = await Promise.all([
@@ -6749,20 +6796,32 @@ async function pullAndMergeCloudData() {
       const localById = new Map(localWords.map((w) => [w.id, w]));
       const remoteById = new Map((remoteWords || []).map((w) => [w.id, w]));
 
+      /* 別端末での削除に合わせてこちらからも消した単語。下の
+         「クラウドに無い単語をアップロードする」で拾い直して復活させて
+         しまわないよう、除外するために覚えておく */
+      const removedHere = new Set();
       for (const remote of remoteWords || []) {
         const local = localById.get(remote.id);
-        if (!local || (remote.updated_at || 0) > (local.updated_at || 0)) {
+        const remoteAt = remote.updated_at || 0;
+        if (remote.deleted) {
+          /* 削除の目印。こちらにまだ残っていて、削除の方が新しければ合わせて消す。
+             削除後にこちらで編集し直した場合(local が新しい)は残す */
+          if (local && remoteAt >= (local.updated_at || 0)) {
+            await idbDelete("words", remote.id);
+            removedHere.add(remote.id);
+          }
+          continue;
+        }
+        if (!local || remoteAt > (local.updated_at || 0)) {
           await idbPut("words", cloudRowToLocalWord(remote));
         }
       }
       const toUpload = localWords.filter((w) => {
+        if (removedHere.has(w.id)) return false;
         const remote = remoteById.get(w.id);
         return !remote || (w.updated_at || 0) > (remote.updated_at || 0);
       });
-      if (toUpload.length) {
-        const { error } = await sb.from("words").upsert(toUpload.map(localWordToCloudRow));
-        if (error) throw error;
-      }
+      if (toUpload.length) await cloudWordsUpsert(toUpload);
 
       const localRecent = await kvGet("recent_words", []);
       const remoteRecentList = (remoteRecentRow && remoteRecentRow.words) || [];
@@ -6788,6 +6847,120 @@ async function pullAndMergeCloudData() {
   }
 }
 
+/* ---- 別端末での変更をその場で受け取る（Supabase Realtime） ----
+   同じアカウントのwords行の変更をサーバから直接押し込んでもらうので、
+   片方の端末で保存すればもう片方の単語帳にもすぐ並ぶ。
+   Supabase側でwordsテーブルのRealtimeを有効にしておく必要がある
+   （SUPABASE_SETUP.md参照）。有効でなければ購読が張れないだけで、
+   復帰時の突き合わせで従来通り追いつく */
+let realtimeChannel = null;
+let realtimeEverSubscribed = false;
+
+function startRealtimeWordSync() {
+  if (!supabaseClient || !cloudUserId || realtimeChannel) return;
+  realtimeChannel = supabaseClient
+    .channel(`words-${cloudUserId}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "words", filter: `user_id=eq.${cloudUserId}` },
+      queueRemoteWordChange,
+    )
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        /* 一度切れてから張り直せた場合、切れていた間の変更は届いていない。
+           ここで全体を突き合わせて追いつく（初回はサインイン直後の
+           突き合わせが済んだ後なので何もしない） */
+        if (realtimeEverSubscribed) pullAndMergeCloudData({ quiet: true });
+        realtimeEverSubscribed = true;
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        /* supabase-jsが自動で張り直すので、ここでは購読を捨てない */
+        console.warn("リアルタイム同期の購読が切れました（再接続を試みます）:", status);
+      }
+    });
+}
+
+function stopRealtimeWordSync() {
+  if (!realtimeChannel) return;
+  const channel = realtimeChannel;
+  realtimeChannel = null;
+  realtimeEverSubscribed = false;
+  try { supabaseClient?.removeChannel(channel); } catch (err) { console.warn("Realtime unsubscribe failed:", err); }
+}
+
+/* この端末が書いた内容もRealtimeでそのまま返ってくる。ローカルに残って
+   いるレコードとの比較だけでは打ち消しきれない場合があるため（保存した
+   直後に削除すると、保存の反射が削除の後に届いて復活してしまう）、
+   idごとに自分が最後に書いた時刻を覚えておき、それ以前の内容の通知は
+   無視する */
+const localWriteStamps = new Map();
+
+function markLocalWrite(id, at) {
+  localWriteStamps.set(id, at);
+  /* 際限なく溜めない。十分に古い記録は捨てても、それより新しい通知は
+     そのまま通るので取りこぼしにはならない */
+  if (localWriteStamps.size > 500) {
+    const cutoff = Date.now() - 60000;
+    for (const [key, t] of localWriteStamps) if (t < cutoff) localWriteStamps.delete(key);
+  }
+}
+
+/* まとめて登録のように、別端末から短時間に何件も届くことがある。
+   1件ごとに描画し直すと重いので、少しだけ溜めてからまとめて反映する */
+const pendingRemoteWordChanges = [];
+let remoteWordChangeTimer = null;
+
+function queueRemoteWordChange(payload) {
+  pendingRemoteWordChanges.push(payload);
+  if (remoteWordChangeTimer) return;
+  remoteWordChangeTimer = setTimeout(() => {
+    remoteWordChangeTimer = null;
+    applyRemoteWordChanges(pendingRemoteWordChanges.splice(0))
+      .catch((err) => console.warn("リアルタイム同期の反映に失敗しました:", err));
+  }, 400);
+}
+
+async function applyRemoteWordChanges(payloads) {
+  let added = 0;
+  let removed = 0;
+  let changed = 0;
+  for (const payload of payloads) {
+    const isDelete = payload.eventType === "DELETE";
+    const row = isDelete ? payload.old : payload.new;
+    if (!row || !row.id) continue;
+    if (!isDelete) {
+      /* 自分の書き込みの反射。ローカルを消した後に届くこともあるので、
+         ローカルの有無ではなく書き込み時刻で判定する */
+      const mine = localWriteStamps.get(row.id);
+      if (mine != null && (row.updated_at || 0) <= mine) continue;
+    }
+    const local = await idbGet("words", row.id);
+    if (isDelete || row.deleted) {
+      if (!local) continue;
+      /* 削除の目印より後にこちらで編集し直していれば、こちらを残す */
+      if (!isDelete && (row.updated_at || 0) < (local.updated_at || 0)) continue;
+      await idbDelete("words", row.id);
+      removed++;
+      continue;
+    }
+    if (local && (row.updated_at || 0) <= (local.updated_at || 0)) continue;
+    await idbPut("words", cloudRowToLocalWord(row));
+    if (local) changed++; else added++;
+  }
+  if (!added && !removed && !changed) return;
+  renderBookList();
+  if (added) toast(`他の端末の単語を${added}件取り込みました`);
+  else if (removed) toast("他の端末での削除を反映しました");
+}
+
+/* 端末をスリープさせている間などは購読が切れて変更が届かない。画面に
+   戻ってきたタイミングで静かに突き合わせ、取りこぼしを埋める */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (!supabaseClient || !cloudUserId) return;
+  startRealtimeWordSync();
+  pullAndMergeCloudData({ quiet: true });
+});
+
 document.getElementById("cloud-sync-retry-btn").addEventListener("click", async (e) => {
   const btn = e.currentTarget;
   if (btn.classList.contains("spinning")) return;
@@ -6804,16 +6977,27 @@ document.getElementById("cloud-sync-retry-btn").addEventListener("click", async 
 async function syncWordUpsert(record) {
   if (!supabaseClient || !cloudUserId) return;
   try {
-    const { error } = await supabaseClient.from("words").upsert(localWordToCloudRow(record));
-    if (error) throw error;
+    await cloudWordsUpsert([record]);
   } catch (err) {
     console.warn("Cloud sync (word upsert) failed:", err);
     toast("クラウドへの同期に失敗しました");
   }
 }
-async function syncWordDelete(id) {
+/* existing にはローカルから消す直前のレコードを渡す。tombstoneはwordが
+   NOT NULLなので、消えた後では目印の行を作れないため */
+async function syncWordDelete(id, existing, deletedAt) {
   if (!supabaseClient || !cloudUserId) return;
   try {
+    if (cloudTombstonesSupported && existing) {
+      const row = localWordToCloudRow({ ...existing, updated_at: deletedAt }, true);
+      const { error } = await supabaseClient.from("words").upsert(row);
+      if (!error) return;
+      if (!isMissingDeletedColumn(error)) throw error;
+      /* deleted列が無いプロジェクト。目印を残せないので物理削除に落とす
+         （この場合だけ、削除を知らない端末での復活は防げない） */
+      cloudTombstonesSupported = false;
+      warnTombstonesUnsupported();
+    }
     const { error } = await supabaseClient.from("words").delete().eq("user_id", cloudUserId).eq("id", id);
     if (error) throw error;
   } catch (err) {
@@ -6837,12 +7021,16 @@ async function syncRecentWords(list) {
    防ぐため）。updated_at はここで一括して付与する */
 async function saveWordRecord(record) {
   record.updated_at = Date.now();
+  markLocalWrite(record.id, record.updated_at);
   await idbPut("words", record);
   await syncWordUpsert(record);
 }
 async function deleteWordRecord(id) {
+  const existing = await idbGet("words", id);
+  const deletedAt = Date.now();
+  markLocalWrite(id, deletedAt);
   await idbDelete("words", id);
-  await syncWordDelete(id);
+  await syncWordDelete(id, existing, deletedAt);
 }
 
 /* GoogleサインインのIDトークンをそのままSupabase Authに渡し、
@@ -6862,6 +7050,7 @@ async function signInToCloud(idToken) {
     cloudUserId = data.user.id;
     lastFailedIdToken = null;
     await pullAndMergeCloudData();
+    startRealtimeWordSync();
   } catch (err) {
     console.warn("Supabase sign-in failed:", err);
     setSyncStatus("クラウド同期を開始できませんでした。", "error");
@@ -6871,6 +7060,7 @@ async function signInToCloud(idToken) {
 }
 
 async function signOutFromCloud() {
+  stopRealtimeWordSync();
   cloudUserId = null;
   setSyncStatus("");
   if (!supabaseClient) return;
@@ -6889,6 +7079,7 @@ async function restoreCloudSession() {
     if (data?.session?.user) {
       cloudUserId = data.session.user.id;
       await pullAndMergeCloudData();
+      startRealtimeWordSync();
     }
   } catch (err) {
     console.warn("Failed to restore Supabase session:", err);
