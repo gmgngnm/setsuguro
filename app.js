@@ -7002,7 +7002,11 @@ function setBatchProgress(label) {
   const text = document.getElementById("batch-progress-label");
   if (!row || !text) return;
   row.style.display = label ? "flex" : "none";
-  text.textContent = label || "";
+  /* 回転リングではなく、他の待ち表示（AIで検索中…など）と同じく
+     文字の後ろに1つずつ増える点で表す */
+  text.innerHTML = label
+    ? `${escapeHtml(label)}<span class="goro-loading-dots" aria-hidden="true"></span>`
+    : "";
 }
 
 async function renderBatchQueue() {
