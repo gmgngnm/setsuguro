@@ -330,18 +330,25 @@
         <button class="icon-btn" data-nav="book" title="マイ単語へ戻る" aria-label="マイ単語へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
       </div>
     </div>
-    <div class="usage-note">覚えたい英単語を改行・カンマ・空白で区切って入力してください。ここで登録した単語は、まとめて生成したあと確認画面で選んで単語帳に保存します。</div>
-    <textarea id="batch-input" class="batch-input" rows="4" placeholder="abandon&#10;bereavement&#10;competition" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
-    <button class="btn-solid" id="batch-add-btn" type="button">リストに追加</button>
-    <div class="batch-csv-row">
-      <button class="btn-ghost" id="batch-csv-import-btn" type="button">📥 CSVから追加</button>
-      <button class="batch-csv-template-btn" id="batch-csv-template-btn" type="button">書式をダウンロード</button>
+    <div class="batch-input-head">
+      <span class="batch-input-label">単語を改行・カンマ・スペースで区切って入力</span>
+      <div class="batch-input-tools">
+        <button class="icon-btn" id="batch-csv-btn" type="button" title="CSV" aria-label="CSVの書式ダウンロード・読み込み"><svg class="icon-svg icon-svg-csv" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg></button>
+        <button class="icon-btn" id="batch-photo-btn" type="button" title="ノートを撮影して読み取る" aria-label="ノートを撮影して読み取る"><svg class="icon-svg icon-svg-camera" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+      </div>
     </div>
-    <input type="file" id="batch-csv-input" accept=".csv,text/csv" style="display:none;">
-    <button class="btn-ghost" id="batch-photo-btn" type="button">📷 ノートを撮影して読み取る</button>
+    <textarea id="batch-input" class="batch-input" rows="4" placeholder="abandon&#10;bereavement&#10;competition" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <button class="btn-solid" id="batch-run-btn" type="button">⚡ 生成&保存</button>
     <!-- iOSではdisplay:noneのfile inputがclick()に反応しないことがあるため、
-         画面外に逃がす形で隠す（操作は上の撮影ボタンから行う） -->
+         画面外に逃がす形で隠す（操作は上のボタンから行う） -->
+    <input type="file" id="batch-csv-input" accept=".csv,text/csv" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <input type="file" id="batch-photo-input" accept="image/*" capture="environment" class="visually-hidden" tabindex="-1" aria-hidden="true">
+    <div class="memorize-mode-sheet" id="batch-csv-sheet" style="display:none;">
+      <div class="memorize-mode-hint">CSVの操作を選択</div>
+      <button class="memorize-mode-btn" id="batch-csv-template-btn" type="button">📄 書式をダウンロード</button>
+      <button class="memorize-mode-btn" id="batch-csv-import-btn" type="button">📥 CSVから読み込む</button>
+      <button class="memorize-mode-close" id="batch-csv-sheet-close" type="button">✕ 閉じる</button>
+    </div>
     <div class="spinner-row" id="batch-photo-progress" style="display:none;">
       <div class="spinner"></div>
       <span class="spin-label">画像から単語を読み取り中…</span>
@@ -349,32 +356,11 @@
 
     <div class="section-label" style="margin-top:6px;">登録した単語<span class="batch-stats" id="batch-stats"></span></div>
     <div class="usage-note" id="batch-cost-note"></div>
-    <div class="batch-actions">
-      <button class="btn-solid" id="batch-run-btn" type="button">⚡ まとめて生成</button>
-      <button class="btn-ghost" id="batch-open-review-btn" type="button">確認する</button>
-    </div>
     <div class="spinner-row" id="batch-progress" style="display:none;">
       <div class="spinner"></div>
       <span class="spin-label" id="batch-progress-label"></span>
     </div>
     <div class="batch-list" id="batch-list"></div>
-  </section>
-
-  <!-- ============ SCREEN 09: まとめて確認 ============ -->
-  <section id="screen-batch-review" class="screen">
-    <div class="appbar">
-      <span class="logo">生成結果の確認</span>
-      <div class="nav-icons">
-        <button class="icon-btn" id="batch-review-select-all" type="button" title="全選択/全解除" aria-label="全選択・全解除">☑</button>
-        <button class="icon-btn" id="batch-review-back-btn" type="button" title="まとめて登録へ戻る" aria-label="まとめて登録へ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
-      </div>
-    </div>
-    <div class="usage-note">保存したくない単語はチェックを外すか破棄してください。ここで保存しなかった結果は次に開いたときもそのまま残ります。</div>
-    <div class="batch-stats" id="batch-review-stats"></div>
-    <div class="batch-review-list" id="batch-review-list"></div>
-    <div class="bottom-actions">
-      <button class="save-word-btn" id="batch-review-save-btn">💾 単語帳に保存</button>
-    </div>
   </section>
 
   <div id="toast"></div>
