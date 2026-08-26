@@ -6784,6 +6784,10 @@ async function runCloudMerge({ quiet = false } = {}) {
   if (!sb || !cloudUserId) return;
   if (!quiet) setSyncStatus("同期中…", "syncing");
   try {
+    /* 送れていない変更を先に送る。特に削除を送る前に読み込むと、
+       クラウドに残っている行を「こちらに無い単語」として取り込み直して
+       しまい、削除したはずの単語が復活する */
+    await flushCloudOutbox();
     await withCloudRetry(async () => {
       const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }] = await Promise.all([
         sb.from("words").select("*").eq("user_id", cloudUserId),
@@ -6837,7 +6841,7 @@ async function runCloudMerge({ quiet = false } = {}) {
       }
     });
 
-    setSyncStatus("☁️ 同期済み");
+    updateOutboxStatus(Object.keys(await outboxAll()).length);
     renderBookList();
     renderRecentChips();
   } catch (err) {
@@ -6971,50 +6975,206 @@ document.getElementById("cloud-sync-retry-btn").addEventListener("click", async 
   }
 });
 
+/* ---- 書き込みの失敗をユーザーの手間にしない ----
+   電波の悪い場所・画面ロック直後・トンネルの中など、1語ぶんの書き込みは
+   ごく普通に失敗する。以前はその都度トーストを出して終わりだったので、
+   まとめて登録や暗記モードの連続操作では失敗の数だけ通知が並んでいた。
+   ここでは (1)通信の失敗なら静かに数回やり直し、(2)それでも駄目なら
+   送れなかった単語を「送信箱」に貯めて後で自動的に送り直す。
+   特に削除は送信箱が無いと取り返しがつかない。ローカルからは消えている
+   のにクラウドには残るため、次の突き合わせで削除したはずの単語が
+   復活してしまう */
+const CLOUD_OUTBOX_KEY = "cloud_outbox";
+
+function cloudOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+/* 権限やスキーマの誤りは何度やっても同じ結果になる。通信の失敗と
+   サーバ側の一時的なエラーだけやり直す */
+function isRetriableCloudError(err) {
+  const status = Number(err?.status ?? err?.statusCode);
+  if (Number.isFinite(status)) return status >= 500 || status === 429;
+  const msg = `${err?.message || ""} ${err?.details || ""}`;
+  return /fetch|network|timeout|timed out|offline|load failed|connection/i.test(msg);
+}
+
+/* アクセストークンの期限切れ。supabase-jsが自動更新に失敗していることが
+   あるので、1度だけ明示的に更新してからやり直す */
+function isAuthCloudError(err) {
+  const status = Number(err?.status ?? err?.statusCode);
+  return status === 401 || err?.code === "PGRST301"
+    || /jwt|token is expired|not authenticated/i.test(String(err?.message || ""));
+}
+
+/* 突き合わせ用のwithCloudRetryは設定画面の再試行ボタンを出し入れするが、
+   1語ぶんの書き込みでUIを動かすと目障りなので、こちらは静かにやり直す */
+async function withWriteRetry(fn, attempts = 3) {
+  let refreshed = false;
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (isAuthCloudError(err) && !refreshed) {
+        refreshed = true;
+        try { await supabaseClient.auth.refreshSession(); } catch (e) { console.warn("セッションの更新に失敗しました:", e); }
+        continue;
+      }
+      if (i >= attempts - 1 || !isRetriableCloudError(err)) throw err;
+      await sleep(600 * Math.pow(2, i));
+    }
+  }
+}
+
+async function outboxAll() { return await kvGet(CLOUD_OUTBOX_KEY, {}); }
+
+async function outboxPut(id, entry) {
+  const box = await outboxAll();
+  box[id] = entry;
+  await kvSet(CLOUD_OUTBOX_KEY, box);
+  updateOutboxStatus(Object.keys(box).length);
+}
+
+async function outboxDrop(ids) {
+  const box = await outboxAll();
+  let touched = false;
+  for (const id of ids) if (id in box) { delete box[id]; touched = true; }
+  /* 送信箱がもともと空なら表示に触らない。突き合わせ中の「同期中…」を
+     保存のたびに上書きしてしまわないようにするため */
+  if (!touched) return;
+  await kvSet(CLOUD_OUTBOX_KEY, box);
+  updateOutboxStatus(Object.keys(box).length);
+}
+
+function updateOutboxStatus(pending) {
+  if (!cloudUserId) return;
+  if (pending > 0) {
+    setSyncStatus(`未送信の変更が${pending}件あります（自動で送り直します）`, "syncing");
+    /* 待たずに自分で送り直したい人のために、再試行ボタンも出しておく */
+    setSyncRetryVisible(true, false);
+  } else {
+    setSyncStatus("☁️ 同期済み");
+    setSyncRetryVisible(false);
+  }
+}
+
+/* 失敗を知らせるトースト。連続操作のたびに出すと通知だらけになるので、
+   一連の不通のあいだは1回だけにする。送信箱に入った変更は後で自動的に
+   送り直されるため、ユーザーが今すぐ何かする必要はない */
+let lastSyncFailToastAt = 0;
+const SYNC_FAIL_TOAST_INTERVAL_MS = 30000;
+
+function reportSyncDeferred(err, what) {
+  console.warn(`Cloud sync (${what}) deferred:`, err);
+  if (cloudOffline()) return;   // オフラインは本人が分かっているので黙る
+  const now = Date.now();
+  if (now - lastSyncFailToastAt < SYNC_FAIL_TOAST_INTERVAL_MS) return;
+  lastSyncFailToastAt = now;
+  toast("クラウドへの同期は後で自動的にやり直します");
+}
+
+/* 送信箱に貯まった分をまとめて送る。保存は送る直前にローカルから読み直す
+   ので、失敗している間に編集された場合も最新の内容が送られる */
+let outboxFlushing = false;
+
+async function flushCloudOutbox() {
+  if (!supabaseClient || !cloudUserId || outboxFlushing || cloudOffline()) return;
+  const box = await outboxAll();
+  const ids = Object.keys(box);
+  if (!ids.length) return;
+  outboxFlushing = true;
+  try {
+    const sent = [];
+    const upserts = [];
+    for (const id of ids) {
+      const entry = box[id];
+      if (entry.op === "delete") {
+        try {
+          await withWriteRetry(() => pushWordDelete(id, entry.row));
+          sent.push(id);
+        } catch (err) { console.warn("送信箱の削除を送れませんでした:", err); }
+        continue;
+      }
+      const record = await idbGet("words", id);
+      /* 送信箱に入った後で削除された単語。削除の方が送信箱に入り直すので、
+         ここでは何もしないで取り下げる */
+      if (!record) { sent.push(id); continue; }
+      upserts.push(record);
+    }
+    if (upserts.length) {
+      try {
+        await withWriteRetry(() => cloudWordsUpsert(upserts));
+        sent.push(...upserts.map((r) => r.id));
+      } catch (err) { console.warn("送信箱の保存を送れませんでした:", err); }
+    }
+    if (sent.length) await outboxDrop(sent);
+  } finally {
+    outboxFlushing = false;
+  }
+}
+
+/* 削除の実送信。tombstoneを立てるのが基本で、deleted列が無いプロジェクト
+   でだけ物理削除に落ちる */
+async function pushWordDelete(id, tombstoneRow) {
+  if (cloudTombstonesSupported && tombstoneRow) {
+    const { error } = await supabaseClient.from("words").upsert(tombstoneRow);
+    if (!error) return;
+    if (!isMissingDeletedColumn(error)) throw error;
+    /* deleted列が無いプロジェクト。目印を残せないので物理削除に落とす
+       （この場合だけ、削除を知らない端末での復活は防げない） */
+    cloudTombstonesSupported = false;
+    warnTombstonesUnsupported();
+  }
+  const { error } = await supabaseClient.from("words").delete().eq("user_id", cloudUserId).eq("id", id);
+  if (error) throw error;
+}
+
 /* 単語の保存・削除・分類のたびに呼ばれる。ローカルの書き込みは既に
-   完了しているので、クラウド側が失敗してもUIは止めずトーストで知らせる
-   だけにする（次にオンラインになった操作で改めて同期される） */
+   完了しているので、クラウド側が失敗してもUIは止めない */
 async function syncWordUpsert(record) {
   if (!supabaseClient || !cloudUserId) return;
+  if (cloudOffline()) { await outboxPut(record.id, { op: "upsert" }); return; }
   try {
-    await cloudWordsUpsert([record]);
+    await withWriteRetry(() => cloudWordsUpsert([record]));
+    await outboxDrop([record.id]);
   } catch (err) {
-    console.warn("Cloud sync (word upsert) failed:", err);
-    toast("クラウドへの同期に失敗しました");
+    await outboxPut(record.id, { op: "upsert" });
+    reportSyncDeferred(err, "word upsert");
   }
 }
 /* existing にはローカルから消す直前のレコードを渡す。tombstoneはwordが
    NOT NULLなので、消えた後では目印の行を作れないため */
 async function syncWordDelete(id, existing, deletedAt) {
   if (!supabaseClient || !cloudUserId) return;
+  const row = existing ? localWordToCloudRow({ ...existing, updated_at: deletedAt }, true) : null;
+  if (cloudOffline()) { await outboxPut(id, { op: "delete", row }); return; }
   try {
-    if (cloudTombstonesSupported && existing) {
-      const row = localWordToCloudRow({ ...existing, updated_at: deletedAt }, true);
-      const { error } = await supabaseClient.from("words").upsert(row);
-      if (!error) return;
-      if (!isMissingDeletedColumn(error)) throw error;
-      /* deleted列が無いプロジェクト。目印を残せないので物理削除に落とす
-         （この場合だけ、削除を知らない端末での復活は防げない） */
-      cloudTombstonesSupported = false;
-      warnTombstonesUnsupported();
-    }
-    const { error } = await supabaseClient.from("words").delete().eq("user_id", cloudUserId).eq("id", id);
-    if (error) throw error;
+    await withWriteRetry(() => pushWordDelete(id, row));
+    await outboxDrop([id]);
   } catch (err) {
-    console.warn("Cloud sync (word delete) failed:", err);
-    toast("クラウドへの同期に失敗しました");
+    await outboxPut(id, { op: "delete", row });
+    reportSyncDeferred(err, "word delete");
   }
 }
 async function syncRecentWords(list) {
-  if (!supabaseClient || !cloudUserId) return;
+  if (!supabaseClient || !cloudUserId || cloudOffline()) return;
   try {
-    const { error } = await supabaseClient.from("recent_words")
-      .upsert({ user_id: cloudUserId, words: list, updated_at: new Date().toISOString() });
-    if (error) throw error;
+    await withWriteRetry(async () => {
+      const { error } = await supabaseClient.from("recent_words")
+        .upsert({ user_id: cloudUserId, words: list, updated_at: new Date().toISOString() });
+      if (error) throw error;
+    });
   } catch (err) {
+    /* 履歴チップは失われても実害が無いので、送り直しの対象にはしない */
     console.warn("Cloud sync (recent words) failed:", err);
   }
 }
+
+/* オンラインに戻ったら、貯まっている分をすぐ送る */
+window.addEventListener("online", () => {
+  if (!supabaseClient || !cloudUserId) return;
+  flushCloudOutbox().then(() => pullAndMergeCloudData({ quiet: true }));
+});
 
 /* ローカルの単語書き込み・削除の唯一の入口。呼び出し元は idbPut/idbDelete
    を直接使わず、必ずこの2関数を経由すること（クラウド同期の抜け漏れを
@@ -7063,6 +7223,7 @@ async function signOutFromCloud() {
   stopRealtimeWordSync();
   cloudUserId = null;
   setSyncStatus("");
+  lastSyncFailToastAt = 0;
   if (!supabaseClient) return;
   try { await supabaseClient.auth.signOut(); } catch (err) { console.warn("Supabase sign-out failed:", err); }
 }
