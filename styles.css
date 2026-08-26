@@ -756,12 +756,6 @@ button{font-family:inherit;cursor:pointer;}
   font-size:11.5px;color:var(--ink-soft);margin-top:2px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.batch-item-status{
-  flex-shrink:0;font-size:10.5px;font-family:'JetBrains Mono',monospace;color:var(--ink-faint);
-  border:1px solid var(--line);border-radius:999px;padding:3px 8px;
-}
-.batch-item-ready .batch-item-status{color:var(--accent-ink);border-color:var(--accent);}
-.batch-item-failed .batch-item-status{color:var(--danger);border-color:var(--danger);}
 .batch-item-failed .batch-item-sub{color:var(--danger);}
 .batch-item-retry{flex-shrink:0;padding:4px 10px;font-size:10.5px;}
 .batch-item-del{

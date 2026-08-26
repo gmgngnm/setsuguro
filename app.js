@@ -6912,18 +6912,6 @@ function parseBatchWordInput(text) {
   return out;
 }
 
-/* まとめる意味がどれくらいあるのかを、実行前に数字で見せるために使う。
-   分解 / 分解の校閲 / 語呂合わせ / 語呂の校閲 の4回が最小で、これは
-   1語ずつでもチャンク単位でも変わらない。つまり節約できる倍率は
-   そのまま BATCH_CHUNK_SIZE になる。機械チェックに落ちた語の作り直しは
-   ここに含まれないので、実際の回数はこれ以上になりうる */
-const REQUESTS_PER_PASS = 4;
-const SINGLE_REQUESTS_PER_WORD = REQUESTS_PER_PASS;
-
-function estimateBatchRequests(count) {
-  return Math.ceil(count / BATCH_CHUNK_SIZE) * REQUESTS_PER_PASS;
-}
-
 async function loadBatchQueue() {
   const rows = await idbGetAll(BATCH_STORE);
   return rows.sort((a, b) => a.created_at - b.created_at);
@@ -7000,24 +6988,15 @@ function setBatchProgress(label) {
   text.textContent = label || "";
 }
 
-const BATCH_STATUS_LABEL = { pending: "未生成", ready: "確認待ち", failed: "失敗" };
-
 async function renderBatchQueue() {
   const listEl = document.getElementById("batch-list");
   const statsEl = document.getElementById("batch-stats");
-  const noteEl = document.getElementById("batch-cost-note");
   if (!listEl || !statsEl) return;
 
   const rows = await loadBatchQueue();
   const pending = rows.filter((r) => r.status === "pending");
   const failed = rows.filter((r) => r.status === "failed");
   statsEl.textContent = `未生成${pending.length} ・ 失敗${failed.length}`;
-
-  if (noteEl) {
-    noteEl.textContent = pending.length
-      ? `${pending.length}語をまとめて生成すると、AIへの呼び出しは最小で約${estimateBatchRequests(pending.length)}回です（ホーム画面から1語ずつ登録した場合は最小で約${pending.length * SINGLE_REQUESTS_PER_WORD}回）。語呂合わせが品質チェックに通らなかった場合は作り直すため、実際はこれより増えることがあります。`
-      : "生成待ちの単語はありません。";
-  }
 
   const runBtn = document.getElementById("batch-run-btn");
   if (runBtn) {
@@ -7049,7 +7028,6 @@ async function renderBatchQueue() {
         ${sub ? `<div class="batch-item-sub">${escapeHtml(sub)}</div>` : ""}
       </div>
       ${retryBtn}
-      <span class="batch-item-status">${BATCH_STATUS_LABEL[r.status] || r.status}</span>
       <button class="batch-item-del" type="button" aria-label="${escapeHtml(r.word)} を取り消す">✕</button>`;
     item.querySelector(".batch-item-del").addEventListener("click", async () => {
       await idbDelete(BATCH_STORE, r.id);
@@ -7082,8 +7060,8 @@ async function runBatchGeneration() {
 
   batchRunning = true;
   await renderBatchQueue();
-  let done = 0, saved = 0;
-  setBatchProgress(`生成中… 0 / ${queue.length}`);
+  let saved = 0;
+  setBatchProgress("生成中…");
 
   try {
     for (const chunk of chunkArray(queue, BATCH_CHUNK_SIZE)) {
@@ -7131,8 +7109,6 @@ async function runBatchGeneration() {
           if (row.status === "pending") await markBatchFailed(row, err.message);
         }
       }
-      done += chunk.length;
-      setBatchProgress(`生成中… ${done} / ${queue.length}`);
       await renderBatchQueue();
     }
     toast(saved ? `${saved}語を単語帳に保存しました` : "まとめ生成が終わりました");
