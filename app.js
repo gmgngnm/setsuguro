@@ -2035,6 +2035,15 @@ const TTS_VOICE = "normal";
 const TTS_SPEAKERS_CONFIRMED = ["zundamon"];
 const TTS_SPEAKER_DEFAULT = "zundamon";
 
+/* 以前は話者検出が通信エラーで空振りしただけでブラウザ標準("")が保存され、
+   その後ずんだもんに戻らなくなっていた。取りこぼした端末を一度だけ既定へ
+   戻す。この移行より後に自分でブラウザ標準を選んだ場合はそのまま尊重する */
+async function migrateTtsSpeakerDefaultOnce() {
+  if (await kvGet("tts_speaker_default_migrated", false)) return;
+  await kvSet("tts_speaker_default_migrated", true);
+  if ((await kvGet("tts_speaker", null)) === "") await kvSet("tts_speaker", TTS_SPEAKER_DEFAULT);
+}
+
 /* 綴りの揺れ（ハイフンやアンダースコアの有無）を無視して突き合わせる */
 function normalizeSpeakerId(id) {
   return String(id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -4187,6 +4196,647 @@ async function runPressTileResolve(el, delayMs) {
   el.style.visibility = "visible";
 }
 
+/* ---- 「プリズム」アニメーション: 単語カードに白色光が差し込み、プリズムのように
+   七色へ分光しながら砕け、万華鏡状に対称なスペクトル粒子となって拡散して消える。
+   続く接辞カードは、外側の万華鏡から粒子が渦を巻いて収束し、ずれていた七色の像が
+   重なり合って一枚の像を結ぶ（分光の逆再生）。
+   仕組みは他のスタイルと同じく、無傷の見た目を一度オフスクリーンに描いた上で、
+   要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
+
+/* プリズムが白色光を分解したときの七色帯。分光ゴーストの着色に使う */
+const PRISM_BANDS = ["#ff2f3a", "#ff8a1e", "#ffe62b", "#3dff77", "#22dcff", "#4f6bff", "#b74dff"];
+const prismEaseOut = (p) => 1 - Math.pow(1 - p, 3);
+const prismEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+
+/* 発光粒子のスプライトは色相ごとに一度だけ描いてキャッシュする。
+   粒子ごとにグラデーションやshadowBlurを作ると数百個描いた時点で破綻するため、
+   出来合いの画像をdrawImageで貼るだけにして毎フレームのコストを抑える */
+const PRISM_HUE_STEPS = 18;
+const prismSpriteCache = new Array(PRISM_HUE_STEPS).fill(null);
+let prismFlashCache = null;
+
+function prismGlowSprite(hue) {
+  const step = 360 / PRISM_HUE_STEPS;
+  const idx = ((Math.round(hue / step) % PRISM_HUE_STEPS) + PRISM_HUE_STEPS) % PRISM_HUE_STEPS;
+  if (prismSpriteCache[idx]) return prismSpriteCache[idx];
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const h = idx * step;
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, `hsla(${h},100%,97%,1)`);
+  grad.addColorStop(0.2, `hsla(${h},100%,76%,.92)`);
+  grad.addColorStop(0.52, `hsla(${h},100%,58%,.3)`);
+  grad.addColorStop(1, `hsla(${h},100%,52%,0)`);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  prismSpriteCache[idx] = c;
+  return c;
+}
+
+/* 分光した光が一点で再合成される瞬間の白い閃光 */
+function prismFlashSprite() {
+  if (prismFlashCache) return prismFlashCache;
+  const size = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.18, "rgba(255,255,255,.85)");
+  grad.addColorStop(0.45, "rgba(214,236,255,.28)");
+  grad.addColorStop(1, "rgba(190,220,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  prismFlashCache = c;
+  return c;
+}
+
+/* 無傷のカードの見た目をオフスクリーンに一度だけ描き出す（分光・粒子化の元絵）。
+   filled=false では地の塗りを省いて枠線と文字だけにする。小さい接辞カードでは
+   塗りごと7枚を加算合成すると中が真っ白に飛んでしまうため、そちらを使う */
+function prismRenderCard(cs, text, textCs, rect, textCenterY, dpr, filled = true) {
+  const c = document.createElement("canvas");
+  c.width = Math.round(rect.width * dpr);
+  c.height = Math.round(rect.height * dpr);
+  const g = c.getContext("2d");
+  g.scale(dpr, dpr);
+  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  roundRectPath(g, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
+  if (filled) {
+    g.fillStyle = cs.backgroundColor;
+    g.fill();
+  }
+  g.lineWidth = borderWidth;
+  g.strokeStyle = cs.borderTopColor;
+  g.stroke();
+  g.font = `${textCs.fontWeight || 700} ${textCs.fontSize || "20px"} ${textCs.fontFamily || "'JetBrains Mono',monospace"}`;
+  g.fillStyle = textCs.color || cs.color;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text, rect.width / 2, textCenterY);
+  return c;
+}
+
+/* カード画像を1色に染めた複製（分光ゴーストの素材）。
+   これらをlighterで重ねると、ズレのない位置では元の白色光に戻る。
+   solid=false: multiplyで着色したあとdestination-inで元のアルファを塗り直す。
+     地の塗りがある単語カードでは、文字や枠の濃淡を残したまま色が乗る。
+   solid=true: source-inで形だけ残して色を置き換える。枠線と文字だけの像は
+     元の色が濃く、multiplyでは暗く濁ってしまうため、こちらで発色させる */
+function prismTintedCopy(src, color, solid = false) {
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = src.height;
+  const g = c.getContext("2d");
+  g.drawImage(src, 0, 0);
+  if (solid) {
+    g.globalCompositeOperation = "source-in";
+    g.fillStyle = color;
+    g.fillRect(0, 0, c.width, c.height);
+    return c;
+  }
+  g.globalCompositeOperation = "multiply";
+  g.fillStyle = color;
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalCompositeOperation = "destination-in";
+  g.drawImage(src, 0, 0);
+  return c;
+}
+
+/* 万華鏡のロゼット（放射状の虹の扇）。半径だけが引数なので一度作れば使い回せる */
+function prismFanGradients(ctx, inner, outer) {
+  const grads = [];
+  for (let j = 0; j < 12; j++) {
+    const grad = ctx.createRadialGradient(0, 0, inner, 0, 0, outer);
+    grad.addColorStop(0, `hsla(${j * 30},100%,74%,1)`);
+    grad.addColorStop(0.55, `hsla(${j * 30},100%,62%,.45)`);
+    grad.addColorStop(1, `hsla(${j * 30},100%,58%,0)`);
+    grads.push(grad);
+  }
+  return grads;
+}
+
+/* 単語カードが白色光で分光し、七色の像へ割れたのち、
+   万華鏡状のスペクトル粒子となって飛散する（分解アニメ本体） */
+async function runPrismDissolve(placeholder, word, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  /* 粒子が万華鏡状に大きく広がるため、余白はカードの実寸に比例して広く取る */
+  const padX = Math.max(160, rect.width * 1.05);
+  const padY = Math.max(150, rect.height * 3.2);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "prism-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const srcCanvas = prismRenderCard(cs, word, cs, rect, rect.height / 2, dpr);
+  const ghosts = PRISM_BANDS.map((color) => prismTintedCopy(srcCanvas, color));
+
+  const cx = rect.width / 2, cy = rect.height / 2;
+  const DISP_ANG = 0.36;          // 分散軸の傾き（プリズムを透過した光が開く向き）
+  const KSECTORS = 6;             // 万華鏡の対称数
+  /* 光の届く半径は「カード中心からcanvasの縁までの最短距離」で頭打ちにする。
+     これを超えると扇や暗幕がcanvasの縁で直線に切れて、四角い切り口が見えてしまう */
+  const reach = Math.min(padX + cx, padY + cy);
+  const fanR = reach * 0.99;
+  const fanGrads = prismFanGradients(ctx, rect.height * 0.28, fanR);
+  const flashSprite = prismFlashSprite();
+
+  /* 加算合成のスペクトルは明るい紙の上では白く飛んでしまうため、
+     カードの周囲だけを暗幕のように落とす。ライト／ダークどちらのテーマでも
+     七色が濃く出るうえ、「暗室でプリズムに光を通す」画にもなる */
+  const dimGrad = ctx.createRadialGradient(cx, cy, rect.height * 0.18, cx, cy, reach);
+  dimGrad.addColorStop(0, "rgba(4,8,20,1)");
+  dimGrad.addColorStop(0.55, "rgba(4,8,20,.72)");
+  dimGrad.addColorStop(1, "rgba(4,8,20,0)");
+
+  const T_SPLIT0 = 200;           // 分光が始まる
+  const T_SPLIT1 = 640;           // 七色が開ききる
+  const T_BEAM = 300;             // 白色光が走査しきる
+  const T_BURST = 580;            // 粒子として砕け散り始める
+  const T_FADE = 1180;            // 全体が消え始める
+  const TOTAL_MS = 1460;
+
+  /* 生成位置はカード面上に散らし、中心から見た方角で色相を決める。
+     同じ方角の粒子が同じ色になるので、放射状に虹が並ぶ */
+  const parts = [];
+  for (let i = 0; i < 96; i++) {
+    const px = Math.random() * rect.width;
+    const py = Math.random() * rect.height;
+    const ang = Math.atan2(py - cy, px - cx) + (Math.random() - 0.5) * 0.35;
+    const speed = 70 + Math.random() * 240;
+    const shard = Math.random() < 0.42;
+    parts.push({
+      x: px, y: py,
+      vx: Math.cos(ang) * speed * (1 + Math.random() * 0.5),
+      vy: Math.sin(ang) * speed * 0.85 - Math.random() * 40,
+      hue: ((ang * 180) / Math.PI + 360) % 360,
+      size: shard ? 3 + Math.random() * 6 : 5 + Math.random() * 10,
+      shard,
+      rot: Math.random() * Math.PI,
+      spin: (Math.random() - 0.5) * 7,
+      delay: Math.random() * 220,
+      life: 620 + Math.random() * 430,
+      mirror: Math.random() < 0.55,   // 万華鏡側にも複製するか
+    });
+  }
+
+  /* 速度に指数減衰（空気抵抗）をかけた位置を閉じた式で求める。
+     毎フレーム積分しないので、フレームレートが揺れても軌道が変わらない */
+  const TAU = 0.42;
+  function drawParticle(p, t, mul) {
+    const lt = t - T_BURST - p.delay;
+    if (lt <= 0) return;
+    const lp = lt / p.life;
+    if (lp >= 1) return;
+    const s = lt / 1000;
+    const travel = TAU * (1 - Math.exp(-s / TAU));
+    const x = p.x + p.vx * travel;
+    const y = p.y + p.vy * travel + 65 * s * s;
+    const a = Math.min(1, lt / 90) * Math.pow(1 - lp, 1.6) * mul;
+    if (a <= 0.02) return;
+    const hue = p.hue + t * 0.05;
+    if (p.shard) {
+      /* ガラスの破片: 細長い菱形。lighter合成で縁が発光して見える */
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(x, y);
+      ctx.rotate(p.rot + p.spin * s);
+      ctx.fillStyle = `hsl(${hue % 360},100%,74%)`;
+      ctx.beginPath();
+      ctx.moveTo(0, -p.size * 1.9);
+      ctx.lineTo(p.size * 0.5, 0);
+      ctx.lineTo(0, p.size * 1.9);
+      ctx.lineTo(-p.size * 0.5, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else {
+      const r = p.size * (1 + lp * 1.1);
+      ctx.globalAlpha = a * 0.95;
+      ctx.drawImage(prismGlowSprite(hue), x - r, y - r, r * 2, r * 2);
+    }
+  }
+
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      const outFade = t < T_FADE ? 1 : Math.max(0, 1 - (t - T_FADE) / (TOTAL_MS - T_FADE));
+
+      /* 0) 周囲を落とす暗幕。粒子が痩せていくのに合わせて先に幕を上げないと、
+            光が消えたあとに灰色の膜だけが残って見える */
+      const stage = Math.min(1, Math.max(0, (t - 120) / 320))
+        * (t < 900 ? 1 : Math.max(0, 1 - (t - 900) / 480));
+      const dimA = stage * 0.55 * outFade;
+      if (dimA > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = dimA;
+        ctx.fillStyle = dimGrad;
+        ctx.fillRect(-padX, -padY, canvasW, canvasH);
+        ctx.restore();
+      }
+
+      /* 1) 背景に開く虹の扇（万華鏡のロゼット） */
+      const fanA = t < T_SPLIT0 ? 0 : Math.min(1, (t - T_SPLIT0) / 420) * Math.max(stage, 0.25) * outFade;
+      if (fanA > 0.01) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.3 * fanA;
+        ctx.translate(cx, cy);
+        ctx.rotate(t / 2600);
+        for (let j = 0; j < fanGrads.length; j++) {
+          ctx.fillStyle = fanGrads[j];
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.arc(0, 0, fanR, (j / 12) * Math.PI * 2, ((j + 0.55) / 12) * Math.PI * 2);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      /* 2) カード本体と、分散軸に沿って扇状に開いていく七色のゴースト */
+      const sp = t <= T_SPLIT0 ? 0 : Math.min(1, (t - T_SPLIT0) / (T_SPLIT1 - T_SPLIT0));
+      const disp = prismEaseOut(sp) * (18 + rect.width * 0.06);
+      const baseA = (1 - sp) * outFade;
+      if (baseA > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = baseA;
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
+      const ghostA = Math.min(1, sp * 2.1)
+        * (t > T_BURST ? Math.max(0, 1 - (t - T_BURST) / 340) : 1) * outFade;
+      if (ghostA > 0.01) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ghosts.forEach((gc, k) => {
+          const o = k - (ghosts.length - 1) / 2;
+          ctx.save();
+          ctx.globalAlpha = ghostA * 0.55;
+          ctx.translate(cx + Math.cos(DISP_ANG) * o * disp, cy + Math.sin(DISP_ANG) * o * disp);
+          ctx.rotate(o * 0.02 * sp);
+          const sc = 1 + Math.abs(o) * 0.012 * sp;
+          ctx.scale(sc, sc);
+          ctx.drawImage(gc, 0, 0, gc.width, gc.height, -cx, -cy, rect.width, rect.height);
+          ctx.restore();
+        });
+        ctx.restore();
+      }
+
+      /* 3) カードを斜めに横切る入射光。カードの角丸で切り抜いて内側だけ光らせる */
+      if (t < T_BEAM + 150) {
+        const bp = Math.min(1, t / T_BEAM);
+        const beamA = (1 - Math.max(0, (t - T_BEAM) / 150)) * outFade;
+        if (beamA > 0.01) {
+          ctx.save();
+          roundRectPath(ctx, 0, 0, rect.width, rect.height, radius);
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = beamA;
+          ctx.translate(cx, cy);
+          ctx.rotate(-0.42);
+          const span = rect.width * 1.5 + rect.height;
+          const bx = -span / 2 + bp * span;
+          const bw = 30;
+          const grad = ctx.createLinearGradient(bx - bw, 0, bx + bw, 0);
+          grad.addColorStop(0, "rgba(255,255,255,0)");
+          grad.addColorStop(0.5, "rgba(255,255,255,.85)");
+          grad.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(bx - bw, -span, bw * 2, span * 2);
+          ctx.restore();
+        }
+      }
+
+      /* 4) 砕けた瞬間の閃光と、カードの縦横比に合わせて楕円に広がる虹の衝撃波 */
+      const rw = t - T_BURST;
+      if (rw > -70 && rw < 300) {
+        const fa = (rw < 0 ? (rw + 70) / 70 : Math.max(0, 1 - rw / 300)) * outFade;
+        if (fa > 0.01) {
+          const fr = (rect.width * 0.55) * (1 + Math.max(0, rw) / 300);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = fa * 0.9;
+          ctx.drawImage(flashSprite, cx - fr, cy - fr, fr * 2, fr * 2);
+          /* 同じ発光スプライトを横に引き伸ばし、レンズが起こす横一文字の光条にする */
+          const fw = rect.width * (1.5 + Math.max(0, rw) / 260);
+          const fh = Math.max(3, 16 * (1 - Math.max(0, rw) / 300));
+          ctx.globalAlpha = fa * 0.8;
+          ctx.drawImage(flashSprite, cx - fw, cy - fh, fw * 2, fh * 2);
+          ctx.restore();
+        }
+      }
+      if (rw > 0 && rw < 520) {
+        const rp = rw / 520;
+        const R = 12 + prismEaseOut(rp) * (rect.width * 0.8 + 90);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.translate(cx, cy);
+        ctx.scale(1, 0.58);
+        ctx.lineWidth = Math.max(1, 7 * (1 - rp));
+        ctx.globalAlpha = (1 - rp) * 0.7 * outFade;
+        for (let j = 0; j < 14; j++) {
+          ctx.strokeStyle = `hsl(${(j * (360 / 14) + rw * 0.25) % 360},100%,70%)`;
+          ctx.beginPath();
+          ctx.arc(0, 0, R, (j / 14) * Math.PI * 2, ((j + 0.88) / 14) * Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      /* 5) スペクトル粒子。中心まわりに回転・鏡像を重ねて万華鏡の対称模様にする。
+            反射コピーは淡くして、本体の粒子が埋もれないようにする */
+      if (t > T_BURST) {
+        const kaleido = Math.min(1, Math.max(0, (t - T_BURST - 120) / 380));
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        parts.forEach((p) => drawParticle(p, t, outFade));
+        if (kaleido > 0.01) {
+          ctx.translate(cx, cy);
+          for (let k = 1; k < KSECTORS; k++) {
+            ctx.save();
+            ctx.rotate((k * Math.PI * 2) / KSECTORS);
+            if (k % 2 === 1) ctx.scale(1, -1);
+            ctx.translate(-cx, -cy);
+            parts.forEach((p) => { if (p.mirror) drawParticle(p, t, kaleido * 0.5 * outFade); });
+            ctx.restore();
+          }
+        }
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが、外側の万華鏡から渦を巻いて集まるスペクトル粒子として現れ、
+   ずれていた七色の像が一点で重なって像を結ぶ（単語側の分光と対になる逆再生） */
+async function runPrismTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(110, rect.width * 0.95);
+  const padY = Math.max(95, rect.height * 1.7);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "prism-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const partText = partEl ? partEl.textContent : "";
+  const srcCanvas = prismRenderCard(cs, partText, partCs, rect, partCenterY, dpr);
+  /* ゴーストは地の塗りを抜いた枠線＋文字だけの像から作る。
+     接辞カードは小さく像の重なりが深いので、塗りごと加算すると中身が白く飛ぶ */
+  const inkCanvas = prismRenderCard(cs, partText, partCs, rect, partCenterY, dpr, false);
+  const ghosts = PRISM_BANDS.map((color) => prismTintedCopy(inkCanvas, color, true));
+
+  const cx = rect.width / 2, cy = rect.height / 2;
+  const DISP_ANG = 0.36;
+  const KSECTORS = 6;
+  const flashSprite = prismFlashSprite();
+
+  /* カード周りだけを浅く落とす暗幕。接辞カードは隣り合って同時に動くので、
+     暗幕が重なっても斑にならないよう単語側より弱く・狭くかける */
+  const reach = Math.min(padX + cx, padY + cy);
+  const dimGrad = ctx.createRadialGradient(cx, cy, rect.height * 0.2, cx, cy, reach);
+  dimGrad.addColorStop(0, "rgba(4,8,20,1)");
+  dimGrad.addColorStop(0.5, "rgba(4,8,20,.66)");
+  dimGrad.addColorStop(1, "rgba(4,8,20,0)");
+
+  const T_GHOST0 = 120;           // 七色の像が寄り始める
+  const T_LAND = 620;             // 像が一点で重なる（結像の瞬間）
+  const TOTAL_MS = 840;
+
+  /* 外周からカード中心へ、渦を巻きながら収束する粒子。
+     湧き出す半径はcanvasに収まる範囲で頭打ちにする。これを超えると
+     粒子がcanvasの縁で直線に切り落とされ、四角い切り口が見えてしまう
+     （軌道はカードの縦横比に合わせて横1.3倍・縦0.82倍の楕円） */
+  const maxR = Math.min((padX + cx) / 1.3, (padY + cy) / 0.82) * 0.95;
+  const parts = [];
+  for (let i = 0; i < 84; i++) {
+    const ang0 = Math.random() * Math.PI * 2;
+    const shard = Math.random() < 0.4;
+    parts.push({
+      ang0,
+      r0: 45 + Math.random() * Math.max(25, maxR - 45),
+      swirl: (0.7 + Math.random() * 1.5) * (Math.random() < 0.5 ? -1 : 1),
+      hue: ((ang0 * 180) / Math.PI + 360) % 360,
+      size: shard ? 3 + Math.random() * 5 : 4 + Math.random() * 8,
+      shard,
+      spin: (Math.random() - 0.5) * 8,
+      delay: Math.random() * 170,
+      dur: 430 + Math.random() * 190,
+      mirror: Math.random() < 0.55,
+    });
+  }
+
+  function drawParticle(p, t, mul) {
+    const lt = t - p.delay;
+    if (lt <= 0) return;
+    const q = Math.min(1, lt / p.dur);
+    /* 収束するほど半径が縮み、同時に角度が回る。カードの縦横比に合わせて楕円軌道にする */
+    const r = p.r0 * Math.pow(1 - q, 1.4);
+    const ang = p.ang0 + p.swirl * q;
+    const x = cx + Math.cos(ang) * r * 1.3;
+    const y = cy + Math.sin(ang) * r * 0.82;
+    /* 着地間際で素早く消し、粒子がカードの中に吸い込まれたように見せる */
+    const a = Math.min(1, lt / 90) * (q < 0.8 ? 1 : Math.max(0, (1 - q) / 0.2)) * mul;
+    if (a <= 0.02) return;
+    const hue = p.hue + t * 0.08;
+    if (p.shard) {
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(x, y);
+      ctx.rotate(ang + p.spin * (lt / 1000));
+      ctx.fillStyle = `hsl(${hue % 360},100%,76%)`;
+      ctx.beginPath();
+      ctx.moveTo(0, -p.size * 1.8);
+      ctx.lineTo(p.size * 0.5, 0);
+      ctx.lineTo(0, p.size * 1.8);
+      ctx.lineTo(-p.size * 0.5, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else {
+      const rr = p.size * (1 + (1 - q) * 0.9);
+      ctx.globalAlpha = a * 0.95;
+      ctx.drawImage(prismGlowSprite(hue), x - rr, y - rr, rr * 2, rr * 2);
+    }
+  }
+
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      /* 0) 周囲を浅く落とす暗幕。結像したら速やかに引き上げる */
+      const dimA = Math.min(1, t / 200)
+        * (t < T_LAND - 120 ? 1 : Math.max(0, 1 - (t - (T_LAND - 120)) / 260)) * 0.26;
+      if (dimA > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = dimA;
+        ctx.fillStyle = dimGrad;
+        ctx.fillRect(-padX, -padY, canvasW, canvasH);
+        ctx.restore();
+      }
+
+      /* 1) 万華鏡から渦を巻いて集まる粒子（結像後は急速に消える） */
+      const partMul = t < T_LAND ? 1 : Math.max(0, 1 - (t - T_LAND) / 180);
+      if (partMul > 0.01) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        parts.forEach((p) => drawParticle(p, t, partMul));
+        ctx.translate(cx, cy);
+        for (let k = 1; k < KSECTORS; k++) {
+          ctx.save();
+          ctx.rotate((k * Math.PI * 2) / KSECTORS);
+          if (k % 2 === 1) ctx.scale(1, -1);
+          ctx.translate(-cx, -cy);
+          parts.forEach((p) => { if (p.mirror) drawParticle(p, t, partMul * 0.5); });
+          ctx.restore();
+        }
+        ctx.restore();
+      }
+
+      /* 2) 七色の像が分散軸に沿って寄り集まり、重なるほど白く戻っていく */
+      const gp = t <= T_GHOST0 ? 0 : Math.min(1, (t - T_GHOST0) / (T_LAND - T_GHOST0));
+      const disp = (1 - prismEaseInOut(gp)) * (13 + rect.width * 0.05);
+      const ghostA = Math.min(1, (t - T_GHOST0) / 120) * (1 - Math.pow(gp, 3) * 0.4);
+      if (gp > 0 && ghostA > 0.01) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ghosts.forEach((gc, k) => {
+          const o = k - (ghosts.length - 1) / 2;
+          ctx.save();
+          ctx.globalAlpha = ghostA * 0.85;
+          ctx.translate(cx + Math.cos(DISP_ANG) * o * disp, cy + Math.sin(DISP_ANG) * o * disp);
+          ctx.rotate(o * 0.02 * (1 - gp));
+          ctx.drawImage(gc, 0, 0, gc.width, gc.height, -cx, -cy, rect.width, rect.height);
+          ctx.restore();
+        });
+        ctx.restore();
+      }
+
+      /* 3) 結像したカード本体。像が重なるにつれて実体化する */
+      const baseA = Math.max(0, Math.min(1, (t - (T_LAND - 260)) / 300));
+      if (baseA > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = baseA;
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
+
+      /* 4) 結像の瞬間の閃光と、カード面を走り抜ける虹の一閃 */
+      const fw = t - T_LAND;
+      if (fw > -90 && fw < 240) {
+        const fa = fw < 0 ? (fw + 90) / 90 : Math.max(0, 1 - fw / 240);
+        if (fa > 0.01) {
+          const fr = rect.width * 0.45 * (1 + Math.max(0, fw) / 260);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = fa * 0.66;
+          ctx.drawImage(flashSprite, cx - fr, cy - fr, fr * 2, fr * 2);
+          /* 結像の瞬間だけ横一文字に走るレンズの光条 */
+          const lw = rect.width * (1.25 + Math.max(0, fw) / 240);
+          const lh = Math.max(2.5, 12 * (1 - Math.max(0, fw) / 240));
+          ctx.globalAlpha = fa * 0.75;
+          ctx.drawImage(flashSprite, cx - lw, cy - lh, lw * 2, lh * 2);
+          ctx.restore();
+        }
+      }
+      if (fw > -40 && fw < 260) {
+        const wp = Math.min(1, Math.max(0, (fw + 40) / 300));
+        ctx.save();
+        roundRectPath(ctx, 0, 0, rect.width, rect.height, radius);
+        ctx.clip();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = (1 - wp) * 0.75;
+        ctx.translate(cx, cy);
+        ctx.rotate(-0.42);
+        const span = rect.width * 1.5 + rect.height;
+        const bx = -span / 2 + wp * span;
+        const bw = 22;
+        const grad = ctx.createLinearGradient(bx - bw, 0, bx + bw, 0);
+        grad.addColorStop(0, "rgba(255,120,160,0)");
+        grad.addColorStop(0.3, "rgba(255,214,90,.7)");
+        grad.addColorStop(0.5, "rgba(255,255,255,.9)");
+        grad.addColorStop(0.7, "rgba(90,220,255,.7)");
+        grad.addColorStop(1, "rgba(150,120,255,0)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(bx - bw, -span, bw * 2, span * 2);
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -4290,6 +4940,31 @@ const DECOMPOSE_ANIM_STYLES = {
     mountTile(el, i) {
       if (reducedMotion()) return;
       runPressTileResolve(el, i * 130);
+    },
+  },
+
+  prism: {
+    label: "プリズム",
+    tileClass: "prism-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語ブロックが白色光で七色に分光し、万華鏡状のスペクトル粒子となって砕け散る */
+    async intro(placeholder, word) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runPrismDissolve(placeholder, word, rect);
+    },
+    /* 接辞カードが万華鏡から渦を巻いて集まり、七色の像が重なって結像する */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runPrismTileResolve(el, i * 120);
     },
   },
 };
@@ -5425,8 +6100,13 @@ const TTS_PROBE_TEXT = "テスト";
 
 async function loadKnownGoodSpeakers() {
   const saved = await kvGet("tts_speakers_ok", null);
-  if (Array.isArray(saved)) return saved;
-  return TTS_SPEAKERS.filter((s) => TTS_SPEAKERS_CONFIRMED.includes(s.id));
+  const confirmed = TTS_SPEAKERS.filter((s) => TTS_SPEAKERS_CONFIRMED.includes(s.id));
+  if (!Array.isArray(saved)) return confirmed;
+  /* 検出が通信エラーなどで一度でも空振りすると、確認済みの話者まで候補から
+     消えてブラウザ標準に落ちたまま戻らなくなる。確認済みの話者は検出結果に
+     関わらず候補に残し、鳴らなかった場合は再生時のフォールバックに任せる */
+  const savedIds = new Set(saved.map((s) => normalizeSpeakerId(s && s.id)));
+  return confirmed.filter((s) => !savedIds.has(normalizeSpeakerId(s.id))).concat(saved);
 }
 
 /* 候補を1つずつ鳴らしてみて、成功したものだけを残す。規約に同意して
@@ -5469,7 +6149,9 @@ async function refreshTtsSpeakerUI() {
   const provider = await getActiveProvider();
   const endpoint = TTS_ENDPOINTS[provider];
   const apiKey = endpoint ? await loadApiKey(provider) : "";
-  const chosen = await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT);
+  /* 未設定(null)と「ブラウザ標準を明示的に選んだ」("")を区別する。
+     既定はずんだもんだが、自分でブラウザ標準を選んだ場合はそれを尊重する */
+  const chosen = await kvGet("tts_speaker", null);
 
   if (!apiKey) {
     select.innerHTML = "";
@@ -5487,11 +6169,15 @@ async function refreshTtsSpeakerUI() {
   select.innerHTML = "";
   for (const s of [BROWSER_VOICE_OPTION].concat(speakers)) select.appendChild(new Option(s.label, s.id));
 
-  /* 使えなくなった話者が保存されたままだと鳴らない声を選び続けることに
-     なるので、候補に無ければブラウザ標準へ戻す */
+  /* 使えなくなった話者が保存されたままだと鳴らない声を選び続けることになるので、
+     候補に無ければ既定のずんだもんへ戻す（APIの綴り揺れも吸収する）。
+     ずんだもんすら候補に無いときだけブラウザ標準に落とす */
   const available = new Set(speakers.map((s) => s.id));
-  select.value = chosen && available.has(chosen) ? chosen
-    : (available.has(TTS_SPEAKER_DEFAULT) ? TTS_SPEAKER_DEFAULT : "");
+  const defaultSpeaker = speakers.find(
+    (s) => normalizeSpeakerId(s.id) === normalizeSpeakerId(TTS_SPEAKER_DEFAULT)
+  );
+  const fallback = defaultSpeaker ? defaultSpeaker.id : "";
+  select.value = chosen === "" ? "" : (chosen && available.has(chosen) ? chosen : fallback);
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
   note.textContent = speakers.length
@@ -6557,6 +7243,7 @@ renderRecentChips();
 applyThemeMode();
 restoreCloudSession();
 refreshBuildTag();
+migrateTtsSpeakerDefaultOnce();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
