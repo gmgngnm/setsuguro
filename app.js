@@ -813,6 +813,89 @@ async function getActiveProvider() {
   return provider === "groq" ? "sakura" : provider;
 }
 
+/* ------------------------------------------------------------------ *
+ * 3.4 Gemini（写真から単語を読み取る専用。分解・語呂合わせの
+ *     プロバイダ選択には出てこない、独立した機能のためのAPIキー）
+ *    無料枠の使いやすさと画像認識（手書き含む）の精度・速度のバランスで
+ *    Geminiを採用。OpenAI互換ではないため、AI_ADAPTERSとは別に持つ。
+ * ------------------------------------------------------------------ */
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+async function verifyGeminiApiKey(apiKey) {
+  const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1`, {
+    headers: { "x-goog-api-key": apiKey },
+  });
+  if (res.status === 401 || res.status === 403 || res.status === 400) {
+    throw new Error("APIキーが受け付けられませんでした");
+  }
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+}
+
+/* 画像(dataURL)を渡すと、写っている英単語をJSON配列で返す。
+   手書き・活字どちらのノートでも読める前提のプロンプトにしてある */
+async function recognizeWordsFromImage(dataUrl, apiKey) {
+  const [, mimeType, base64] = dataUrl.match(/^data:([^;]+);base64,(.*)$/s) || [];
+  if (!base64) throw new Error("画像の読み込みに失敗しました");
+
+  const sys = [
+    "あなたはノートや単語帳の写真から英単語を読み取るアシスタントです。",
+    "画像に写っている英単語をできる限りすべて読み取ってください。手書き文字も含みます。",
+    "各単語はスペルミスを補正せず、写っている綴りのまま出力してください。ただし大文字は小文字に統一してください。",
+    "日本語の意味・訳注・記号・数字・見出しなど、英単語以外のものは含めないでください。",
+    "英単語が1つも見つからない場合は空配列を返してください。",
+    "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    '{"words":["abandon","bereavement"]}',
+  ].join("\n");
+
+  const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: sys },
+          { inline_data: { mime_type: mimeType, data: base64 } },
+        ],
+      }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await res.json();
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  let words = [];
+  try { words = JSON.parse(text).words || []; } catch { words = []; }
+  return words.filter((w) => typeof w === "string");
+}
+
+/* カメラ写真は数MBになりがちで、そのまま送るとAPIが重く遅くなるため、
+   長辺を縮小してJPEG圧縮してからdataURLにする（文字が読み取れる範囲で
+   十分な解像度に抑える） */
+function compressImageForRecognition(file, maxDim = 1600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("画像の読み込みに失敗しました")); };
+    img.src = url;
+  });
+}
+
 /* 疎通確認は生成を伴わない /v1/models で行う。生成させて確かめると、
    キーが正しくてもモデルの出力揺れ (JSON検証エラーなど) で失敗し、
    キーの問題だと誤認させてしまうため */
@@ -5782,6 +5865,7 @@ async function initSettingsScreen() {
   });
   document.getElementById("key-label").textContent = `${PROVIDER_LABELS[activeProvider]} API キー`;
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
+  document.getElementById("gemini-api-key-input").value = await loadApiKey("gemini");
   await refreshUsageDisplay();
 
   document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => {
@@ -6032,6 +6116,37 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   /* Whisperの可否も話者一覧の取得もキーに依存するので、あわせて更新する */
   await refreshVoiceEngineUI();
   await refreshTtsSpeakerUI();
+});
+
+document.getElementById("toggle-gemini-key-visibility").addEventListener("click", () => {
+  const input = document.getElementById("gemini-api-key-input");
+  input.type = input.type === "password" ? "text" : "password";
+});
+
+document.getElementById("clear-gemini-key-input").addEventListener("click", () => {
+  const input = document.getElementById("gemini-api-key-input");
+  input.value = "";
+  input.focus();
+  document.getElementById("gemini-settings-status").textContent = "";
+});
+
+document.getElementById("save-gemini-key-btn").addEventListener("click", async () => {
+  const status = document.getElementById("gemini-settings-status");
+  const btn = document.getElementById("save-gemini-key-btn");
+  const key = document.getElementById("gemini-api-key-input").value.trim();
+  if (!key) { status.textContent = "APIキーを入力してください"; return; }
+
+  btn.disabled = true;
+  status.textContent = "疎通確認中…";
+  await saveApiKey("gemini", key);
+
+  try {
+    await verifyGeminiApiKey(key);
+    status.textContent = "✓ 保存しました。接続を確認できました。";
+  } catch (err) {
+    status.textContent = `保存しましたが、疎通確認に失敗しました（${err.message}）。`;
+  }
+  btn.disabled = false;
 });
 
 async function refreshUsageDisplay() {
@@ -6913,6 +7028,48 @@ batchCsvInput.addEventListener("change", async (e) => {
   const words = batchWordsFromCsv(text);
   if (!words.length) { toast("読み込める英単語が見つかりませんでした"); return; }
   await addBatchWords(words);
+});
+
+const batchPhotoInput = document.getElementById("batch-photo-input");
+document.getElementById("batch-photo-btn").addEventListener("click", async () => {
+  const apiKey = await loadApiKey("gemini");
+  if (!apiKey) {
+    toast("設定画面でGemini APIキーを登録してください");
+    showScreen("screen-settings");
+    return;
+  }
+  batchPhotoInput.click();
+});
+batchPhotoInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+
+  const btn = document.getElementById("batch-photo-btn");
+  const progress = document.getElementById("batch-photo-progress");
+  btn.disabled = true;
+  progress.style.display = "flex";
+  try {
+    const apiKey = await loadApiKey("gemini");
+    if (!apiKey) { toast("設定画面でGemini APIキーを登録してください"); return; }
+    const dataUrl = await compressImageForRecognition(file);
+    const rawWords = await recognizeWordsFromImage(dataUrl, apiKey);
+    /* 認識精度は完璧ではないため、キューへ直接足さずテキスト欄に
+       差し込んで確認・修正してから「リストに追加」を押させる */
+    const words = parseBatchWordInput(rawWords.join("\n"));
+    if (!words.length) {
+      toast("英単語を読み取れませんでした");
+    } else {
+      const input = document.getElementById("batch-input");
+      input.value = input.value.trim() ? `${input.value.trim()}\n${words.join("\n")}` : words.join("\n");
+      toast(`${words.length}語を読み取りました。内容を確認して「リストに追加」を押してください`);
+    }
+  } catch (err) {
+    console.error(err);
+    toast(`画像の読み取りに失敗しました（${err.message}）`);
+  }
+  btn.disabled = false;
+  progress.style.display = "none";
 });
 
 document.getElementById("batch-review-select-all").addEventListener("click", async () => {

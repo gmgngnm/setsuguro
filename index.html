@@ -261,6 +261,19 @@
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
 
+    <div class="section-label" style="margin-top:6px;">写真から単語を読み取る（Gemini）</div>
+    <div class="form-row">
+      <label>Gemini API キー</label>
+      <div class="form-field">
+        <input id="gemini-api-key-input" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
+        <button id="clear-gemini-key-input" type="button" aria-label="入力をクリア"><svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <button id="toggle-gemini-key-visibility" type="button" aria-label="表示切替"><svg class="icon-svg icon-svg-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+    </div>
+    <div class="usage-note">Google AI Studio（aistudio.google.com/apikey）で無料のAPIキーを発行できます。マイ単語画面の「まとめて登録」でノートを撮影すると、写っている英単語を読み取ります。撮影した画像はGoogleのGemini APIに送信されます。</div>
+    <button class="btn-solid" id="save-gemini-key-btn">保存して疎通確認</button>
+    <div class="settings-status" id="gemini-settings-status"></div>
+
     <div class="section-label" style="margin-top:6px;">RAGによる精度向上</div>
     <div class="provider-row" id="rag-toggle-row">
       <button class="mode-pill" data-rag-toggle="on">オン</button>
@@ -325,6 +338,12 @@
       <button class="batch-csv-template-btn" id="batch-csv-template-btn" type="button">書式をダウンロード</button>
     </div>
     <input type="file" id="batch-csv-input" accept=".csv,text/csv" style="display:none;">
+    <button class="btn-ghost" id="batch-photo-btn" type="button">📷 ノートを撮影して読み取る</button>
+    <input type="file" id="batch-photo-input" accept="image/*" capture="environment" style="display:none;">
+    <div class="spinner-row" id="batch-photo-progress" style="display:none;">
+      <div class="spinner"></div>
+      <span class="spin-label">画像から単語を読み取り中…</span>
+    </div>
 
     <div class="section-label" style="margin-top:6px;">登録した単語<span class="batch-stats" id="batch-stats"></span></div>
     <div class="usage-note" id="batch-cost-note"></div>
