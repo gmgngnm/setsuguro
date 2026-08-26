@@ -288,6 +288,10 @@ button{font-family:inherit;cursor:pointer;}
 #decompose-word-meaning{
   opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity .4s ease, transform .4s ease;
   margin-bottom:4px; max-width:min(90vw, 320px);
+  /* 空の状態から実際の中身が流し込まれた瞬間に高さが伸びて、まだ脈打っている
+     プレースホルダーカードを数px押し下げてしまうのを和らげるため、
+     典型的な1行×2段分の高さを最初から確保しておく */
+  min-height:44px;
 }
 #decompose-word-meaning.show{opacity:1; visibility:visible; transform:translateY(0);}
 @media (prefers-reduced-motion: reduce){ #decompose-word-meaning{transition:none;} }
@@ -653,6 +657,14 @@ button{font-family:inherit;cursor:pointer;}
 .sync-status[hidden]{display:none;}
 .sync-status.syncing{color:var(--accent-ink);}
 .sync-status.error{color:var(--danger);}
+.sync-status-group{display:flex;align-items:center;gap:4px;}
+.sync-retry-btn{
+  background:none;border:none;color:var(--ink-soft);display:inline-flex;align-items:center;
+  justify-content:center;padding:2px;cursor:pointer;flex-shrink:0;border-radius:999px;
+}
+.sync-retry-btn:hover{color:var(--accent-ink);}
+.sync-retry-btn[hidden]{display:none;}
+.sync-retry-btn.spinning svg{animation:spin 1s linear infinite;}
 
 /* Toast */
 #toast{
@@ -699,7 +711,7 @@ button{font-family:inherit;cursor:pointer;}
   .morph-part{font-size:36px;}
   .morph-meaning{font-size:16px;}
   .morph.word-pulse{max-width:min(60vw, 620px);}
-  #decompose-word-meaning{max-width:min(70vw, 620px);}
+  #decompose-word-meaning{max-width:min(70vw, 620px);min-height:58px;}
   #decompose-word-meaning .word-meaning-word{font-size:24px;}
   #decompose-word-meaning .word-meaning-text{font-size:20px;}
   #decompose-memory-tip{font-size:16px;max-width:640px;}
