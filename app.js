@@ -6633,10 +6633,10 @@ async function restoreCloudSession() {
  * ------------------------------------------------------------------ */
 const BATCH_STORE = "batch_queue";
 
-/* 生成中・作り直し中は、二重に走らせないためのフラグ。どちらも
-   実行中はボタンを押せなくする */
+/* 生成中に二重で走らせないためのフラグ。実行中はボタンを押せなくする。
+   まとめて登録の画面を離れても生成は止まらないので、戻ってきたときに
+   このフラグから進行中かどうかを復元して表示する */
 let batchRunning = false;
-let batchRegenerating = false;
 
 /* 改行・カンマ・空白など、英字とハイフン/アポストロフィ以外は全て区切りとして扱う。
    単語帳のCSVを貼り付けても、メモから改行で貼り付けても同じように拾えるようにする */
@@ -6750,9 +6750,8 @@ async function renderBatchQueue() {
 
   const rows = await loadBatchQueue();
   const pending = rows.filter((r) => r.status === "pending");
-  const ready = rows.filter((r) => r.status === "ready");
   const failed = rows.filter((r) => r.status === "failed");
-  statsEl.textContent = `未生成${pending.length} ・ 確認待ち${ready.length} ・ 失敗${failed.length}`;
+  statsEl.textContent = `未生成${pending.length} ・ 失敗${failed.length}`;
 
   if (noteEl) {
     noteEl.textContent = pending.length
@@ -6762,13 +6761,12 @@ async function renderBatchQueue() {
 
   const runBtn = document.getElementById("batch-run-btn");
   if (runBtn) {
-    runBtn.disabled = batchRunning || !pending.length;
-    runBtn.textContent = pending.length ? `⚡ ${pending.length}語をまとめて生成` : "⚡ まとめて生成";
-  }
-  const reviewBtn = document.getElementById("batch-open-review-btn");
-  if (reviewBtn) {
-    reviewBtn.disabled = !ready.length;
-    reviewBtn.textContent = ready.length ? `確認する（${ready.length}語）` : "確認する";
+    /* 入力欄が空でも、積み残しの未生成語があれば押せる。
+       生成中だけは二重起動を防ぐために止める */
+    runBtn.disabled = batchRunning;
+    runBtn.textContent = batchRunning
+      ? "⚡ 生成中…"
+      : (pending.length ? `⚡ ${pending.length}語を生成&保存` : "⚡ 生成&保存");
   }
 
   listEl.innerHTML = "";
@@ -6824,7 +6822,7 @@ async function runBatchGeneration() {
 
   batchRunning = true;
   await renderBatchQueue();
-  let done = 0;
+  let done = 0, saved = 0;
   setBatchProgress(`生成中… 0 / ${queue.length}`);
 
   try {
@@ -6860,7 +6858,11 @@ async function runBatchGeneration() {
               goro_highlight: cand.highlight,
               provider,
             };
-            await putBatchRow(it.row);
+            /* 生成できた語はその場で単語帳へ入れ、キューからは外す。
+               チャンクごとに確定させておくことで、途中で画面を離れても
+               通信が切れても、そこまでの成果はそのまま残る */
+            await saveGeneratedBatchRow(it.row, provider, apiKey);
+            saved++;
           }
         }
       } catch (err) {
@@ -6873,124 +6875,24 @@ async function runBatchGeneration() {
       setBatchProgress(`生成中… ${done} / ${queue.length}`);
       await renderBatchQueue();
     }
-    toast("まとめ生成が終わりました");
+    toast(saved ? `${saved}語を単語帳に保存しました` : "まとめ生成が終わりました");
   } finally {
     batchRunning = false;
     setBatchProgress("");
     await renderBatchQueue();
+    renderBookList();
   }
 }
 
-/* --- 確認画面 --- */
-/* 保存対象の選択はメモリだけで持つ。生成結果そのものはIndexedDBに
-   あるので、途中で画面を離れても結果は失われない */
-const batchExcluded = new Set();
-
-async function renderBatchReview() {
-  const listEl = document.getElementById("batch-review-list");
-  const statsEl = document.getElementById("batch-review-stats");
-  if (!listEl || !statsEl) return;
-
-  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result);
-  const selected = rows.filter((r) => !batchExcluded.has(r.id));
-  statsEl.textContent = rows.length ? `${rows.length}語 ・ 保存対象 ${selected.length}語` : "";
-
-  const saveBtn = document.getElementById("batch-review-save-btn");
-  if (saveBtn) {
-    saveBtn.disabled = !selected.length || batchRegenerating;
-    saveBtn.textContent = `💾 ${selected.length}語を単語帳に保存`;
-  }
-
-  listEl.innerHTML = "";
-  if (!rows.length) {
-    listEl.innerHTML = `<div class="empty-note">確認待ちの単語はありません</div>`;
-    return;
-  }
-
-  rows.forEach((r) => {
-    const on = !batchExcluded.has(r.id);
-    const card = document.createElement("div");
-    card.className = `batch-review-card${on ? " on" : ""}`;
-    const phonetic = r.result.word_phonetic ? `<span class="phonetic">[${escapeHtml(r.result.word_phonetic)}]</span>` : "";
-    const morphs = r.result.morphemes
-      .map((m) => `<span class="batch-morph">${escapeHtml(m.part)}<i>${escapeHtml(m.reading)}</i></span>`)
-      .join("");
-    card.innerHTML = `
-      <div class="batch-review-head">
-        <button class="batch-review-check" type="button" aria-pressed="${on}" aria-label="${escapeHtml(r.result.word)} を保存対象にする">${on ? "✓" : ""}</button>
-        <div class="batch-review-title">${escapeHtml(r.result.word)}${phonetic}</div>
-      </div>
-      <div class="batch-review-meaning">${escapeHtml(r.result.word_meaning || "")}</div>
-      <div class="batch-review-morphs">${morphs}</div>
-      <div class="batch-review-goro">${escapeHtml(r.result.goro_text || "")}</div>
-      <div class="batch-review-actions">
-        <button class="btn-ghost batch-review-regen" type="button">語呂を作り直す</button>
-        <button class="btn-ghost batch-review-drop" type="button">破棄</button>
-      </div>`;
-
-    card.querySelector(".batch-review-check").addEventListener("click", async () => {
-      if (batchExcluded.has(r.id)) batchExcluded.delete(r.id); else batchExcluded.add(r.id);
-      await renderBatchReview();
-    });
-    card.querySelector(".batch-review-drop").addEventListener("click", async () => {
-      await idbDelete(BATCH_STORE, r.id);
-      batchExcluded.delete(r.id);
-      await renderBatchReview();
-    });
-    card.querySelector(".batch-review-regen").addEventListener("click", () => regenerateBatchGoro(r));
-    listEl.appendChild(card);
-  });
-}
-
-/* 1語だけ作り直す。ここは1語ずつの経路（generateGoro）をそのまま使う。
-   1語のために束ねる相手がいないので、まとめても得にならない */
-async function regenerateBatchGoro(row) {
-  if (batchRegenerating) return;
-  const provider = await getActiveProvider();
-  const apiKey = await loadApiKey(provider);
-  if (!apiKey) { toast("設定画面でAPIキーを登録してください"); return; }
-
-  batchRegenerating = true;
-  await renderBatchReview();
-  toast(`${row.result.word} の語呂を作り直しています…`);
-  try {
-    const candidates = await generateGoro(
-      row.result.word, row.result.morphemes, provider, apiKey, row.result.word_meaning,
-      [row.result.goro_text].filter(Boolean),
-    );
-    const c = candidates[0];
-    if (c && c.text) {
-      row.result.goro_text = c.text;
-      row.result.goro_highlight = c.highlight || [];
-      await putBatchRow(row);
-    }
-  } catch (err) {
-    console.error(err);
-    toast(`作り直しに失敗しました（${err.message}）`);
-  } finally {
-    batchRegenerating = false;
-    await renderBatchReview();
-  }
-}
-
-async function saveBatchReviewSelection() {
-  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result && !batchExcluded.has(r.id));
-  if (!rows.length) return;
-
-  const provider = await getActiveProvider();
-  const apiKey = await loadApiKey(provider).catch(() => "");
-  for (const row of rows) {
-    const existing = await idbGet("words", wordCardId(row.result.word));
-    await saveWordRecord(batchRowToWordRecord(row, existing));
-    await idbDelete(BATCH_STORE, row.id);
-    batchExcluded.delete(row.id);
-    /* ユーザーが良しとして保存した語呂を、今後のFew-shot例・マンネリ検出の
-       材料として蓄積する。1語ずつ保存したときと同じ扱いにする */
-    growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text, provider, apiKey)
-      .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
-  }
-  toast(`${rows.length}語を単語帳に保存しました`);
-  await renderBatchReview();
+/* 生成できた1語を単語帳へ保存し、キューから外す */
+async function saveGeneratedBatchRow(row, provider, apiKey) {
+  const existing = await idbGet("words", wordCardId(row.result.word));
+  await saveWordRecord(batchRowToWordRecord(row, existing));
+  await idbDelete(BATCH_STORE, row.id);
+  /* ユーザーが使うと判断した語呂を、今後のFew-shot例・マンネリ検出の
+     材料として蓄積する。1語ずつ保存したときと同じ扱いにする */
+  growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text, provider, apiKey)
+    .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
 }
 
 /* 撮影ボタンのクリックハンドラは、iOS Safariの制約により
@@ -7003,35 +6905,69 @@ async function refreshGeminiKeyAvailability() {
   geminiKeyAvailable = !!(await loadApiKey("gemini"));
 }
 
-function openBatchScreen() {
+/* 確認画面を廃止する前のバージョンで「確認待ち」のまま残った生成結果を、
+   単語帳へ移して回収する。放置すると、確認する画面が無くなった以上
+   もう二度と取り出せない結果になってしまう */
+async function flushPendingReviewRows() {
+  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result);
+  if (!rows.length) return;
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider).catch(() => "");
+  for (const row of rows) await saveGeneratedBatchRow(row, provider, apiKey);
+  toast(`生成済みだった${rows.length}語を単語帳に保存しました`);
+  renderBookList();
+}
+
+async function openBatchScreen() {
   showScreen("screen-batch");
-  renderBatchQueue();
   refreshGeminiKeyAvailability();
+  /* 画面を離れている間も生成は続いている。戻ってきたときに、
+     進行中なら進捗表示をそのまま復元する */
+  if (batchRunning) setBatchProgress("生成中…");
+  await flushPendingReviewRows();
+  await renderBatchQueue();
 }
 
-function openBatchReviewScreen() {
-  showScreen("screen-batch-review");
-  renderBatchReview();
-}
-
-document.getElementById("batch-entry-btn").addEventListener("click", openBatchScreen);
-document.getElementById("batch-open-review-btn").addEventListener("click", openBatchReviewScreen);
-document.getElementById("batch-review-back-btn").addEventListener("click", openBatchScreen);
-document.getElementById("batch-run-btn").addEventListener("click", runBatchGeneration);
-document.getElementById("batch-review-save-btn").addEventListener("click", saveBatchReviewSelection);
-
-document.getElementById("batch-add-btn").addEventListener("click", async () => {
-  const input = document.getElementById("batch-input");
-  await addBatchWords(parseBatchWordInput(input.value));
-  input.value = "";
+/* アプリ内で画面を移っても生成は動き続けるが、タブ/アプリごと閉じられると
+   JSごと止まるため、そこだけは確認を挟む（保存済みの語はそのまま残る） */
+window.addEventListener("beforeunload", (e) => {
+  if (!batchRunning) return;
+  e.preventDefault();
+  e.returnValue = "";
 });
 
+document.getElementById("batch-entry-btn").addEventListener("click", openBatchScreen);
+
+/* 入力欄の内容をキューに足してから、そのまま生成〜保存まで走らせる。
+   入力が空でも、前回までに積み残した未生成の語があれば生成を続ける */
+document.getElementById("batch-run-btn").addEventListener("click", async () => {
+  const input = document.getElementById("batch-input");
+  const words = parseBatchWordInput(input.value);
+  if (words.length) {
+    await addBatchWords(words);
+    input.value = "";
+  }
+  await runBatchGeneration();
+});
+
+const batchCsvSheet = document.getElementById("batch-csv-sheet");
+document.getElementById("batch-csv-btn").addEventListener("click", () => {
+  batchCsvSheet.style.display = "flex";
+});
+document.getElementById("batch-csv-sheet-close").addEventListener("click", () => {
+  batchCsvSheet.style.display = "none";
+});
 document.getElementById("batch-csv-template-btn").addEventListener("click", () => {
+  batchCsvSheet.style.display = "none";
   downloadCSV(batchCsvTemplate(), "engolo-batch-template");
 });
 
 const batchCsvInput = document.getElementById("batch-csv-input");
-document.getElementById("batch-csv-import-btn").addEventListener("click", () => batchCsvInput.click());
+/* iOS対策として、file inputのclick()までawaitを挟まない */
+document.getElementById("batch-csv-import-btn").addEventListener("click", () => {
+  batchCsvSheet.style.display = "none";
+  batchCsvInput.click();
+});
 batchCsvInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
@@ -7084,16 +7020,6 @@ batchPhotoInput.addEventListener("change", async (e) => {
   }
   btn.disabled = false;
   progress.style.display = "none";
-});
-
-document.getElementById("batch-review-select-all").addEventListener("click", async () => {
-  const rows = (await loadBatchQueue()).filter((r) => r.status === "ready" && r.result);
-  /* 1件でも外れていれば全選択、全部入っていれば全解除。ボタン1つで
-     どちらもできるようにする */
-  const allOn = rows.every((r) => !batchExcluded.has(r.id));
-  batchExcluded.clear();
-  if (allOn) rows.forEach((r) => batchExcluded.add(r.id));
-  await renderBatchReview();
 });
 
 /* ------------------------------------------------------------------ *

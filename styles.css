@@ -87,6 +87,7 @@ button{font-family:inherit;cursor:pointer;}
 .icon-svg-settings{color:var(--ink-soft);}
 .icon-svg-book{color:var(--brand-blue);}
 .icon-svg-add{color:var(--brand-blue);}
+.icon-svg-camera{color:var(--brand-purple);}
 .icon-svg-eye{color:var(--accent);}
 .icon-svg-mic{color:var(--brand-purple);}
 .icon-svg-back{color:var(--ink-soft);}
@@ -729,11 +730,12 @@ button{font-family:inherit;cursor:pointer;}
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
 }
-.batch-csv-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:2px;}
-.batch-csv-template-btn{
-  background:none;border:none;padding:2px;font-size:10.5px;color:var(--ink-faint);
-  font-family:'JetBrains Mono',monospace;text-decoration:underline;flex-shrink:0;
+/* 入力欄の見出し行。左に説明、右にCSV・カメラのアイコンボタンを置く */
+.batch-input-head{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.batch-input-label{
+  font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;min-width:0;
 }
+.batch-input-tools{display:flex;gap:8px;flex-shrink:0;}
 
 .batch-stats{
   font-size:11.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;
@@ -767,38 +769,3 @@ button{font-family:inherit;cursor:pointer;}
   background:transparent;color:var(--ink-faint);font-size:14px;line-height:1;
 }
 .batch-item-del:active{transform:scale(.92);}
-
-#screen-batch-review{padding-bottom:96px;}
-.batch-review-list{display:flex;flex-direction:column;gap:10px;}
-.batch-review-card{
-  background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;
-  display:flex;flex-direction:column;gap:8px;
-}
-/* 保存対象になっているカードだけ縁を強調する。チェックの有無を
-   カード全体で見分けられた方が、まとめて見返すときに速い */
-.batch-review-card.on{border-color:var(--accent);box-shadow:var(--shadow);}
-.batch-review-head{display:flex;align-items:center;gap:10px;}
-.batch-review-check{
-  flex-shrink:0;width:24px;height:24px;padding:0;border-radius:8px;
-  border:1.5px solid var(--line);background:var(--surface);
-  color:#fff;font-size:13px;font-weight:700;line-height:1;
-  display:flex;align-items:center;justify-content:center;
-}
-.batch-review-card.on .batch-review-check{background:var(--accent);border-color:var(--accent);}
-.batch-review-title{
-  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:var(--accent-ink);
-  min-width:0;overflow:hidden;text-overflow:ellipsis;
-}
-.batch-review-title .phonetic{font-weight:400;font-size:11px;color:var(--ink-faint);margin-left:6px;}
-.batch-review-meaning{font-size:13px;color:var(--ink);}
-.batch-review-morphs{display:flex;flex-wrap:wrap;gap:6px;}
-.batch-morph{
-  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-soft);
-  background:var(--surface-2);border-radius:8px;padding:3px 8px;
-}
-.batch-morph i{font-style:normal;color:var(--ink-faint);margin-left:5px;}
-.batch-review-goro{
-  font-size:14px;line-height:1.6;color:var(--ink);
-  background:var(--bg);border-radius:12px;padding:10px 12px;
-}
-.batch-review-actions{display:flex;justify-content:flex-end;gap:8px;}
