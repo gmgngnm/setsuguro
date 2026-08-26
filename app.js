@@ -60,10 +60,18 @@ function stopLoadingRotation(containerId) {
    見せ切っていなければ、残りは早送り（DECOMPOSE_LOADING_FAST_MS）で
    消化してから終わる。donePromiseは「全工程を見せ終えた」時点で解決する
    ので、呼び出し側はこれをawaitしてから次のアニメーションへ進むこと */
-function startDecomposeLoadingSequence(containerId) {
+/* writePhraseを渡すと、工程名の書き込み先を差し替えられる（まとめ生成の
+   進捗行のように、.goro-loading とは違う作りの表示に流し込むため） */
+function startDecomposeLoadingSequence(containerId, writePhrase) {
   stopLoadingRotation(containerId);
   const container = document.getElementById(containerId);
   if (!container) return { markWorkDone() {}, donePromise: Promise.resolve() };
+
+  const write = writePhrase || ((phrase) => {
+    const labelEl = container.querySelector(".goro-loading-label");
+    if (labelEl) labelEl.textContent = phrase;
+    else container.innerHTML = goroLoadingHtml(phrase);
+  });
 
   const total = DECOMPOSE_LOADING_STEPS.length;
   let stepIndex = 0;
@@ -87,9 +95,7 @@ function startDecomposeLoadingSequence(containerId) {
     const phrase = Math.random() < LOADING_EASTER_EGG_CHANCE
       ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
       : DECOMPOSE_LOADING_STEPS[stepIndex % total];
-    const labelEl = container.querySelector(".goro-loading-label");
-    if (labelEl) labelEl.textContent = phrase;
-    else container.innerHTML = goroLoadingHtml(phrase);
+    write(phrase);
 
     stepIndex++;
     if (stepIndex >= total) {
@@ -2315,13 +2321,17 @@ async function batchValidateGoro(states, provider, apiKey) {
 
 /* items: [{ word, wordMeaning, morphemes }]（1チャンク分）
    戻り値: Map<word, {text, highlight}>。作れなかった語は入らない */
-async function batchGenerateGoro(items, provider, apiKey, rag) {
+async function batchGenerateGoro(items, provider, apiKey, rag, onStatus) {
+  /* 1語ずつの経路(generateGoro)と同じく、今実際に何をしているかを
+     呼び出し元へ報告する。指定が無ければ何もしない */
+  const report = onStatus || (() => {});
   const states = items.map((item) => ({ item, notes: [], best: null, cand: null, passed: false }));
 
   for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
     const pending = states.filter((s) => !s.cand);
     if (!pending.length) break;
 
+    report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
     let json;
     try {
       json = await callAI(provider, apiKey, batchGoroSystemPrompt(pending.length), batchGoroUserPrompt(pending, rag));
@@ -2342,6 +2352,7 @@ async function batchGenerateGoro(items, provider, apiKey, rag) {
       fresh.push({ state, cand: { text, highlight: Array.isArray(row.highlight) ? row.highlight : [] } });
     }
 
+    report(rag ? "意味の整合性を確認中" : "機械チェック中");
     const violationsOf = await batchGoroViolations(fresh, rag, apiKey);
     for (const f of fresh) {
       const violations = violationsOf.get(f) || [];
@@ -2361,6 +2372,7 @@ async function batchGenerateGoro(items, provider, apiKey, rag) {
     state.cand = state.best.cand;
   }
 
+  report("校閲中");
   await batchValidateGoro(states.filter((s) => s.passed), provider, apiKey);
 
   const out = new Map();
@@ -6980,7 +6992,12 @@ function batchWordsFromCsv(text) {
   return parseBatchWordInput(cells.join("\n"));
 }
 
+/* いま表示している工程名。生成中に画面を離れて戻ってきたとき、
+   進捗行を元の工程名のまま復元するために覚えておく */
+let batchProgressPhrase = "";
+
 function setBatchProgress(label) {
+  batchProgressPhrase = label || "";
   const row = document.getElementById("batch-progress");
   const text = document.getElementById("batch-progress-label");
   if (!row || !text) return;
@@ -7061,12 +7078,18 @@ async function runBatchGeneration() {
   batchRunning = true;
   await renderBatchQueue();
   let saved = 0;
-  setBatchProgress("生成中…");
+  setBatchProgress("接辞に分解中");
 
   try {
     for (const chunk of chunkArray(queue, BATCH_CHUNK_SIZE)) {
       try {
+        /* 分解はAIへの単発の問い合わせで内部の工程を観測できないため、
+           1語ずつの経路と同じく「それらしい」工程名を回して見せる。
+           語呂合わせ側は実際の処理をそのまま報告できるので、
+           そちらはonStatusで受け取った文言を出す */
+        startDecomposeLoadingSequence("batch-progress", setBatchProgress);
         const decomposed = await batchDecomposeWords(chunk.map((r) => r.word), provider, apiKey);
+        stopLoadingRotation("batch-progress");
 
         const items = [];
         for (const row of chunk) {
@@ -7077,8 +7100,10 @@ async function runBatchGeneration() {
           items.push({ row, decomposed: d, word: d.correctedWord, wordMeaning: d.meaning, morphemes: d.morphemes });
         }
         if (items.length) {
+          setBatchProgress("お手本を準備中");
           const rag = await prepareBatchGoroRag(items, provider, apiKey);
-          const goro = await batchGenerateGoro(items, provider, apiKey, rag);
+          const goro = await batchGenerateGoro(items, provider, apiKey, rag, setBatchProgress);
+          setBatchProgress("単語帳に保存中");
           for (const it of items) {
             const cand = goro.get(it.word);
             if (!cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
@@ -7105,6 +7130,8 @@ async function runBatchGeneration() {
         }
       } catch (err) {
         console.error("まとめ生成に失敗しました:", err);
+        /* 分解の途中で落ちた場合、工程名を回すタイマーが残ってしまう */
+        stopLoadingRotation("batch-progress");
         for (const row of chunk) {
           if (row.status === "pending") await markBatchFailed(row, err.message);
         }
@@ -7114,6 +7141,7 @@ async function runBatchGeneration() {
     toast(saved ? `${saved}語を単語帳に保存しました` : "まとめ生成が終わりました");
   } finally {
     batchRunning = false;
+    stopLoadingRotation("batch-progress");
     setBatchProgress("");
     await renderBatchQueue();
     renderBookList();
@@ -7159,7 +7187,7 @@ async function openBatchScreen() {
   refreshGeminiKeyAvailability();
   /* 画面を離れている間も生成は続いている。戻ってきたときに、
      進行中なら進捗表示をそのまま復元する */
-  if (batchRunning) setBatchProgress("生成中…");
+  if (batchRunning) setBatchProgress(batchProgressPhrase || "生成中…");
   await flushPendingReviewRows();
   await renderBatchQueue();
 }
