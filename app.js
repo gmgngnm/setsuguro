@@ -6139,6 +6139,7 @@ document.getElementById("save-gemini-key-btn").addEventListener("click", async (
   btn.disabled = true;
   status.textContent = "疎通確認中…";
   await saveApiKey("gemini", key);
+  await refreshGeminiKeyAvailability();
 
   try {
     await verifyGeminiApiKey(key);
@@ -6992,9 +6993,20 @@ async function saveBatchReviewSelection() {
   await renderBatchReview();
 }
 
+/* 撮影ボタンのクリックハンドラは、iOS Safariの制約により
+   file inputのclick()まで一切awaitを挟めない（awaitを跨ぐと
+   ユーザー操作由来の呼び出しとみなされなくなり、ファイル選択が
+   無反応になる）。そのためキーの有無だけを先に読み出して同期的に
+   参照できるようにしておく */
+let geminiKeyAvailable = false;
+async function refreshGeminiKeyAvailability() {
+  geminiKeyAvailable = !!(await loadApiKey("gemini"));
+}
+
 function openBatchScreen() {
   showScreen("screen-batch");
   renderBatchQueue();
+  refreshGeminiKeyAvailability();
 }
 
 function openBatchReviewScreen() {
@@ -7031,9 +7043,11 @@ batchCsvInput.addEventListener("change", async (e) => {
 });
 
 const batchPhotoInput = document.getElementById("batch-photo-input");
-document.getElementById("batch-photo-btn").addEventListener("click", async () => {
-  const apiKey = await loadApiKey("gemini");
-  if (!apiKey) {
+/* awaitを挟むとiOS Safariでファイル選択が開かなくなるため、
+   このハンドラは同期のまま保つこと（キーの有無は事前に読んだ
+   geminiKeyAvailableで判定する） */
+document.getElementById("batch-photo-btn").addEventListener("click", () => {
+  if (!geminiKeyAvailable) {
     toast("設定画面でGemini APIキーを登録してください");
     showScreen("screen-settings");
     return;
@@ -7214,6 +7228,7 @@ applyThemeMode();
 restoreCloudSession();
 refreshBuildTag();
 migrateTtsSpeakerDefaultOnce();
+refreshGeminiKeyAvailability();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
