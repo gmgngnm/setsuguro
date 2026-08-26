@@ -2784,18 +2784,16 @@ async function startDecompose(rawWord) {
       return;
     }
   }
-  /* 実際の分解はもう終わっているので、まだ見せていない工程があれば
-     早送りで消化してから次へ進む（一応、全工程を出し切ってから遷移する） */
-  decomposeLoadingSeq.markWorkDone();
-  await decomposeLoadingSeq.donePromise;
-  spinnerRow.style.visibility = "hidden";
-  currentMorphemes = morphemes;
 
   /* 単語の意味・接辞を踏まえた一文は、後で表示するタイミングより先にここで
      コンテンツを流し込んでおく（要素自体はopacity:0/visibility:hiddenで
      レイアウト上の高さだけ確保された状態）。こうすることで、実際に表示する
      瞬間はopacityのフェードだけで済み、接辞カードなどが後から押し上げられる
-     ようなレイアウトのずれが起きない */
+     ようなレイアウトのずれが起きない。
+     ここで流し込むのは「まだ見せていない工程の早送り」より前、データが
+     揃った直後：これより後（ローディング演出の帳尻合わせの待ち時間の後）に
+     流し込むと、空(26px相当)から実際の高さへと箱がここで初めて伸び、
+     まだ脈打っているプレースホルダーが数px不自然にずれて見えるため */
   if (currentWordMeaning) {
     const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
     decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
@@ -2803,6 +2801,13 @@ async function startDecompose(rawWord) {
   if (currentMemoryTip) {
     decomposeMemoryTipEl.textContent = currentMemoryTip;
   }
+
+  /* 実際の分解はもう終わっているので、まだ見せていない工程があれば
+     早送りで消化してから次へ進む（一応、全工程を出し切ってから遷移する） */
+  decomposeLoadingSeq.markWorkDone();
+  await decomposeLoadingSeq.donePromise;
+  spinnerRow.style.visibility = "hidden";
+  currentMorphemes = morphemes;
 
   /* Stage2(語呂合わせ生成)は接辞が確定した時点で先行開始し、分解アニメーションの
      再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない。
@@ -4203,8 +4208,10 @@ async function runPressTileResolve(el, delayMs) {
    仕組みは他のスタイルと同じく、無傷の見た目を一度オフスクリーンに描いた上で、
    要素本体はvisibility:hiddenにして隠し、重ねたcanvasだけを見せる ---- */
 
-/* プリズムが白色光を分解したときの七色帯。分光ゴーストの着色に使う */
-const PRISM_BANDS = ["#ff2f3a", "#ff8a1e", "#ffe62b", "#3dff77", "#22dcff", "#4f6bff", "#b74dff"];
+/* プリズムが白色光を分解したときの七色帯。分光ゴーストの着色に使う。
+   彩度・明度を抑えたパステル寄りの色で、加算合成で重ねても
+   ネオンサインのように刺さらない柔らかい発色にしている */
+const PRISM_BANDS = ["#ff9aa0", "#ffc48a", "#fff1a8", "#a8f0c0", "#a0e6f0", "#aab8f5", "#dcb3f5"];
 const prismEaseOut = (p) => 1 - Math.pow(1 - p, 3);
 const prismEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 
@@ -4224,11 +4231,13 @@ function prismGlowSprite(hue) {
   c.width = c.height = size;
   const g = c.getContext("2d");
   const h = idx * step;
+  /* 彩度を70%程度に抑え、中心の不透明度も1未満にして、
+     加算合成で重なっても白飛びしにくい淡い光にする */
   const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, `hsla(${h},100%,97%,1)`);
-  grad.addColorStop(0.2, `hsla(${h},100%,76%,.92)`);
-  grad.addColorStop(0.52, `hsla(${h},100%,58%,.3)`);
-  grad.addColorStop(1, `hsla(${h},100%,52%,0)`);
+  grad.addColorStop(0, `hsla(${h},70%,92%,.82)`);
+  grad.addColorStop(0.2, `hsla(${h},70%,80%,.62)`);
+  grad.addColorStop(0.52, `hsla(${h},70%,68%,.2)`);
+  grad.addColorStop(1, `hsla(${h},70%,64%,0)`);
   g.fillStyle = grad;
   g.fillRect(0, 0, size, size);
   prismSpriteCache[idx] = c;
@@ -4311,9 +4320,9 @@ function prismFanGradients(ctx, inner, outer) {
   const grads = [];
   for (let j = 0; j < 12; j++) {
     const grad = ctx.createRadialGradient(0, 0, inner, 0, 0, outer);
-    grad.addColorStop(0, `hsla(${j * 30},100%,74%,1)`);
-    grad.addColorStop(0.55, `hsla(${j * 30},100%,62%,.45)`);
-    grad.addColorStop(1, `hsla(${j * 30},100%,58%,0)`);
+    grad.addColorStop(0, `hsla(${j * 30},60%,80%,.7)`);
+    grad.addColorStop(0.55, `hsla(${j * 30},60%,72%,.3)`);
+    grad.addColorStop(1, `hsla(${j * 30},60%,68%,0)`);
     grads.push(grad);
   }
   return grads;
@@ -4360,12 +4369,13 @@ async function runPrismDissolve(placeholder, word, rect) {
   const flashSprite = prismFlashSprite();
 
   /* 加算合成のスペクトルは明るい紙の上では白く飛んでしまうため、
-     カードの周囲だけを暗幕のように落とす。ライト／ダークどちらのテーマでも
-     七色が濃く出るうえ、「暗室でプリズムに光を通す」画にもなる */
+     カードの周囲だけをうっすらと落とす。純黒に近い暗幕は淡い色調と
+     組み合わさるとコントラストが強すぎて目に刺さるため、
+     グレーがかった浅い幕にとどめている */
   const dimGrad = ctx.createRadialGradient(cx, cy, rect.height * 0.18, cx, cy, reach);
-  dimGrad.addColorStop(0, "rgba(4,8,20,1)");
-  dimGrad.addColorStop(0.55, "rgba(4,8,20,.72)");
-  dimGrad.addColorStop(1, "rgba(4,8,20,0)");
+  dimGrad.addColorStop(0, "rgba(40,44,54,1)");
+  dimGrad.addColorStop(0.55, "rgba(40,44,54,.7)");
+  dimGrad.addColorStop(1, "rgba(40,44,54,0)");
 
   const T_SPLIT0 = 200;           // 分光が始まる
   const T_SPLIT1 = 640;           // 七色が開ききる
@@ -4419,7 +4429,7 @@ async function runPrismDissolve(placeholder, word, rect) {
       ctx.globalAlpha = a;
       ctx.translate(x, y);
       ctx.rotate(p.rot + p.spin * s);
-      ctx.fillStyle = `hsl(${hue % 360},100%,74%)`;
+      ctx.fillStyle = `hsl(${hue % 360},65%,80%)`;
       ctx.beginPath();
       ctx.moveTo(0, -p.size * 1.9);
       ctx.lineTo(p.size * 0.5, 0);
@@ -4451,7 +4461,7 @@ async function runPrismDissolve(placeholder, word, rect) {
             光が消えたあとに灰色の膜だけが残って見える */
       const stage = Math.min(1, Math.max(0, (t - 120) / 320))
         * (t < 900 ? 1 : Math.max(0, 1 - (t - 900) / 480));
-      const dimA = stage * 0.55 * outFade;
+      const dimA = stage * 0.38 * outFade;
       if (dimA > 0.01) {
         ctx.save();
         ctx.globalAlpha = dimA;
@@ -4465,7 +4475,7 @@ async function runPrismDissolve(placeholder, word, rect) {
       if (fanA > 0.01) {
         ctx.save();
         ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = 0.3 * fanA;
+        ctx.globalAlpha = 0.22 * fanA;
         ctx.translate(cx, cy);
         ctx.rotate(t / 2600);
         for (let j = 0; j < fanGrads.length; j++) {
@@ -4497,7 +4507,7 @@ async function runPrismDissolve(placeholder, word, rect) {
         ghosts.forEach((gc, k) => {
           const o = k - (ghosts.length - 1) / 2;
           ctx.save();
-          ctx.globalAlpha = ghostA * 0.55;
+          ctx.globalAlpha = ghostA * 0.42;
           ctx.translate(cx + Math.cos(DISP_ANG) * o * disp, cy + Math.sin(DISP_ANG) * o * disp);
           ctx.rotate(o * 0.02 * sp);
           const sc = 1 + Math.abs(o) * 0.012 * sp;
@@ -4533,7 +4543,7 @@ async function runPrismDissolve(placeholder, word, rect) {
         }
       }
 
-      /* 4) 砕けた瞬間の閃光と、カードの縦横比に合わせて楕円に広がる虹の衝撃波 */
+      /* 4) 砕けた瞬間の閃光 */
       const rw = t - T_BURST;
       if (rw > -70 && rw < 300) {
         const fa = (rw < 0 ? (rw + 70) / 70 : Math.max(0, 1 - rw / 300)) * outFade;
@@ -4541,32 +4551,15 @@ async function runPrismDissolve(placeholder, word, rect) {
           const fr = (rect.width * 0.55) * (1 + Math.max(0, rw) / 300);
           ctx.save();
           ctx.globalCompositeOperation = "lighter";
-          ctx.globalAlpha = fa * 0.9;
+          ctx.globalAlpha = fa * 0.7;
           ctx.drawImage(flashSprite, cx - fr, cy - fr, fr * 2, fr * 2);
           /* 同じ発光スプライトを横に引き伸ばし、レンズが起こす横一文字の光条にする */
           const fw = rect.width * (1.5 + Math.max(0, rw) / 260);
           const fh = Math.max(3, 16 * (1 - Math.max(0, rw) / 300));
-          ctx.globalAlpha = fa * 0.8;
+          ctx.globalAlpha = fa * 0.6;
           ctx.drawImage(flashSprite, cx - fw, cy - fh, fw * 2, fh * 2);
           ctx.restore();
         }
-      }
-      if (rw > 0 && rw < 520) {
-        const rp = rw / 520;
-        const R = 12 + prismEaseOut(rp) * (rect.width * 0.8 + 90);
-        ctx.save();
-        ctx.globalCompositeOperation = "lighter";
-        ctx.translate(cx, cy);
-        ctx.scale(1, 0.58);
-        ctx.lineWidth = Math.max(1, 7 * (1 - rp));
-        ctx.globalAlpha = (1 - rp) * 0.7 * outFade;
-        for (let j = 0; j < 14; j++) {
-          ctx.strokeStyle = `hsl(${(j * (360 / 14) + rw * 0.25) % 360},100%,70%)`;
-          ctx.beginPath();
-          ctx.arc(0, 0, R, (j / 14) * Math.PI * 2, ((j + 0.88) / 14) * Math.PI * 2);
-          ctx.stroke();
-        }
-        ctx.restore();
       }
 
       /* 5) スペクトル粒子。中心まわりに回転・鏡像を重ねて万華鏡の対称模様にする。
@@ -4652,9 +4645,9 @@ async function runPrismTileResolve(el, delayMs) {
      暗幕が重なっても斑にならないよう単語側より弱く・狭くかける */
   const reach = Math.min(padX + cx, padY + cy);
   const dimGrad = ctx.createRadialGradient(cx, cy, rect.height * 0.2, cx, cy, reach);
-  dimGrad.addColorStop(0, "rgba(4,8,20,1)");
-  dimGrad.addColorStop(0.5, "rgba(4,8,20,.66)");
-  dimGrad.addColorStop(1, "rgba(4,8,20,0)");
+  dimGrad.addColorStop(0, "rgba(40,44,54,1)");
+  dimGrad.addColorStop(0.5, "rgba(40,44,54,.62)");
+  dimGrad.addColorStop(1, "rgba(40,44,54,0)");
 
   const T_GHOST0 = 120;           // 七色の像が寄り始める
   const T_LAND = 620;             // 像が一点で重なる（結像の瞬間）
@@ -4701,7 +4694,7 @@ async function runPrismTileResolve(el, delayMs) {
       ctx.globalAlpha = a;
       ctx.translate(x, y);
       ctx.rotate(ang + p.spin * (lt / 1000));
-      ctx.fillStyle = `hsl(${hue % 360},100%,76%)`;
+      ctx.fillStyle = `hsl(${hue % 360},65%,82%)`;
       ctx.beginPath();
       ctx.moveTo(0, -p.size * 1.8);
       ctx.lineTo(p.size * 0.5, 0);
@@ -4729,7 +4722,7 @@ async function runPrismTileResolve(el, delayMs) {
 
       /* 0) 周囲を浅く落とす暗幕。結像したら速やかに引き上げる */
       const dimA = Math.min(1, t / 200)
-        * (t < T_LAND - 120 ? 1 : Math.max(0, 1 - (t - (T_LAND - 120)) / 260)) * 0.26;
+        * (t < T_LAND - 120 ? 1 : Math.max(0, 1 - (t - (T_LAND - 120)) / 260)) * 0.2;
       if (dimA > 0.01) {
         ctx.save();
         ctx.globalAlpha = dimA;
@@ -4766,7 +4759,7 @@ async function runPrismTileResolve(el, delayMs) {
         ghosts.forEach((gc, k) => {
           const o = k - (ghosts.length - 1) / 2;
           ctx.save();
-          ctx.globalAlpha = ghostA * 0.85;
+          ctx.globalAlpha = ghostA * 0.6;
           ctx.translate(cx + Math.cos(DISP_ANG) * o * disp, cy + Math.sin(DISP_ANG) * o * disp);
           ctx.rotate(o * 0.02 * (1 - gp));
           ctx.drawImage(gc, 0, 0, gc.width, gc.height, -cx, -cy, rect.width, rect.height);
@@ -4792,12 +4785,12 @@ async function runPrismTileResolve(el, delayMs) {
           const fr = rect.width * 0.45 * (1 + Math.max(0, fw) / 260);
           ctx.save();
           ctx.globalCompositeOperation = "lighter";
-          ctx.globalAlpha = fa * 0.66;
+          ctx.globalAlpha = fa * 0.52;
           ctx.drawImage(flashSprite, cx - fr, cy - fr, fr * 2, fr * 2);
           /* 結像の瞬間だけ横一文字に走るレンズの光条 */
           const lw = rect.width * (1.25 + Math.max(0, fw) / 240);
           const lh = Math.max(2.5, 12 * (1 - Math.max(0, fw) / 240));
-          ctx.globalAlpha = fa * 0.75;
+          ctx.globalAlpha = fa * 0.58;
           ctx.drawImage(flashSprite, cx - lw, cy - lh, lw * 2, lh * 2);
           ctx.restore();
         }
@@ -4808,18 +4801,18 @@ async function runPrismTileResolve(el, delayMs) {
         roundRectPath(ctx, 0, 0, rect.width, rect.height, radius);
         ctx.clip();
         ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = (1 - wp) * 0.75;
+        ctx.globalAlpha = (1 - wp) * 0.55;
         ctx.translate(cx, cy);
         ctx.rotate(-0.42);
         const span = rect.width * 1.5 + rect.height;
         const bx = -span / 2 + wp * span;
         const bw = 22;
         const grad = ctx.createLinearGradient(bx - bw, 0, bx + bw, 0);
-        grad.addColorStop(0, "rgba(255,120,160,0)");
-        grad.addColorStop(0.3, "rgba(255,214,90,.7)");
-        grad.addColorStop(0.5, "rgba(255,255,255,.9)");
-        grad.addColorStop(0.7, "rgba(90,220,255,.7)");
-        grad.addColorStop(1, "rgba(150,120,255,0)");
+        grad.addColorStop(0, "rgba(255,170,190,0)");
+        grad.addColorStop(0.3, "rgba(255,225,150,.55)");
+        grad.addColorStop(0.5, "rgba(255,255,255,.75)");
+        grad.addColorStop(0.7, "rgba(150,225,255,.55)");
+        grad.addColorStop(1, "rgba(190,170,255,0)");
         ctx.fillStyle = grad;
         ctx.fillRect(bx - bw, -span, bw * 2, span * 2);
         ctx.restore();
@@ -6532,6 +6525,9 @@ const SUPABASE_SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/
 let supabaseLoadPromise = null;
 let supabaseClient = null;
 let cloudUserId = null;
+/* signInToCloud が失敗した場合、cloudUserId がまだ無いので再試行は
+   同じIDトークンでサインインからやり直す必要がある */
+let lastFailedIdToken = null;
 
 function cloudSyncConfigured() {
   return !!(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -6571,6 +6567,33 @@ function setSyncStatus(text, cls) {
   el.className = `sync-status${cls ? ` ${cls}` : ""}`;
 }
 
+/* エラー後だけ再試行ボタンを出す。自動リトライの最中は、押しても
+   二重に走らせないよう回転アイコンにしてクリックを無視する */
+function setSyncRetryVisible(visible, spinning) {
+  const btn = document.getElementById("cloud-sync-retry-btn");
+  if (!btn) return;
+  btn.hidden = !visible;
+  btn.classList.toggle("spinning", !!spinning);
+}
+
+/* Supabaseは自前でリトライしないため、電波の悪い環境での失敗が
+   そのままユーザーに見えてしまう。指数バックオフで数回だけ自動的に
+   やり直し、それでも失敗したら諦めて再試行ボタンを出す */
+async function withCloudRetry(fn, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const result = await fn();
+      setSyncRetryVisible(false);
+      return result;
+    } catch (err) {
+      const isLast = i === attempts - 1;
+      if (isLast) throw err;
+      setSyncRetryVisible(true, true);
+      await sleep(800 * Math.pow(2, i));
+    }
+  }
+}
+
 function localWordToCloudRow(w) {
   return {
     id: w.id, user_id: cloudUserId, word: w.word, word_meaning: w.word_meaning || "",
@@ -6597,53 +6620,66 @@ async function pullAndMergeCloudData() {
   if (!sb || !cloudUserId) return;
   setSyncStatus("同期中…", "syncing");
   try {
-    const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }] = await Promise.all([
-      sb.from("words").select("*").eq("user_id", cloudUserId),
-      sb.from("recent_words").select("words").eq("user_id", cloudUserId).maybeSingle(),
-    ]);
-    if (wErr) throw wErr;
-    if (rErr) throw rErr;
+    await withCloudRetry(async () => {
+      const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }] = await Promise.all([
+        sb.from("words").select("*").eq("user_id", cloudUserId),
+        sb.from("recent_words").select("words").eq("user_id", cloudUserId).maybeSingle(),
+      ]);
+      if (wErr) throw wErr;
+      if (rErr) throw rErr;
 
-    const localWords = await idbGetAll("words");
-    const localById = new Map(localWords.map((w) => [w.id, w]));
-    const remoteById = new Map((remoteWords || []).map((w) => [w.id, w]));
+      const localWords = await idbGetAll("words");
+      const localById = new Map(localWords.map((w) => [w.id, w]));
+      const remoteById = new Map((remoteWords || []).map((w) => [w.id, w]));
 
-    for (const remote of remoteWords || []) {
-      const local = localById.get(remote.id);
-      if (!local || (remote.updated_at || 0) > (local.updated_at || 0)) {
-        await idbPut("words", cloudRowToLocalWord(remote));
+      for (const remote of remoteWords || []) {
+        const local = localById.get(remote.id);
+        if (!local || (remote.updated_at || 0) > (local.updated_at || 0)) {
+          await idbPut("words", cloudRowToLocalWord(remote));
+        }
       }
-    }
-    const toUpload = localWords.filter((w) => {
-      const remote = remoteById.get(w.id);
-      return !remote || (w.updated_at || 0) > (remote.updated_at || 0);
-    });
-    if (toUpload.length) {
-      const { error } = await sb.from("words").upsert(toUpload.map(localWordToCloudRow));
-      if (error) throw error;
-    }
+      const toUpload = localWords.filter((w) => {
+        const remote = remoteById.get(w.id);
+        return !remote || (w.updated_at || 0) > (remote.updated_at || 0);
+      });
+      if (toUpload.length) {
+        const { error } = await sb.from("words").upsert(toUpload.map(localWordToCloudRow));
+        if (error) throw error;
+      }
 
-    const localRecent = await kvGet("recent_words", []);
-    const remoteRecentList = (remoteRecentRow && remoteRecentRow.words) || [];
-    const mergedRecent = [
-      ...localRecent,
-      ...remoteRecentList.filter((w) => !localRecent.some((lw) => lw.toLowerCase() === w.toLowerCase())),
-    ].slice(0, 20);
-    if (mergedRecent.length) {
-      await kvSet("recent_words", mergedRecent);
-      const { error } = await sb.from("recent_words")
-        .upsert({ user_id: cloudUserId, words: mergedRecent, updated_at: new Date().toISOString() });
-      if (error) throw error;
-    }
+      const localRecent = await kvGet("recent_words", []);
+      const remoteRecentList = (remoteRecentRow && remoteRecentRow.words) || [];
+      const mergedRecent = [
+        ...localRecent,
+        ...remoteRecentList.filter((w) => !localRecent.some((lw) => lw.toLowerCase() === w.toLowerCase())),
+      ].slice(0, 20);
+      if (mergedRecent.length) {
+        await kvSet("recent_words", mergedRecent);
+        const { error } = await sb.from("recent_words")
+          .upsert({ user_id: cloudUserId, words: mergedRecent, updated_at: new Date().toISOString() });
+        if (error) throw error;
+      }
+    });
 
     setSyncStatus("☁️ 同期済み");
     renderBookList();
     renderRecentChips();
   } catch (err) {
     console.warn("Cloud sync (pull) failed:", err);
-    setSyncStatus("同期に失敗しました。しばらくしてから再度お試しください。", "error");
+    setSyncStatus("同期に失敗しました。", "error");
+    setSyncRetryVisible(true, false);
   }
 }
+
+document.getElementById("cloud-sync-retry-btn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (btn.classList.contains("spinning")) return;
+  if (!cloudUserId && lastFailedIdToken) {
+    await signInToCloud(lastFailedIdToken);
+  } else {
+    await pullAndMergeCloudData();
+  }
+});
 
 /* 単語の保存・削除・分類のたびに呼ばれる。ローカルの書き込みは既に
    完了しているので、クラウド側が失敗してもUIは止めずトーストで知らせる
@@ -6698,15 +6734,22 @@ async function deleteWordRecord(id) {
    GOOGLE_CLIENT_IDと同じ値を「Authorized Client IDs」に登録するだけでよい */
 async function signInToCloud(idToken) {
   if (!cloudSyncConfigured()) return;
+  setSyncStatus("同期中…", "syncing");
   try {
-    const sb = await getSupabaseClient();
-    const { data, error } = await sb.auth.signInWithIdToken({ provider: "google", token: idToken });
-    if (error) throw error;
+    const data = await withCloudRetry(async () => {
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb.auth.signInWithIdToken({ provider: "google", token: idToken });
+      if (error) throw error;
+      return data;
+    });
     cloudUserId = data.user.id;
+    lastFailedIdToken = null;
     await pullAndMergeCloudData();
   } catch (err) {
     console.warn("Supabase sign-in failed:", err);
     setSyncStatus("クラウド同期を開始できませんでした。", "error");
+    lastFailedIdToken = idToken;
+    setSyncRetryVisible(true, false);
   }
 }
 
