@@ -339,7 +339,9 @@
     </div>
     <input type="file" id="batch-csv-input" accept=".csv,text/csv" style="display:none;">
     <button class="btn-ghost" id="batch-photo-btn" type="button">📷 ノートを撮影して読み取る</button>
-    <input type="file" id="batch-photo-input" accept="image/*" capture="environment" style="display:none;">
+    <!-- iOSではdisplay:noneのfile inputがclick()に反応しないことがあるため、
+         画面外に逃がす形で隠す（操作は上の撮影ボタンから行う） -->
+    <input type="file" id="batch-photo-input" accept="image/*" capture="environment" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <div class="spinner-row" id="batch-photo-progress" style="display:none;">
       <div class="spinner"></div>
       <span class="spin-label">画像から単語を読み取り中…</span>
