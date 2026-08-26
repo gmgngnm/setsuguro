@@ -25,6 +25,8 @@ create table public.words (
   word_phonetic text,
   word_memory_tip text,
   morphemes jsonb,
+  synonyms jsonb,
+  antonyms jsonb,
   goro_text text,
   goro_highlight jsonb,
   provider text,
@@ -53,6 +55,19 @@ create policy "individuals manage their own recent words"
 
 RLSにより、各行は自分の`user_id`のものしか読み書きできない。anon keyだけを
 配布していても、他人のデータが見えたり書き換えられたりすることはない。
+
+### 既存プロジェクトへの追加（synonyms / antonyms 列）
+
+既に上記のテーブルを作成済みの場合、単語ごとの同義語・対義語を保存する
+`synonyms` / `antonyms` 列が無いため、そのままだと単語の保存時にクラウド
+同期がエラーになる（ローカルへの保存自体は影響を受けない）。SQL Editorで
+以下を一度だけ実行して列を追加する。
+
+```sql
+alter table public.words
+  add column if not exists synonyms jsonb,
+  add column if not exists antonyms jsonb;
+```
 
 ## 3. GoogleサインインをSupabase Authに接続する
 

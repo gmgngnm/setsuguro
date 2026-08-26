@@ -4187,34 +4187,51 @@ async function runPrismDissolve(placeholder, word, morphemes, rect) {
       }
 
 
-      /* 2) カード本体と、分散軸に沿って扇状に開いていく七色のゴースト */
-      const sp = t <= T_SPLIT0 ? 0 : Math.min(1, (t - T_SPLIT0) / (T_SPLIT1 - T_SPLIT0));
-      const disp = prismEaseOut(sp) * (18 + rect.width * 0.06);
-      const baseA = (1 - sp) * outFade;
-      if (baseA > 0.01) {
-        ctx.save();
-        ctx.globalAlpha = baseA;
-        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-        ctx.restore();
-      }
-      const ghostA = Math.min(1, sp * 2.1)
-        * (t > T_BURST ? Math.max(0, 1 - (t - T_BURST) / 340) : 1) * outFade;
-      if (ghostA > 0.01) {
-        ctx.save();
-        ctx.globalCompositeOperation = "lighter";
-        ghosts.forEach((gc, k) => {
-          const o = k - (ghosts.length - 1) / 2;
+      /* 2) カード本体と、分散軸に沿って扇状に開いていく七色のゴースト。
+            分光の開始・破裂のタイミングをセグメント（接辞）ごとにずらし、
+            単語全体が一斉にではなく接辞ごとに順番に崩れていくようにする。
+            セグメントのx範囲でクリップして描くので、まだ自分の番が来ていない
+            接辞は無傷のまま残り、番が来た接辞だけが分光・分散していく */
+      segments.forEach((seg, i) => {
+        const segT0 = T_SPLIT0 + i * SEG_STAGGER;
+        const segT1 = T_SPLIT1 + i * SEG_STAGGER;
+        const segBurstT = T_BURST + i * SEG_STAGGER;
+        const sp = t <= segT0 ? 0 : Math.min(1, (t - segT0) / (segT1 - segT0));
+        const disp = prismEaseOut(sp) * (18 + rect.width * 0.06);
+        const segW = seg.xEnd - seg.xStart;
+
+        const baseA = (1 - sp) * outFade;
+        if (baseA > 0.01) {
           ctx.save();
-          ctx.globalAlpha = ghostA * 0.42;
-          ctx.translate(cx + Math.cos(DISP_ANG) * o * disp, cy + Math.sin(DISP_ANG) * o * disp);
-          ctx.rotate(o * 0.02 * sp);
-          const sc = 1 + Math.abs(o) * 0.012 * sp;
-          ctx.scale(sc, sc);
-          ctx.drawImage(gc, 0, 0, gc.width, gc.height, -cx, -cy, rect.width, rect.height);
+          ctx.beginPath();
+          ctx.rect(seg.xStart, 0, segW, rect.height);
+          ctx.clip();
+          ctx.globalAlpha = baseA;
+          ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
           ctx.restore();
-        });
-        ctx.restore();
-      }
+        }
+        const ghostA = Math.min(1, sp * 2.1)
+          * (t > segBurstT ? Math.max(0, 1 - (t - segBurstT) / 340) : 1) * outFade;
+        if (ghostA > 0.01) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(seg.xStart, 0, segW, rect.height);
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          ghosts.forEach((gc, k) => {
+            const o = k - (ghosts.length - 1) / 2;
+            ctx.save();
+            ctx.globalAlpha = ghostA * 0.42;
+            ctx.translate(cx + Math.cos(DISP_ANG) * o * disp, cy + Math.sin(DISP_ANG) * o * disp);
+            ctx.rotate(o * 0.02 * sp);
+            const sc = 1 + Math.abs(o) * 0.012 * sp;
+            ctx.scale(sc, sc);
+            ctx.drawImage(gc, 0, 0, gc.width, gc.height, -cx, -cy, rect.width, rect.height);
+            ctx.restore();
+          });
+          ctx.restore();
+        }
+      });
 
       /* 3) カードを斜めに横切る入射光。カードの角丸で切り抜いて内側だけ光らせる */
       if (t < T_BEAM + 150) {
@@ -4676,12 +4693,14 @@ function fitRowChips(container, attemptsLeft = 10) {
   });
 }
 
-function renderWordRelatedCard(synonyms, antonyms) {
-  const cardEl = document.getElementById("word-related-card");
-  const synonymsRow = document.getElementById("word-synonyms-row");
-  const synonymsChips = document.getElementById("word-synonyms-chips");
-  const antonymsRow = document.getElementById("word-antonyms-row");
-  const antonymsChips = document.getElementById("word-antonyms-chips");
+/* screen-result（"word-"接頭辞）とscreen-word-detail（"word-detail-"接頭辞）の
+   両方から、同じ同義語・対義語カードの描画を共有する */
+function renderWordRelatedCard(synonyms, antonyms, idPrefix = "word") {
+  const cardEl = document.getElementById(`${idPrefix}-related-card`);
+  const synonymsRow = document.getElementById(`${idPrefix}-synonyms-row`);
+  const synonymsChips = document.getElementById(`${idPrefix}-synonyms-chips`);
+  const antonymsRow = document.getElementById(`${idPrefix}-antonyms-row`);
+  const antonymsChips = document.getElementById(`${idPrefix}-antonyms-chips`);
 
   synonymsChips.innerHTML = "";
   (synonyms || []).forEach((w) => synonymsChips.appendChild(buildWordRelatedChip(w)));
@@ -4857,6 +4876,8 @@ async function toggleSaveWord() {
       word_phonetic: currentWordPhonetic,
       word_memory_tip: currentMemoryTip,
       morphemes: currentMorphemes,
+      synonyms: currentSynonyms,
+      antonyms: currentAntonyms,
       goro_text: newGoroText,
       goro_highlight: c ? c.highlight : [],
       provider,
@@ -5107,6 +5128,8 @@ function openWordDetail(record) {
   meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div>${meaningTextHtml}`;
   meaningEl.style.display = "block";
 
+  renderWordRelatedCard(record.synonyms, record.antonyms, "word-detail");
+
   const affixList = document.getElementById("word-detail-affixes");
   affixList.innerHTML = "";
   (record.morphemes || []).forEach((m) => {
@@ -5261,7 +5284,7 @@ async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
 
   const loadingEl = document.createElement("div");
   loadingEl.className = "empty-note";
-  loadingEl.textContent = "他の単語をAIで検索中…";
+  loadingEl.innerHTML = `AIで検索中<span class="goro-loading-dots" aria-hidden="true"></span>`;
   listEl.appendChild(loadingEl);
 
   const exclude = [sourceWord, ...localWords].filter(Boolean);
@@ -6270,7 +6293,8 @@ function localWordToCloudRow(w) {
   return {
     id: w.id, user_id: cloudUserId, word: w.word, word_meaning: w.word_meaning || "",
     word_phonetic: w.word_phonetic || "", word_memory_tip: w.word_memory_tip || "",
-    morphemes: w.morphemes || [], goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
+    morphemes: w.morphemes || [], synonyms: w.synonyms || [], antonyms: w.antonyms || [],
+    goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
     provider: w.provider || "", memorized: !!w.memorized, created_at: w.created_at || Date.now(),
     updated_at: w.updated_at || Date.now(),
   };
@@ -6278,9 +6302,10 @@ function localWordToCloudRow(w) {
 function cloudRowToLocalWord(r) {
   return {
     id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
-    word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [], goro_text: r.goro_text || "",
-    goro_highlight: r.goro_highlight || [], provider: r.provider || "", memorized: !!r.memorized,
-    created_at: r.created_at || Date.now(), updated_at: r.updated_at || Date.now(),
+    word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [],
+    synonyms: r.synonyms || [], antonyms: r.antonyms || [],
+    goro_text: r.goro_text || "", goro_highlight: r.goro_highlight || [], provider: r.provider || "",
+    memorized: !!r.memorized, created_at: r.created_at || Date.now(), updated_at: r.updated_at || Date.now(),
   };
 }
 
@@ -6511,6 +6536,8 @@ function batchRowToWordRecord(row, existing) {
     word_phonetic: row.result.word_phonetic,
     word_memory_tip: row.result.word_memory_tip,
     morphemes: row.result.morphemes,
+    synonyms: row.result.synonyms,
+    antonyms: row.result.antonyms,
     goro_text: row.result.goro_text,
     goro_highlight: row.result.goro_highlight,
     provider: row.result.provider,
@@ -6658,6 +6685,8 @@ async function runBatchGeneration() {
               word_phonetic: it.decomposed.phonetic,
               word_memory_tip: it.decomposed.memoryTip,
               morphemes: it.decomposed.morphemes,
+              synonyms: it.decomposed.synonyms,
+              antonyms: it.decomposed.antonyms,
               goro_text: cand.text,
               goro_highlight: cand.highlight,
               provider,
