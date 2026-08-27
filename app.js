@@ -6578,7 +6578,17 @@ async function initGoogleAuth() {
 
   const user = await kvGet("google_user", null);
   renderGoogleUser(user);
-  if (user) return; // サインイン済みならボタンは出さない
+
+  /* 表示用のプロフィール(google_user)はIndexedDBにあり自分から消えることは
+     ないが、Supabaseのセッションはlocalstorageにあり、こちらは端末の都合で
+     消える。iOSのSafariは一定期間使われていないサイトのlocalStorageをまとめて
+     破棄するし、ホーム画面に追加したPWAはSafariとは別の保管庫を持つため、
+     Safariでサインインしてもそちらにはセッションが無い。
+     以前はプロフィールが残っていれば「サインイン済み」と見なして入り口を
+     消していたので、プロフィールは出ているのに同期だけ黙って止まっている、
+     という状態から自力で復帰できなかった。繋がっていなければ必ず出す */
+  const cloudDisconnected = cloudSyncConfigured() && !cloudUserId;
+  if (user && !cloudDisconnected) { status.textContent = ""; return; }
 
   slot.innerHTML = "";
   if (!clientId) {
@@ -6592,7 +6602,8 @@ async function initGoogleAuth() {
       window.google.accounts.id.initialize({
         client_id: clientId,
         callback: handleGoogleCredential,
-        auto_select: false,
+        /* 一度サインインしたことのある端末なら、黙って繋ぎ直させる */
+        auto_select: !!user,
       });
       gsiInitializedFor = clientId;
     }
@@ -6603,7 +6614,14 @@ async function initGoogleAuth() {
       text: "signin_with",
       locale: "ja",
     });
-    status.textContent = "";
+    status.textContent = user
+      ? "クラウド同期の接続が切れています。もう一度サインインしてください。"
+      : "";
+    /* 一度サインインした端末なら、操作なしで戻せることがある。
+       戻せなくても上のボタンが残るので害は無い */
+    if (user) {
+      try { window.google.accounts.id.prompt(); } catch (err) { console.warn("One Tapを表示できませんでした:", err); }
+    }
   } catch (err) {
     console.warn("Google Identity Services init failed:", err);
     status.textContent = err.message || "Googleサインインを初期化できませんでした。";
@@ -7299,8 +7317,11 @@ async function flushCloudOutbox() {
     for (const id of ids) {
       const entry = box[id];
       if (entry.op === "delete") {
+        /* サインインが切れている間に積まれた目印はuser_idが空のままなので、
+           送る直前に今のユーザーで埋める */
+        const row = entry.row ? { ...entry.row, user_id: cloudUserId } : null;
         try {
-          await withWriteRetry(() => pushWordDelete(id, entry.row));
+          await withWriteRetry(() => pushWordDelete(id, row));
           sent.push(id);
         } catch (err) { console.warn("送信箱の削除を送れませんでした:", err); }
         continue;
@@ -7355,8 +7376,15 @@ async function syncWordUpsert(record) {
 /* existing にはローカルから消す直前のレコードを渡す。tombstoneはwordが
    NOT NULLなので、消えた後では目印の行を作れないため */
 async function syncWordDelete(id, existing, deletedAt) {
-  if (!supabaseClient || !cloudUserId) return;
+  if (!cloudSyncConfigured()) return;
   const row = existing ? localWordToCloudRow({ ...existing, updated_at: deletedAt }, true) : null;
+  if (!supabaseClient || !cloudUserId) {
+    /* サインインが切れている間の削除。ここで捨ててしまうと、繋がり直した
+       ときの突き合わせでクラウドに残っている行を取り込み直し、消したはずの
+       単語が復活する。保存の方は突き合わせが拾い直せるので貯めない */
+    if (await kvGet("google_user", null)) await outboxPut(id, { op: "delete", row });
+    return;
+  }
   if (cloudOffline()) { await outboxPut(id, { op: "delete", row }); return; }
   try {
     await withWriteRetry(() => pushWordDelete(id, row));
@@ -7420,6 +7448,8 @@ async function signInToCloud(idToken) {
     cloudUserId = data.user.id;
     lastFailedIdToken = null;
     watchAuthForRealtime();
+    /* 繋がったので「サインインし直してください」の案内とボタンを片付ける */
+    await initGoogleAuth();
     await pullAndMergeCloudData();
     startRealtimeWordSync();
   } catch (err) {
@@ -7453,6 +7483,14 @@ async function restoreCloudSession() {
       watchAuthForRealtime();
       await pullAndMergeCloudData();
       startRealtimeWordSync();
+      return;
+    }
+    /* プロフィールだけ端末に残り、Supabaseのセッションが消えている状態。
+       そのままだと同期が黙って止まったままになるので、はっきり出して
+       サインインし直せるようにする */
+    if (await kvGet("google_user", null)) {
+      setSyncStatus("同期の接続が切れています。サインインし直してください。", "error");
+      await initGoogleAuth();
     }
   } catch (err) {
     console.warn("Failed to restore Supabase session:", err);
@@ -7959,7 +7997,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "187";
+const APP_BUILD = "188";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
