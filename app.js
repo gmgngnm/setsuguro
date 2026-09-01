@@ -999,70 +999,41 @@ async function extractErrorDetail(res) {
   }
 }
 
+/* 生成AIはGeminiに一本化した。以前はさくらのAI(gpt-oss-120b)とGroqを
+   選べたが、チャット・埋め込み・音声合成・音声認識の4つを1社で賄えて
+   ブラウザからの直接呼び出しにも対応しているのがGeminiだけだったため。
+   モデルIDはここだけを見ればよいようにまとめてある */
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+/* OpenAI互換エンドポイント。chat/completions と embeddings はこちらを使う
+   （既存のアダプタ層がそのまま使えるため）。音声合成・音声認識・画像認識は
+   OpenAI互換では表現できないので、上のネイティブAPIを直接叩く */
+const GEMINI_OPENAI_BASE = `${GEMINI_API_BASE}/openai`;
+
+const GEMINI_CHAT_MODEL = "gemini-3.7-flash";
+const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
+const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+
 const AI_ADAPTERS = {
-  groq: {
-    label: "Groq",
-    modelsUrl: "https://api.groq.com/openai/v1/models",
-    /* 語呂合わせは「読みの音を含む実在の日本語を探す」制約充足タスクで、
-       推論を有効にした方が不自然な造語が出にくい。ただしモデルによっては
-       推論系のパラメータを受け付けず400を返すため、その場合はまとめて
-       外して一度だけ再試行し、機能自体が止まらないようにする */
-    reasoning: true,
+  gemini: {
+    label: "Gemini",
+    modelsUrl: `${GEMINI_OPENAI_BASE}/models`,
     async chat(apiKey, systemPrompt, userPrompt, temperature) {
-      const body = {
-        model: "qwen/qwen3.6-27b",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        response_format: { type: "json_object" },
-        temperature,
-      };
-      if (this.reasoning) {
-        body.reasoning_effort = "default";
-        /* 推論の途中経過が本文に混ざるとJSONとして壊れるため、最終回答
-           だけを返させる。JSONモードでは raw を指定できない */
-        body.reasoning_format = "hidden";
-      }
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const detail = await extractErrorDetail(res);
-        if (res.status === 400 && this.reasoning && /reasoning/i.test(detail)) {
-          console.warn("Groq rejected the reasoning parameters, retrying without them:", detail);
-          this.reasoning = false;
-          return this.chat(apiKey, systemPrompt, userPrompt, temperature);
-        }
-        throw new Error(`Groq API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-      }
-      const json = await res.json();
-      const text = json.choices?.[0]?.message?.content || "{}";
-      const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
-      return { text, tokens };
-    },
-  },
-  sakura: {
-    label: "さくらのAI",
-    modelsUrl: "https://api.ai.sakura.ad.jp/v1/models",
-    async chat(apiKey, systemPrompt, userPrompt, temperature) {
-      const res = await fetch("https://api.ai.sakura.ad.jp/v1/chat/completions", {
+      const res = await fetch(`${GEMINI_OPENAI_BASE}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: "gpt-oss-120b",
+          model: GEMINI_CHAT_MODEL,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
+          response_format: { type: "json_object" },
           temperature,
         }),
       });
       if (!res.ok) {
         const detail = await extractErrorDetail(res);
-        throw new Error(`さくらのAI API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+        throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
       }
       const json = await res.json();
       const text = json.choices?.[0]?.message?.content || "{}";
@@ -1072,21 +1043,22 @@ const AI_ADAPTERS = {
   },
 };
 
-/* 設定できる生成AIはさくらのAIのみ。以前Groqを選んでいた端末が
-   古い保存値を引きずらないよう、ここで読み替える */
+/* 生成AIはGeminiのみ。以前Groqやさくらを選んでいた端末が古い保存値を
+   引きずらないよう、ここで読み替える */
 async function getActiveProvider() {
-  const provider = await kvGet("provider", "sakura");
-  return provider === "groq" ? "sakura" : provider;
+  const provider = await kvGet("provider", "gemini");
+  return AI_ADAPTERS[provider] ? provider : "gemini";
 }
 
 /* ------------------------------------------------------------------ *
- * 3.4 Gemini（写真から単語を読み取る専用。分解・語呂合わせの
- *     プロバイダ選択には出てこない、独立した機能のためのAPIキー）
- *    無料枠の使いやすさと画像認識（手書き含む）の精度・速度のバランスで
- *    Geminiを採用。OpenAI互換ではないため、AI_ADAPTERSとは別に持つ。
+ * 3.4 Gemini ネイティブAPI（画像認識）
+ *    画像・音声を伴う呼び出しはOpenAI互換では表現できないため、
+ *    ここだけ generateContent を直接叩く。APIキーは分解・語呂合わせと
+ *    共通のものを使う。
  * ------------------------------------------------------------------ */
-const GEMINI_MODEL = "gemini-2.5-flash";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+/* 画像認識も同じモデルで賄う。以前はここだけ gemini-2.5-flash を
+   別に持っていたが、モデルIDの管理箇所を1つにまとめた */
+const GEMINI_MODEL = GEMINI_CHAT_MODEL;
 
 async function verifyGeminiApiKey(apiKey) {
   const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1`, {
@@ -1162,9 +1134,13 @@ function compressImageForRecognition(file, maxDim = 1600, quality = 0.85) {
   });
 }
 
-/* 疎通確認は生成を伴わない /v1/models で行う。生成させて確かめると、
+/* 疎通確認は生成を伴わないモデル一覧で行う。生成させて確かめると、
    キーが正しくてもモデルの出力揺れ (JSON検証エラーなど) で失敗し、
-   キーの問題だと誤認させてしまうため */
+   キーの問題だと誤認させてしまうため。
+   このアプリは1つのキーを2通りの流儀で使う——OpenAI互換の側(分解・
+   語呂合わせ・embeddings、Bearer認証)と、ネイティブAPIの側(読み上げ・
+   音声認識・写真読み取り、x-goog-api-key)。片方だけ確かめても
+   もう片方で弾かれることに気づけないので、両方とも見る */
 async function verifyApiKey(provider, apiKey) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
@@ -1174,35 +1150,32 @@ async function verifyApiKey(provider, apiKey) {
     const detail = await extractErrorDetail(res);
     throw new Error(`${adapter.label} API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
+  await verifyGeminiApiKey(apiKey);
 }
 
 /* ------------------------------------------------------------------ *
- * 3.5 Embeddings（さくらのAI /v1/embeddings, multilingual-e5-large）
+ * 3.5 Embeddings（Gemini /v1beta/openai/embeddings, gemini-embedding-001）
  *    語呂合わせの動的Few-shot・意味整合チェック・マンネリ検出・
  *    接辞の表記ゆれ統合で共通に使う。埋め込み専用なのでプロバイダは
- *    さくらのAIのみ対応。呼び出し元は必ずtry/catchし、失敗時は
+ *    Geminiのみ対応。呼び出し元は必ずtry/catchし、失敗時は
  *    その機能だけを静かにスキップして本筋の生成は止めないこと
  *    （TTSと同様、APIキーによって機能が有効化されていない場合がある）。
  * ------------------------------------------------------------------ */
 const EMBEDDING_ENDPOINTS = {
-  sakura: {
-    url: "https://api.ai.sakura.ad.jp/v1/embeddings",
-    model: "multilingual-e5-large",
+  gemini: {
+    url: `${GEMINI_OPENAI_BASE}/embeddings`,
+    model: GEMINI_EMBEDDING_MODEL,
   },
 };
 
-/* E5系モデルは、検索側(query)と索引側(passage)で接頭辞を分けないと
-   精度が落ちる。ここでの「意味」同士の比較は非対称な検索ではないが、
-   校正時と実行時で同じ組み合わせを使う限り一貫していれば問題ないため、
-   用途ごとに固定の接頭辞を使う */
-function e5Prefix(kind) {
-  return kind === "query" ? "query: " : "passage: ";
-}
-
+/* 以前のmultilingual-e5-largeは、検索側(query)と索引側(passage)で接頭辞を
+   分けないと精度が落ちるモデルだったため e5Prefix() を挟んでいた。
+   gemini-embedding-001 にその作法は無く、付けるとかえって本文をずらすので
+   kind は受け取るだけで本文には手を入れない（呼び出し側は変更不要） */
 async function embedTexts(texts, apiKey, kind = "passage") {
-  const cfg = EMBEDDING_ENDPOINTS.sakura;
+  const cfg = EMBEDDING_ENDPOINTS.gemini;
   if (!apiKey) throw new Error("APIキーが設定されていません");
-  const input = texts.map((t) => e5Prefix(kind) + String(t || ""));
+  const input = texts.map((t) => String(t || ""));
   const res = await fetch(cfg.url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -1222,9 +1195,9 @@ async function embedTexts(texts, apiKey, kind = "passage") {
   return vectors;
 }
 
-/* embeddings（/v1/embeddings）はさくらのAIの無料枠に含まれず、有効にすると
-   別途課金が発生しうるため、既定はオフ。設定画面のトグルで明示的に
-   オンにした場合のみ、RAG関連のembedding呼び出しを行う */
+/* embeddingsは呼び出し回数が多く、無料枠のレート制限を圧迫しやすいため
+   既定はオフ。設定画面のトグルで明示的にオンにした場合のみ、RAG関連の
+   embedding呼び出しを行う */
 async function isRagEnabled() {
   return !!(await kvGet("rag_enabled", false));
 }
@@ -1311,7 +1284,7 @@ async function reconcileUnknownAffix(part, aiEntry, apiKey) {
 }
 
 async function reconcileWithLocalDict(morphemes, provider, apiKey) {
-  const ragOn = (provider === "sakura" && apiKey) ? await isRagEnabled() : false;
+  const ragOn = (EMBEDDING_ENDPOINTS[provider] && apiKey) ? await isRagEnabled() : false;
   const out = [];
   for (const m of (morphemes || [])) {
     const key = (m.part || "").toLowerCase();
@@ -1798,6 +1771,31 @@ const GORO_EXAMPLE_TOPK = 4;
    調整できるよう定数として独立させている */
 const GORO_REPEAT_SIM_THRESHOLD = 0.93;
 
+/* 埋め込みモデルを変えると、以前のモデルで作ったベクトルとはコサイン
+   類似度が比較不能になる（次元も分布も違う）。混ざったまま使うと意味整合
+   ゲートもマンネリ検出も無意味な判定を返すので、モデルが変わったら古い
+   ベクトルを捨てて作り直させる。しきい値も実測で校正した値なので一緒に捨てる */
+const EMBEDDING_MODEL_VERSION = GEMINI_EMBEDDING_MODEL;
+
+async function purgeStaleEmbeddingsOnce() {
+  if ((await kvGet("embedding_model_version", null)) === EMBEDDING_MODEL_VERSION) return;
+  try {
+    for (const row of await idbGetAll("goro_corpus")) await idbDelete("goro_corpus", row.id);
+    /* 接辞ストアは辞書としての中身（読み・意味・語源）が本体なので、
+       比較用のベクトルだけを落として本体は残す */
+    for (const row of await idbGetAll("affixes")) {
+      if (!row.vector) continue;
+      delete row.vector;
+      await idbPut("affixes", row);
+    }
+    await kvSet("goro_seed_version", null);
+    await kvSet("goro_gate_threshold", null);
+    await kvSet("embedding_model_version", EMBEDDING_MODEL_VERSION);
+  } catch (err) {
+    console.warn("古い埋め込みの破棄に失敗しました（スキップします）:", err);
+  }
+}
+
 /* 種データは、単語の意味と語呂合わせの対応そのものは正しいが、書かれた
    のが品質ルールを厳しくする前なので、現在の機械チェック（長さ・読みの
    丸ごと使用など）には通らないものが多い。②の閾値校正には「意味と語呂が
@@ -1819,7 +1817,8 @@ function buildGoroSeedCorpus() {
    30件分揃っているので、当てずっぽうの閾値を決め打ちする代わりに、
    その分布の最小値付近を境界として使う */
 async function ensureGoroCorpusReady(provider, apiKey) {
-  if (provider !== "sakura" || !apiKey) return;
+  if (!EMBEDDING_ENDPOINTS[provider] || !apiKey) return;
+  await purgeStaleEmbeddingsOnce();
   if ((await kvGet("goro_seed_version", null)) === GORO_SEED_VERSION) return;
   try {
     await demoWordDataReady;
@@ -1851,7 +1850,7 @@ async function ensureGoroCorpusReady(provider, apiKey) {
    goro_corpusに追加する。idはwordから決まるので、同じ単語を作り直して
    再保存した場合は自動的に最新の語呂合わせに上書きされる */
 async function growGoroCorpusFromSave(word, wordMeaning, goroText, morphemes, provider, apiKey) {
-  if (provider !== "sakura" || !apiKey || !wordMeaning || !goroText) return;
+  if (!EMBEDDING_ENDPOINTS[provider] || !apiKey || !wordMeaning || !goroText) return;
   if (!(await isRagEnabled())) return;
   try {
     const [meaningVec] = await embedTexts([wordMeaning], apiKey, "passage");
@@ -1899,7 +1898,7 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
 
   /* embeddingsが使える場合のみ、①examples検索・②③の材料を用意する。
      どこかで失敗しても本筋の生成は止めず、以降の機能を静かに諦める */
-  const useEmbeddings = provider === "sakura" && !!apiKey && (await isRagEnabled());
+  const useEmbeddings = !!EMBEDDING_ENDPOINTS[provider] && !!apiKey && (await isRagEnabled());
   let examples = [];
   let corpus = [];
   let meaningQueryVec = null;
@@ -2000,7 +1999,7 @@ async function bumpUsage(tokens) {
 
 /* ------------------------------------------------------------------ *
  * 4.7 まとめ生成（複数の単語を1リクエストに束ねる）
- *   さくらのAI Engineはリクエスト単位で課金されるため、1語につき4〜6回
+ *   AIの呼び出しはリクエスト単位で課金・レート制限されるため、1語につき4〜6回
  *   呼んでいた分解・語呂合わせを、数語ぶんまとめて1回にする。
  *
  *   語呂合わせの精度を落とさないために、次の2つは必ず守る。
@@ -2227,7 +2226,7 @@ function batchGoroUserPrompt(states, rag) {
    複数テキストを送れるので、単語数によらず呼び出しは数回で済む。
    どこかで失敗しても本筋の生成は止めず、静かにRAGだけ諦める */
 async function prepareBatchGoroRag(items, provider, apiKey) {
-  if (provider !== "sakura" || !apiKey || !(await isRagEnabled())) return null;
+  if (!EMBEDDING_ENDPOINTS[provider] || !apiKey || !(await isRagEnabled())) return null;
   try {
     await ensureGoroCorpusReady(provider, apiKey);
     const corpus = await idbGetAll("goro_corpus");
@@ -2382,73 +2381,61 @@ async function batchGenerateGoro(items, provider, apiKey, rag, onStatus) {
 
 /* ------------------------------------------------------------------ *
  * 5. 読み上げ
- *    日本語(語呂合わせ・単語の意味)はさくらのAIのTTS(VOICEVOX)で読み、
- *    英単語そのものと、TTSが使えない場合はブラウザ内蔵の音声合成に戻す。
+ *    日本語(語呂合わせ・単語の意味)も英単語も、GeminiのTTSで読む。
+ *    以前は日本語がVOICEVOX、英語はブラウザ内蔵固定だったが、Geminiは
+ *    どちらも同じAPIで読めるので英単語の発音も合成音声に載せ替えた。
+ *    APIが使えない・失敗した場合はブラウザ内蔵の音声合成に戻す。
  * ------------------------------------------------------------------ */
 
-/* OpenAIのTTS API互換で、model / voice / input を渡すと音声バイナリが
-   返る。対応プロバイダを増やす場合はここに足せば、利用可否の判定も
-   フォールバックもこのマップの有無だけで動く */
+/* GeminiのTTSは generateContent に responseModalities:["AUDIO"] を渡す形で、
+   OpenAI互換エンドポイントでは表現できないためネイティブAPIを直接叩く */
 const TTS_ENDPOINTS = {
-  sakura: {
-    speechUrl: "https://api.ai.sakura.ad.jp/v1/audio/speech",
-    modelsUrl: "https://api.ai.sakura.ad.jp/v1/models",
+  gemini: {
+    speechUrl: `${GEMINI_API_BASE}/models/${GEMINI_TTS_MODEL}:generateContent`,
   },
 };
 
-/* さくらのAI EngineのTTSは、modelに話者、voiceにその話者のスタイルを渡す
-   （例: 春日部つむぎのノーマル → model:"kasukabetsumugi", voice:"normal"）。
-   話者IDは話者名のローマ字表記だが、区切り文字の有無など正確な綴りが
-   公開情報から確定できないものがある。ここにあるのはあくまで確認の
-   出発点で、綴りは /v1/models の実際の一覧で上書きし、使えるかどうかは
-   実際に鳴らして判断する（この一覧をそのまま選択肢として見せない） */
+/* Geminiの組み込み音声。VOICEVOXと違って話者ごとの利用規約同意は不要で、
+   一覧も固定なので「使える話者を調べる」仕組みは要らなくなった。
+   30種あるうち、読み上げ用途で聞きやすいものを選んで並べてある */
 const TTS_SPEAKERS = [
-  { id: "zundamon", label: "ずんだもん" },
-  { id: "shikokumetan", label: "四国めたん" },
-  { id: "kasukabetsumugi", label: "春日部つむぎ" },
-  { id: "meimeihimari", label: "冥鳴ひまり" },
-  { id: "tohokuzunko", label: "東北ずん子" },
-  { id: "tohokukiritan", label: "東北きりたん" },
-  { id: "tohokuitako", label: "東北イタコ" },
-  { id: "ankomon", label: "あんこもん" },
+  { id: "Kore", label: "Kore（落ち着き）" },
+  { id: "Sulafat", label: "Sulafat（あたたかい）" },
+  { id: "Achird", label: "Achird（親しみやすい）" },
+  { id: "Vindemiatrix", label: "Vindemiatrix（やさしい）" },
+  { id: "Leda", label: "Leda（若々しい）" },
+  { id: "Puck", label: "Puck（快活）" },
+  { id: "Zephyr", label: "Zephyr（明るい）" },
+  { id: "Aoede", label: "Aoede（軽やか）" },
+  { id: "Callirrhoe", label: "Callirrhoe（おだやか）" },
+  { id: "Enceladus", label: "Enceladus（ささやき）" },
 ];
-const TTS_VOICE = "normal";
+const TTS_SPEAKER_DEFAULT = "Kore";
 
-/* 規約に同意済みで、実際に鳴ることを確認できている話者。検出を一度も
-   実行していない端末でも最初から選べるようにする。検出を実行した後は
-   その結果を優先する（実測を、確認済みの決め打ちより信用する） */
-const TTS_SPEAKERS_CONFIRMED = ["zundamon"];
-const TTS_SPEAKER_DEFAULT = "zundamon";
+/* VOICEVOXの話者ID(zundamonなど)が保存されたままだとGeminiでは鳴らず、
+   毎回ブラウザ内蔵へフォールバックし続けることになる。Geminiに無いIDは
+   既定の声へ寄せる。ブラウザ標準("")を自分で選んでいた場合は尊重する */
+/* さくらのAIからGeminiへ移行した端末の後始末。分解・語呂合わせ・埋め込み・
+   読み上げ・音声認識のすべてがGeminiに移ったので、保存されていたプロバイダ
+   選択を読み替え、使えなくなったキーは端末から消す。
+   写真読み取り用に既にGeminiキーを登録していた端末は、そのキーがそのまま
+   本キーとして使われるので入力し直す必要はない */
+async function migrateToGeminiOnce() {
+  if (await kvGet("gemini_only_migrated", false)) return;
+  await kvSet("gemini_only_migrated", true);
+  await kvSet("provider", "gemini");
+  for (const dead of ["sakura", "groq"]) await idbDelete("kv", `apikey_${dead}`);
+}
 
-/* 以前は話者検出が通信エラーで空振りしただけでブラウザ標準("")が保存され、
-   その後ずんだもんに戻らなくなっていた。取りこぼした端末を一度だけ既定へ
-   戻す。この移行より後に自分でブラウザ標準を選んだ場合はそのまま尊重する */
 async function migrateTtsSpeakerDefaultOnce() {
-  if (await kvGet("tts_speaker_default_migrated", false)) return;
-  await kvSet("tts_speaker_default_migrated", true);
-  if ((await kvGet("tts_speaker", null)) === "") await kvSet("tts_speaker", TTS_SPEAKER_DEFAULT);
+  const chosen = await kvGet("tts_speaker", null);
+  if (chosen === "" ) return;
+  if (chosen && TTS_SPEAKERS.some((s) => s.id === chosen)) return;
+  await kvSet("tts_speaker", TTS_SPEAKER_DEFAULT);
+  /* さくら時代の「鳴った話者」の記録は意味を失うので捨てる */
+  await idbDelete("kv", "tts_speakers_ok");
 }
 
-/* 綴りの揺れ（ハイフンやアンダースコアの有無）を無視して突き合わせる */
-function normalizeSpeakerId(id) {
-  return String(id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-async function fetchModelIds(endpoint, apiKey) {
-  try {
-    const res = await fetch(endpoint.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return (json.data || []).map((m) => m && m.id).filter((id) => typeof id === "string");
-  } catch (err) {
-    console.warn("Failed to list models:", err);
-    return [];
-  }
-}
-
-/* 一覧が取れた場合は、実在が確認できた話者だけを返す（IDもAPIが返した
-   綴りそのものを使う）。取れなかった場合は判断材料が無いので既知の
-   一覧をそのまま返し、実際に鳴るかは試聴で確かめてもらう */
 /* 同じ語呂合わせを繰り返し聞くことが多いので、生成済みの音声は
    使い回す。青天井に持たないよう、古いものから捨てる */
 const TTS_CACHE_LIMIT = 30;
@@ -2494,26 +2481,76 @@ function speakWithBrowser(spoken, onEnd, lang) {
   window.speechSynthesis.speak(u);
 }
 
-function requestTtsAudio(endpoint, apiKey, model, spoken) {
+function requestTtsAudio(endpoint, apiKey, voiceName, spoken) {
   return fetch(endpoint.speechUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, voice: TTS_VOICE, input: spoken }),
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: spoken }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+      },
+    }),
   });
 }
 
-/* 音声モデルは /v1/models に載っていても、さくらのクラウドのコントロール
-   パネルで話者ごとに利用規約へ同意するまで使えず、呼ぶと400
-   "This model is not available." が返る。話者IDの綴り間違いと症状が
-   紛らわしく、実際この切り分けで一度実装が止まっているため言い分ける */
-function ttsErrorHint(err) {
-  return /not available/i.test(err.message || "")
-    ? "この話者はまだ利用できません。さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」を開き、この話者の利用規約に同意してください（反映に数分かかることがあります）。"
-    : "";
+function base64ToBytes(base64) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
-/* 失敗してもブラウザ内蔵の音声で読み上げは続くため、黙っていると
-   VOICEVOXが使えていないことに気づけない。セッション中に一度だけ知らせる */
+/* 返ってくるmimeTypeは "audio/L16;codec=pcm;rate=24000" の形。
+   取れなければGeminiの既定である24kHzとみなす */
+function sampleRateFromMime(mime) {
+  const m = /rate=(\d+)/.exec(String(mime || ""));
+  return m ? Number(m[1]) : 24000;
+}
+
+/* GeminiのTTSはヘッダの無い生のPCM(16bit little-endian)を返すので、
+   そのままでは <audio> で鳴らない。WAVの44バイトヘッダを被せて
+   再生できる形にする */
+function pcmToWavBlob(pcmBytes, sampleRate) {
+  const channels = 1;
+  const bitsPerSample = 16;
+  const blockAlign = channels * bitsPerSample / 8;
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const ascii = (offset, text) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + pcmBytes.length, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);                       // fmtチャンクの長さ
+  view.setUint16(20, 1, true);                        // 1 = 非圧縮PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);  // バイト毎秒
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  ascii(36, "data");
+  view.setUint32(40, pcmBytes.length, true);
+  return new Blob([header, pcmBytes], { type: "audio/wav" });
+}
+
+async function ttsBlobFromResponse(res) {
+  const json = await res.json();
+  const parts = json.candidates?.[0]?.content?.parts || [];
+  const inline = parts.map((p) => p.inlineData || p.inline_data).find((d) => d && d.data);
+  if (!inline) throw new Error("音声データが返りませんでした");
+  const bytes = base64ToBytes(inline.data);
+  const mime = inline.mimeType || inline.mime_type || "";
+  /* そのまま鳴らせる形式で返ってきた場合はヘッダを足さない */
+  if (/^audio\/(wav|x-wav|mpeg|mp3|ogg|aac)/i.test(mime)) return new Blob([bytes], { type: mime });
+  return pcmToWavBlob(bytes, sampleRateFromMime(mime));
+}
+
+/* 失敗してもブラウザ内蔵の音声で読み上げは続くため、黙っているとGeminiの
+   音声が使えていないことに気づけない。セッション中に一度だけ知らせる */
 let ttsFallbackNotified = false;
 
 async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
@@ -2526,7 +2563,7 @@ async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
     const detail = await extractErrorDetail(res);
     throw new Error(`TTS API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
-  const url = URL.createObjectURL(await res.blob());
+  const url = URL.createObjectURL(await ttsBlobFromResponse(res));
   putTtsCache(cacheKey, url);
   return url;
 }
@@ -2540,9 +2577,10 @@ async function speak(text, onEnd, lang = "ja-JP") {
   const spoken = spokenTextOf(text);
   if (!spoken) { if (onEnd) onEnd(); return; }
 
-  /* VOICEVOXは日本語専用なので、英単語の読み上げは常にブラウザ内蔵の合成 */
+  /* GeminiのTTSは多言語なので、英単語も日本語も同じ経路で読む
+     （VOICEVOX時代は日本語専用だったため英語をブラウザ内蔵に固定していた） */
   const provider = await getActiveProvider();
-  const endpoint = lang === "ja-JP" ? TTS_ENDPOINTS[provider] : null;
+  const endpoint = TTS_ENDPOINTS[provider];
   const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
   const apiKey = speaker ? await loadApiKey(provider) : "";
   if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
@@ -2564,7 +2602,7 @@ async function speak(text, onEnd, lang = "ja-JP") {
     if (currentTtsAudio) currentTtsAudio = null;
     if (!ttsFallbackNotified) {
       ttsFallbackNotified = true;
-      toast(ttsErrorHint(err) ? "音声モデルが未承諾のため端末の音声で読み上げます" : "読み上げに失敗したため端末の音声を使います");
+      toast("読み上げに失敗したため端末の音声を使います");
     }
     speakWithBrowser(spoken, onEnd, lang);
   }
@@ -2647,17 +2685,18 @@ const desktopMicQuery = window.matchMedia("(min-width: 860px)");
 const isDesktopMic = () => desktopMicQuery.matches;
 const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押しで入力");
 
-/* Whisper の文字起こしエンドポイント。OpenAI 互換で
-   multipart/form-data の file + model を受け付ける。
+/* 音声認識のエンドポイント。以前はさくらのWhisper(OpenAI互換の
+   multipart)だったが、Geminiは音声を inline_data で generateContent に
+   渡して文字起こしさせる形なので、専用のプロンプトごとここに持つ。
    対応プロバイダを増やす場合はここに足せば、選択可否の判定も
    フォールバックもこのマップの有無だけで動く */
-const WHISPER_ENDPOINTS = {
-  sakura: { url: "https://api.ai.sakura.ad.jp/v1/audio/transcriptions", model: "whisper-large-v3-turbo" },
+const STT_ENDPOINTS = {
+  gemini: { url: `${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL}:generateContent` },
 };
 
-/* ほぼ無音の録音を渡すと、Whisper が学習データ由来の定型句を
-   でっち上げて返すことがある。単語として採用しないよう弾く */
-const WHISPER_NOISE = new Set([
+/* ほぼ無音の録音を渡すと、学習データ由来の定型句をでっち上げて
+   返すことがある。単語として採用しないよう弾く */
+const STT_NOISE = new Set([
   "you", "thankyou", "thanksforwatching", "bye", "goodbye", "okay", "ok",
   "so", "pleasesubscribe", "subtitlesbytheamaraorgcommunity", "hmm",
 ]);
@@ -2671,38 +2710,61 @@ function transcriptToWord(transcript) {
      落として1語に畳む。"response ability" も "re-construction" も
      つながった1語になる */
   const word = String(transcript || "").toLowerCase().replace(/[^a-z]+/g, "");
-  return WHISPER_NOISE.has(word) ? "" : word;
+  return STT_NOISE.has(word) ? "" : word;
 }
 
-async function transcribeWithWhisper(blob, provider, apiKey, filename) {
-  const cfg = WHISPER_ENDPOINTS[provider];
-  if (!cfg) throw new Error("このプロバイダは音声認識に未対応です");
-  const form = new FormData();
-  form.append("file", blob, filename);
-  form.append("model", cfg.model);
-  /* OpenAI 互換の任意パラメータ。英単語1語だと文脈が無く
-     他言語に引きずられやすいので言語を固定する。
-     受け付けないサーバでも単に無視される */
-  form.append("language", "en");
-  form.append("response_format", "json");
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      /* data:audio/webm;base64,XXXX の後ろだけが欲しい */
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(new Error("録音データを読み取れませんでした"));
+    reader.readAsDataURL(blob);
+  });
+}
 
-  /* Content-Type は boundary 付きで FormData に組み立てさせる */
+/* 録音した音声をそのままGeminiに渡し、聞こえた英単語の綴りだけを返させる。
+   1語だけを言う前提なので、文章として書き起こさせるより綴りを直接
+   答えさせた方が余計な句読点や言い直しが混ざらない */
+async function transcribeWithGemini(blob, apiKey, mime) {
+  const cfg = STT_ENDPOINTS.gemini;
+  const sys = [
+    "この音声は、英単語を1語だけ発音したものです。",
+    "聞こえた英単語の綴りだけを小文字で答えてください。",
+    "説明・句読点・日本語は一切書かないでください。",
+    "聞き取れない場合や英単語でない場合は空文字にしてください。",
+    "出力は次のJSON形式のみを返してください。",
+    '{"word":"abandon"}',
+  ].join("\n");
+
   const res = await fetch(cfg.url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: sys },
+          { inline_data: { mime_type: mime || "audio/webm", data: await blobToBase64(blob) } },
+        ],
+      }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0 },
+    }),
   });
   if (!res.ok) {
     const detail = await extractErrorDetail(res);
     throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const json = await res.json();
-  return json.text || "";
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  try { return JSON.parse(text).word || ""; } catch { return ""; }
 }
 
 function pickRecorderMime() {
-  /* さくらのAI側はmp3/wav/m4a/mp4が明示されているのに対しwebmの記載が
-     ないため、対応していればmp4 (=m4a) を優先する。webmしか録音できない
+  /* Geminiはwebmもmp4も受け付けるが、mp4 (=m4a) の方が対応の記載が
+     手厚いので、使えるならそちらを優先する。webmしか録音できない
      ブラウザでも、拒否された場合はAPIのエラーがそのままトーストに出る */
   const candidates = [
     "audio/mp4",
@@ -2814,10 +2876,10 @@ if (!SpeechRecognitionCtor && !canRecord) {
     },
   };
 
-  /* --- エンジンB: 録音して Whisper に投げる (高精度・APIキー必要) ---
+  /* --- エンジンB: 録音してGeminiに投げる (高精度・APIキー必要) ---
      押している間だけ録音し、離してから音声全体を1リクエストで送る。
      発話を区切る余地がそもそも無いので、長い単語でも切れない */
-  const whisperEngine = {
+  const apiSttEngine = {
     recorder: null,
     stream: null,
     start(provider, apiKey) {
@@ -2840,7 +2902,7 @@ if (!SpeechRecognitionCtor && !canRecord) {
           const elapsed = Date.now() - startedAt;
           const blob = new Blob(chunks, { type: mime || "audio/webm" });
 
-          /* 短すぎる録音は Whisper が幻聴を返しやすいので送らない */
+          /* 短すぎる録音は幻聴を返しやすいので送らない */
           if (elapsed < 350 || blob.size < 1200) {
             resetMic();
             toast("もう少し長く押しながら話してください");
@@ -2849,11 +2911,11 @@ if (!SpeechRecognitionCtor && !canRecord) {
 
           setMicState(false, "認識中…");
           try {
-            const text = await transcribeWithWhisper(blob, provider, apiKey, mimeToFilename(mime || "audio/webm"));
+            const text = await transcribeWithGemini(blob, apiKey, mime || "audio/webm");
             resetMic();
             submitWord(text);
           } catch (err) {
-            console.warn("Whisper transcription failed:", err);
+            console.warn("音声認識に失敗しました:", err);
             resetMic();
             toast(err.message || "音声認識に失敗しました");
           }
@@ -2890,15 +2952,15 @@ if (!SpeechRecognitionCtor && !canRecord) {
 
     const mode = await kvGet("voice_engine", "auto");
     const provider = await getActiveProvider();
-    const apiKey = WHISPER_ENDPOINTS[provider] ? await loadApiKey(provider) : "";
-    const useWhisper = mode !== "browser" && canRecord && !!apiKey;
+    const apiKey = STT_ENDPOINTS[provider] ? await loadApiKey(provider) : "";
+    const useApiStt = mode !== "browser" && canRecord && !!apiKey;
 
     /* 設定の読み出しを待つ間に離されていたら起動しない */
     if (released) { resetMic(); return; }
 
-    if (useWhisper) {
-      engineInUse = whisperEngine;
-      whisperEngine.start(provider, apiKey);
+    if (useApiStt) {
+      engineInUse = apiSttEngine;
+      apiSttEngine.start(provider, apiKey);
     } else if (SpeechRecognitionCtor) {
       engineInUse = browserEngine;
       browserEngine.start();
@@ -6127,17 +6189,13 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
 /* ------------------------------------------------------------------ *
  * 12. API設定画面
  * ------------------------------------------------------------------ */
-const PROVIDER_LABELS = { groq: "Groq", sakura: "さくらのAI" };
-let activeProvider = "sakura";
+/* 生成AIはGemini一本になったので、プロバイダの選択も
+   「写真読み取り専用の別キー」も無くなり、キーは1つだけになった */
+let activeProvider = "gemini";
 
 async function initSettingsScreen() {
   activeProvider = await getActiveProvider();
-  document.querySelectorAll(".provider-pill").forEach((p) => {
-    p.classList.toggle("on", p.dataset.provider === activeProvider);
-  });
-  document.getElementById("key-label").textContent = `${PROVIDER_LABELS[activeProvider]} API キー`;
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
-  document.getElementById("gemini-api-key-input").value = await loadApiKey("gemini");
   await refreshUsageDisplay();
 
   document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => {
@@ -6163,130 +6221,48 @@ async function initSettingsScreen() {
 }
 
 /* ------------------------------------------------------------------ *
- * 12d. 読み上げの声（さくらのAI TTS）
+ * 12d. 読み上げの声（Gemini TTS）
  * ------------------------------------------------------------------ */
 const TTS_PREVIEW_TEXT = "軸にイオンがぶつかり電気あり。";
 
-/* 実際に鳴った話者だけを候補として残す。/v1/models に載っていることも、
-   IDの綴りが正しいことも、その話者を使える保証にはならない（規約に
-   同意していない話者は 400 "This model is not available." になる）ため、
-   一度鳴らしてみた結果だけを信用する */
+/* Geminiの音声は一覧が固定で、話者ごとの利用規約同意も要らない。
+   さくら時代にあった「1つずつ鳴らして使える話者を調べる」仕組みは
+   不要になったので、TTS_SPEAKERS をそのまま候補として出す */
 const BROWSER_VOICE_OPTION = { id: "", label: "ブラウザ標準（APIを使わない）" };
-const TTS_PROBE_TEXT = "テスト";
-
-async function loadKnownGoodSpeakers() {
-  const saved = await kvGet("tts_speakers_ok", null);
-  const confirmed = TTS_SPEAKERS.filter((s) => TTS_SPEAKERS_CONFIRMED.includes(s.id));
-  if (!Array.isArray(saved)) return confirmed;
-  /* 検出が通信エラーなどで一度でも空振りすると、確認済みの話者まで候補から
-     消えてブラウザ標準に落ちたまま戻らなくなる。確認済みの話者は検出結果に
-     関わらず候補に残し、鳴らなかった場合は再生時のフォールバックに任せる */
-  const savedIds = new Set(saved.map((s) => normalizeSpeakerId(s && s.id)));
-  return confirmed.filter((s) => !savedIds.has(normalizeSpeakerId(s.id))).concat(saved);
-}
-
-/* 候補を1つずつ鳴らしてみて、成功したものだけを残す。規約に同意して
-   いない話者は弾かれるので、結果がそのまま「今使える話者」になる */
-async function detectUsableSpeakers(endpoint, apiKey, onProgress) {
-  const ids = await fetchModelIds(endpoint, apiKey);
-  const byNormalized = new Map(ids.map((id) => [normalizeSpeakerId(id), id]));
-  /* 一覧が取れた場合はそこに載っているIDを優先し、取れなければ
-     既知の綴りをそのまま試す */
-  const candidates = TTS_SPEAKERS.map((s) => ({
-    id: byNormalized.get(normalizeSpeakerId(s.id)) || s.id,
-    label: s.label,
-  }));
-
-  const usable = [];
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i];
-    if (onProgress) onProgress(i + 1, candidates.length, c.label);
-    try {
-      const res = await requestTtsAudio(endpoint, apiKey, c.id, TTS_PROBE_TEXT);
-      if (res.ok) {
-        /* 鳴らせることの確認が目的なので、音声そのものは捨てる */
-        await res.arrayBuffer().catch(() => {});
-        usable.push(c);
-      } else {
-        console.info(`TTS: ${c.label}(${c.id}) は利用できません`, await extractErrorDetail(res));
-      }
-    } catch (err) {
-      console.warn(`TTS: ${c.label}(${c.id}) の確認に失敗しました`, err);
-    }
-  }
-  await kvSet("tts_speakers_ok", usable);
-  return usable;
-}
 
 async function refreshTtsSpeakerUI() {
   const select = document.getElementById("tts-speaker-select");
   const note = document.getElementById("tts-note");
-  const detectBtn = document.getElementById("tts-detect-btn");
   const provider = await getActiveProvider();
   const endpoint = TTS_ENDPOINTS[provider];
   const apiKey = endpoint ? await loadApiKey(provider) : "";
   /* 未設定(null)と「ブラウザ標準を明示的に選んだ」("")を区別する。
-     既定はずんだもんだが、自分でブラウザ標準を選んだ場合はそれを尊重する */
+     既定は組み込み音声だが、自分でブラウザ標準を選んだ場合は尊重する */
   const chosen = await kvGet("tts_speaker", null);
 
+  select.innerHTML = "";
   if (!apiKey) {
-    select.innerHTML = "";
     select.appendChild(new Option(BROWSER_VOICE_OPTION.label, ""));
     select.value = "";
     select.disabled = true;
-    detectBtn.disabled = true;
-    note.textContent = "APIキーを保存すると、使える話者を調べられるようになります。";
+    note.textContent = "APIキーを保存すると、Geminiの音声で読み上げるようになります。";
     return;
   }
 
-  const speakers = await loadKnownGoodSpeakers();
   select.disabled = false;
-  detectBtn.disabled = false;
-  select.innerHTML = "";
-  for (const s of [BROWSER_VOICE_OPTION].concat(speakers)) select.appendChild(new Option(s.label, s.id));
+  for (const s of [BROWSER_VOICE_OPTION].concat(TTS_SPEAKERS)) select.appendChild(new Option(s.label, s.id));
 
-  /* 使えなくなった話者が保存されたままだと鳴らない声を選び続けることになるので、
-     候補に無ければ既定のずんだもんへ戻す（APIの綴り揺れも吸収する）。
-     ずんだもんすら候補に無いときだけブラウザ標準に落とす */
-  const available = new Set(speakers.map((s) => s.id));
-  const defaultSpeaker = speakers.find(
-    (s) => normalizeSpeakerId(s.id) === normalizeSpeakerId(TTS_SPEAKER_DEFAULT)
-  );
-  const fallback = defaultSpeaker ? defaultSpeaker.id : "";
-  select.value = chosen === "" ? "" : (chosen && available.has(chosen) ? chosen : fallback);
+  /* 一覧に無いIDが保存されたままだと鳴らない声を選び続けることになるので
+     既定へ戻す（さくら時代のVOICEVOX話者IDが残っている端末が該当する） */
+  const available = new Set(TTS_SPEAKERS.map((s) => s.id));
+  select.value = chosen === "" ? "" : (chosen && available.has(chosen) ? chosen : TTS_SPEAKER_DEFAULT);
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
-  note.textContent = speakers.length
-    ? "日本語の読み上げにVOICEVOXを使います（英単語はVOICEVOXが日本語専用のため端末の音声のまま）。他の話者は、コントロールパネルで利用規約に同意したうえで「話者を調べる」を押すと追加されます。"
-    : "使える話者がありません。VOICEVOXの話者は、さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から話者ごとに利用規約へ同意しないと使えません。";
+  note.textContent = "語呂合わせ・意味の日本語も、単語の英語も、選んだ声で読み上げます。";
 }
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
   await kvSet("tts_speaker", e.target.value);
-});
-
-document.getElementById("tts-detect-btn").addEventListener("click", async () => {
-  const btn = document.getElementById("tts-detect-btn");
-  const note = document.getElementById("tts-note");
-  const provider = await getActiveProvider();
-  const endpoint = TTS_ENDPOINTS[provider];
-  const apiKey = endpoint ? await loadApiKey(provider) : "";
-  if (!apiKey) { note.textContent = "先にAPIキーを保存してください。"; return; }
-
-  btn.disabled = true;
-  try {
-    const usable = await detectUsableSpeakers(endpoint, apiKey, (done, total, label) => {
-      note.textContent = `確認中… ${done}/${total}（${label}）`;
-    });
-    await refreshTtsSpeakerUI();
-    if (!usable.length) {
-      note.textContent = "使える話者は見つかりませんでした。さくらのクラウドのコントロールパネルで「AI Engine」→「利用可能な音声モデル」から利用規約に同意すると使えるようになります。";
-    }
-  } catch (err) {
-    console.warn("TTS speaker detection failed:", err);
-    note.textContent = `話者の確認に失敗しました（${err.message}）。`;
-  }
-  btn.disabled = false;
 });
 
 document.getElementById("tts-preview-btn").addEventListener("click", async () => {
@@ -6304,7 +6280,7 @@ document.getElementById("tts-preview-btn").addEventListener("click", async () =>
   note.textContent = "試聴を生成中…";
   try {
     /* ここでは speak() を通さない。フォールバックが働くと、鳴った声が
-       さくらのAIのものかブラウザのものか区別できず、確認にならないため */
+       Geminiのものかブラウザのものか区別できず、確認にならないため */
     stopSpeaking();
     const url = await fetchTtsAudioUrl(endpoint, apiKey, speaker, TTS_PREVIEW_TEXT);
     const audio = new Audio(url);
@@ -6313,8 +6289,7 @@ document.getElementById("tts-preview-btn").addEventListener("click", async () =>
     note.textContent = "✓ この声で読み上げます。";
   } catch (err) {
     console.warn("TTS preview failed:", err);
-    const hint = ttsErrorHint(err);
-    note.textContent = hint || `試聴に失敗しました（${err.message}）。別の話者を選ぶか、APIキーをご確認ください。`;
+    note.textContent = `試聴に失敗しました（${err.message}）。別の声を選ぶか、APIキーをご確認ください。`;
   }
   btn.disabled = false;
 });
@@ -6341,31 +6316,6 @@ document.querySelectorAll(".anim-pill").forEach((pill) => {
   });
 });
 
-document.querySelectorAll(".provider-pill").forEach((pill) => {
-  pill.addEventListener("click", async () => {
-    activeProvider = pill.dataset.provider;
-    document.querySelectorAll(".provider-pill").forEach((p) => p.classList.toggle("on", p === pill));
-    document.getElementById("key-label").textContent = `${PROVIDER_LABELS[activeProvider]} API キー`;
-    document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
-    document.getElementById("settings-status").textContent = "";
-  });
-});
-
-/* プロバイダを選び直しただけでは kv の provider は保存されないため、
-   音声入力の説明文は保存後の initSettingsScreen で追従させる */
-
-document.getElementById("toggle-key-visibility").addEventListener("click", () => {
-  const input = document.getElementById("api-key-input");
-  input.type = input.type === "password" ? "text" : "password";
-});
-
-document.getElementById("clear-key-input").addEventListener("click", () => {
-  const input = document.getElementById("api-key-input");
-  input.value = "";
-  input.focus();
-  document.getElementById("settings-status").textContent = "";
-});
-
 document.getElementById("save-key-btn").addEventListener("click", async () => {
   const status = document.getElementById("settings-status");
   const btn = document.getElementById("save-key-btn");
@@ -6385,41 +6335,11 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   }
   btn.disabled = false;
   await refreshUsageDisplay();
-  /* Whisperの可否も話者一覧の取得もキーに依存するので、あわせて更新する */
+  /* 音声認識の可否も声の一覧も写真読み取りの可否もキーに依存するので、
+     あわせて更新する */
   await refreshVoiceEngineUI();
   await refreshTtsSpeakerUI();
-});
-
-document.getElementById("toggle-gemini-key-visibility").addEventListener("click", () => {
-  const input = document.getElementById("gemini-api-key-input");
-  input.type = input.type === "password" ? "text" : "password";
-});
-
-document.getElementById("clear-gemini-key-input").addEventListener("click", () => {
-  const input = document.getElementById("gemini-api-key-input");
-  input.value = "";
-  input.focus();
-  document.getElementById("gemini-settings-status").textContent = "";
-});
-
-document.getElementById("save-gemini-key-btn").addEventListener("click", async () => {
-  const status = document.getElementById("gemini-settings-status");
-  const btn = document.getElementById("save-gemini-key-btn");
-  const key = document.getElementById("gemini-api-key-input").value.trim();
-  if (!key) { status.textContent = "APIキーを入力してください"; return; }
-
-  btn.disabled = true;
-  status.textContent = "疎通確認中…";
-  await saveApiKey("gemini", key);
   await refreshGeminiKeyAvailability();
-
-  try {
-    await verifyGeminiApiKey(key);
-    status.textContent = "✓ 保存しました。接続を確認できました。";
-  } catch (err) {
-    status.textContent = `保存しましたが、疎通確認に失敗しました（${err.message}）。`;
-  }
-  btn.disabled = false;
 });
 
 async function refreshUsageDisplay() {
@@ -6435,33 +6355,33 @@ async function refreshUsageDisplay() {
 async function refreshVoiceEngineUI() {
   const mode = await kvGet("voice_engine", "auto");
   const provider = await getActiveProvider();
-  const whisperSupported = !!WHISPER_ENDPOINTS[provider];
-  const selectable = whisperSupported && canRecord;
-  const hasKey = whisperSupported && !!(await loadApiKey(provider));
+  const sttSupported = !!STT_ENDPOINTS[provider];
+  const selectable = sttSupported && canRecord;
+  const hasKey = sttSupported && !!(await loadApiKey(provider));
 
-  /* Whisperを選べない構成では、実際に動く「ブラウザ標準」の方を
+  /* APIの音声認識を選べない構成では、実際に動く「ブラウザ標準」の方を
      選択済みとして見せる。保存された設定自体は書き換えないので、
-     さくらのAIに戻せば元の選択が復活する */
+     キーを保存すれば元の選択が復活する */
   const shown = selectable ? mode : "browser";
   document.querySelectorAll("#voice-engine-row .mode-pill").forEach((p) => {
-    const isWhisper = p.dataset.voiceEngine === "auto";
+    const isApiStt = p.dataset.voiceEngine === "auto";
     p.classList.toggle("on", p.dataset.voiceEngine === shown);
     /* 押せなくするのではなく薄く見せるだけにする。disabled にすると
        押しても何も起きず、ボタンが壊れているようにしか見えないため */
-    p.classList.toggle("pill-muted", isWhisper && !selectable);
+    p.classList.toggle("pill-muted", isApiStt && !selectable);
   });
 
   const note = document.getElementById("voice-engine-note");
   if (!canRecord) {
     note.textContent = "このブラウザは録音に対応していないため、ブラウザ内蔵の音声認識を使います。";
-  } else if (!whisperSupported) {
-    note.textContent = `Whisperによる音声認識はさくらのAIを選んでいるときだけ使えます。現在は${PROVIDER_LABELS[provider]}のため、ブラウザ内蔵の音声認識を使います。`;
+  } else if (!sttSupported) {
+    note.textContent = "このプロバイダは音声認識に未対応のため、ブラウザ内蔵の音声認識を使います。";
   } else if (mode === "browser") {
     note.textContent = "ブラウザ内蔵の音声認識を使います。APIキーを消費しません。";
   } else if (!hasKey) {
-    note.textContent = "さくらのAIのAPIキーが未設定のため、当面はブラウザ内蔵の音声認識を使います。";
+    note.textContent = "APIキーが未設定のため、当面はブラウザ内蔵の音声認識を使います。";
   } else {
-    note.textContent = "押している間の音声をさくらのAIのWhisperで認識します。1回の発話をまとめて送るため、長い単語でも途中で切れません。";
+    note.textContent = "押している間の音声をGeminiで認識します。1回の発話をまとめて送るため、長い単語でも途中で切れません。";
   }
 }
 
@@ -6470,8 +6390,8 @@ document.querySelectorAll("#voice-engine-row .mode-pill").forEach((pill) => {
     if (pill.dataset.voiceEngine === "auto") {
       if (!canRecord) { toast("このブラウザは録音に対応していません"); return; }
       const provider = await getActiveProvider();
-      if (!WHISPER_ENDPOINTS[provider]) {
-        toast("Whisperを使うには、上の「利用する生成AI」でさくらのAIを選んで保存してください");
+      if (!STT_ENDPOINTS[provider]) {
+        toast("APIの音声認識を使うには、先にGeminiのAPIキーを保存してください");
         return;
       }
     }
@@ -7997,7 +7917,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "188";
+const APP_BUILD = "189";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -8006,9 +7926,10 @@ function refreshBuildTag() {
 
 renderRecentChips();
 applyThemeMode();
+/* 保存値の読み替えは、それを読む処理より先に済ませておく */
+migrateToGeminiOnce().then(() => migrateTtsSpeakerDefaultOnce());
 restoreCloudSession();
 refreshBuildTag();
-migrateTtsSpeakerDefaultOnce();
 refreshGeminiKeyAvailability();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */

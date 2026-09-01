@@ -25,7 +25,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#188</span>
+        <span class="build-tag" id="build-tag">#189</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -241,15 +241,13 @@
     </div>
     <div class="sync-diag-result" id="sync-diag-result" hidden></div>
 
-    <div class="section-label" style="margin-top:6px;">利用する生成AI</div>
-    <div class="provider-row" id="provider-row">
-      <button class="provider-pill on" data-provider="sakura">さくらのAI</button>
-    </div>
+    <div class="section-label" style="margin-top:6px;">Gemini API キー</div>
+    <div class="usage-note">分解・語呂合わせ・読み上げ・音声認識・写真からの単語読み取りのすべてにこのキーを使います。Google AI Studio（aistudio.google.com/apikey）で無料のキーを発行できます。</div>
 
     <div class="form-row">
-      <label id="key-label">Groq API キー</label>
+      <label id="key-label">API キー</label>
       <div class="form-field">
-        <input id="api-key-input" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        <input id="api-key-input" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
         <button id="clear-key-input" type="button" aria-label="入力をクリア"><svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         <button id="toggle-key-visibility" type="button" aria-label="表示切替"><svg class="icon-svg icon-svg-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
@@ -261,34 +259,21 @@
       <div class="usage-note">概算値です。正確な金額は各社の請求画面でご確認ください。</div>
     </div>
 
-    <div class="lockrow">🔒 キーは端末内に暗号化して保存され、EnGoloydの分解・語呂合わせ生成にのみ使用されます。</div>
+    <div class="lockrow">🔒 キーは端末内に暗号化して保存され、EnGoloydの機能にのみ使用されます。撮影した画像・録音した音声もGeminiに送信されます。</div>
 
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
-
-    <div class="section-label" style="margin-top:6px;">写真から単語を読み取る（Gemini）</div>
-    <div class="form-row">
-      <label>Gemini API キー</label>
-      <div class="form-field">
-        <input id="gemini-api-key-input" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
-        <button id="clear-gemini-key-input" type="button" aria-label="入力をクリア"><svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        <button id="toggle-gemini-key-visibility" type="button" aria-label="表示切替"><svg class="icon-svg icon-svg-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      </div>
-    </div>
-    <div class="usage-note">Google AI Studio（aistudio.google.com/apikey）で無料のAPIキーを発行できます。マイ単語画面の「まとめて登録」でノートを撮影すると、写っている英単語を読み取ります。撮影した画像はGoogleのGemini APIに送信されます。</div>
-    <button class="btn-solid" id="save-gemini-key-btn">保存して疎通確認</button>
-    <div class="settings-status" id="gemini-settings-status"></div>
 
     <div class="section-label" style="margin-top:6px;">RAGによる精度向上</div>
     <div class="provider-row" id="rag-toggle-row">
       <button class="mode-pill" data-rag-toggle="on">オン</button>
       <button class="mode-pill on" data-rag-toggle="off">オフ</button>
     </div>
-    <div class="usage-note">語呂合わせの例文検索・意味整合チェック・接辞表記の統一にembeddingsを使用します。さくらのAIの無料枠に含まれないため、有効にすると別途課金が発生する場合があります。</div>
+    <div class="usage-note">語呂合わせの例文検索・意味整合チェック・接辞表記の統一にembeddings（gemini-embedding-001）を使用します。呼び出し回数が増えるため、無料枠のレート制限に当たりやすくなります。</div>
 
     <div class="section-label" style="margin-top:6px;">音声入力</div>
     <div class="provider-row" id="voice-engine-row">
-      <button class="mode-pill on" data-voice-engine="auto">Whisper (さくらのAI)</button>
+      <button class="mode-pill on" data-voice-engine="auto">Gemini で認識</button>
       <button class="mode-pill" data-voice-engine="browser">ブラウザ標準</button>
     </div>
     <div class="usage-note" id="voice-engine-note"></div>
@@ -296,7 +281,6 @@
     <div class="section-label" style="margin-top:6px;">読み上げの声</div>
     <div class="tts-voice-row">
       <select id="tts-speaker-select" aria-label="読み上げの声"></select>
-      <button class="btn-ghost" id="tts-detect-btn" type="button">話者を調べる</button>
       <button class="btn-ghost" id="tts-preview-btn" type="button">試聴</button>
     </div>
     <div class="usage-note" id="tts-note"></div>
