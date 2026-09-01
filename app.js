@@ -1004,31 +1004,45 @@ async function extractErrorDetail(res) {
    ブラウザからの直接呼び出しにも対応しているのがGeminiだけだったため。
    モデルIDはここだけを見ればよいようにまとめてある */
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-/* OpenAI互換エンドポイント。chat/completions と embeddings はこちらを使う
-   （既存のアダプタ層がそのまま使えるため）。音声合成・音声認識・画像認識は
-   OpenAI互換では表現できないので、上のネイティブAPIを直接叩く */
-const GEMINI_OPENAI_BASE = `${GEMINI_API_BASE}/openai`;
-
 const GEMINI_CHAT_MODEL = "gemini-3.7-flash";
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
+/* チャットはOpenAI互換ではなくネイティブAPI(generateContent)を叩く。
+   OpenAI互換層は受け取ったパラメータのうち未対応のものがあるとリクエスト
+   ごと400で弾く作りで、response_formatの扱いも安定しない。一方ネイティブの
+   responseMimeType:"application/json" は、このアプリの写真読み取りで既に
+   同じキー・同じ流儀で動いている実績のある経路なので、そちらに寄せる */
+/* 思考するモデルは、本文の前に thought:true の内訳パーツを混ぜて返すことが
+   ある。parts[0] を決め打ちで読むと思考の断片を本文として扱ってしまうので、
+   本文パーツだけを拾って繋ぐ。generateContentを叩く箇所は全てこれを通す */
+function geminiTextFromResponse(json) {
+  const blocked = json?.promptFeedback?.blockReason;
+  if (blocked) throw new Error(`Gemini API が応答を拒否しました (blockReason=${blocked})`);
+  const candidate = json?.candidates?.[0];
+  const text = (candidate?.content?.parts || [])
+    .filter((part) => part && typeof part.text === "string" && !part.thought)
+    .map((part) => part.text)
+    .join("");
+  if (!text.trim()) {
+    const why = candidate?.finishReason ? `finishReason=${candidate.finishReason}` : "本文が空でした";
+    throw new Error(`Gemini API が本文を返しませんでした (${why})`);
+  }
+  return text;
+}
+
 const AI_ADAPTERS = {
   gemini: {
     label: "Gemini",
-    modelsUrl: `${GEMINI_OPENAI_BASE}/models`,
+    modelsUrl: `${GEMINI_API_BASE}/models?pageSize=200`,
     async chat(apiKey, systemPrompt, userPrompt, temperature) {
-      const res = await fetch(`${GEMINI_OPENAI_BASE}/chat/completions`, {
+      const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL}:generateContent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
-          model: GEMINI_CHAT_MODEL,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-          temperature,
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature },
         }),
       });
       if (!res.ok) {
@@ -1036,8 +1050,12 @@ const AI_ADAPTERS = {
         throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
       }
       const json = await res.json();
-      const text = json.choices?.[0]?.message?.content || "{}";
-      const tokens = json.usage?.total_tokens || Math.round(text.length / 2);
+      /* 本文が空のまま返ることがある（出力上限・安全フィルタ）。ここで
+         "{}" に丸めると呼び出し元には「中身の無い正常な応答」に見えてしまい、
+         分解が黙ってローカル辞書へ落ちる（＝「意味を取得できませんでした」
+         だけが残る）。geminiTextFromResponseは分かる形で失敗させる */
+      const text = geminiTextFromResponse(json);
+      const tokens = json.usageMetadata?.totalTokenCount || Math.round(text.length / 2);
       return { text, tokens };
     },
   },
@@ -1059,19 +1077,6 @@ async function getActiveProvider() {
 /* 画像認識も同じモデルで賄う。以前はここだけ gemini-2.5-flash を
    別に持っていたが、モデルIDの管理箇所を1つにまとめた */
 const GEMINI_MODEL = GEMINI_CHAT_MODEL;
-
-async function verifyGeminiApiKey(apiKey) {
-  const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1`, {
-    headers: { "x-goog-api-key": apiKey },
-  });
-  if (res.status === 401 || res.status === 403 || res.status === 400) {
-    throw new Error("APIキーが受け付けられませんでした");
-  }
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-  }
-}
 
 /* 画像(dataURL)を渡すと、写っている英単語をJSON配列で返す。
    手書き・活字どちらのノートでも読める前提のプロンプトにしてある */
@@ -1107,9 +1112,8 @@ async function recognizeWordsFromImage(dataUrl, apiKey) {
     throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const json = await res.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
   let words = [];
-  try { words = JSON.parse(text).words || []; } catch { words = []; }
+  try { words = JSON.parse(geminiTextFromResponse(json)).words || []; } catch { words = []; }
   return words.filter((w) => typeof w === "string");
 }
 
@@ -1134,27 +1138,47 @@ function compressImageForRecognition(file, maxDim = 1600, quality = 0.85) {
   });
 }
 
-/* 疎通確認は生成を伴わないモデル一覧で行う。生成させて確かめると、
-   キーが正しくてもモデルの出力揺れ (JSON検証エラーなど) で失敗し、
-   キーの問題だと誤認させてしまうため。
-   このアプリは1つのキーを2通りの流儀で使う——OpenAI互換の側(分解・
-   語呂合わせ・embeddings、Bearer認証)と、ネイティブAPIの側(読み上げ・
-   音声認識・写真読み取り、x-goog-api-key)。片方だけ確かめても
-   もう片方で弾かれることに気づけないので、両方とも見る */
+/* 疎通確認。以前はモデル一覧が引けるかどうかだけを見ていたが、それでは
+   「キーは有効・接続も完了」と出たまま、実際の分解が毎回失敗しうる
+   （モデルIDがそのキーで使えない、本文が空で返る、など）。一覧はキーの
+   有効性しか語らないので、実際に使う経路まで通して確かめる。
+   分解・語呂合わせ・埋め込み・読み上げ・音声認識・写真読み取りのすべてが
+   ネイティブAPI(x-goog-api-key)に揃ったので、確認もその流儀で行う */
 async function verifyApiKey(provider, apiKey) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
-  const res = await fetch(adapter.modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
-  if (res.status === 401 || res.status === 403) throw new Error("APIキーが受け付けられませんでした");
+
+  const res = await fetch(adapter.modelsUrl, { headers: { "x-goog-api-key": apiKey } });
+  if (res.status === 400 || res.status === 401 || res.status === 403) {
+    throw new Error("APIキーが受け付けられませんでした");
+  }
   if (!res.ok) {
     const detail = await extractErrorDetail(res);
     throw new Error(`${adapter.label} API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
-  await verifyGeminiApiKey(apiKey);
+  const listed = await res.json().catch(() => null);
+
+  /* 分解と同じ形（systemInstruction + user、JSON強制）で1回だけ実際に
+     生成させる。モデルが使えるかどうかを一覧だけで判断はしない——一覧が
+     省略される可能性があり、使えるのに使えないと言う方が困るため。
+     実際に叩いて駄目だったときに初めて、一覧を材料に理由を説明する */
+  try {
+    const probe = await adapter.chat(apiKey, "JSONだけを返してください。", '{"ok":true} とだけ返してください。', 0);
+    extractJson(probe.text);
+  } catch (err) {
+    const ids = (listed?.models || []).map((m) => String(m?.name || "").replace(/^models\//, ""));
+    if (ids.length && !ids.includes(GEMINI_CHAT_MODEL)) {
+      const flash = ids.filter((id) => id.includes("flash")).slice(0, 6);
+      throw new Error(`このキーでは ${GEMINI_CHAT_MODEL} を使えないようです`
+        + (flash.length ? `（使えそうなモデル: ${flash.join(", ")}）` : "")
+        + `。元のエラー: ${err.message}`);
+    }
+    throw err;
+  }
 }
 
 /* ------------------------------------------------------------------ *
- * 3.5 Embeddings（Gemini /v1beta/openai/embeddings, gemini-embedding-001）
+ * 3.5 Embeddings（Gemini :batchEmbedContents, gemini-embedding-001）
  *    語呂合わせの動的Few-shot・意味整合チェック・マンネリ検出・
  *    接辞の表記ゆれ統合で共通に使う。埋め込み専用なのでプロバイダは
  *    Geminiのみ対応。呼び出し元は必ずtry/catchし、失敗時は
@@ -1163,8 +1187,8 @@ async function verifyApiKey(provider, apiKey) {
  * ------------------------------------------------------------------ */
 const EMBEDDING_ENDPOINTS = {
   gemini: {
-    url: `${GEMINI_OPENAI_BASE}/embeddings`,
-    model: GEMINI_EMBEDDING_MODEL,
+    url: `${GEMINI_API_BASE}/models/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents`,
+    model: `models/${GEMINI_EMBEDDING_MODEL}`,
   },
 };
 
@@ -1175,20 +1199,23 @@ const EMBEDDING_ENDPOINTS = {
 async function embedTexts(texts, apiKey, kind = "passage") {
   const cfg = EMBEDDING_ENDPOINTS.gemini;
   if (!apiKey) throw new Error("APIキーが設定されていません");
-  const input = texts.map((t) => String(t || ""));
   const res = await fetch(cfg.url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: cfg.model, input }),
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      requests: texts.map((t) => ({
+        model: cfg.model,
+        content: { parts: [{ text: String(t || "") }] },
+      })),
+    }),
   });
   if (!res.ok) {
     const detail = await extractErrorDetail(res);
     throw new Error(`embeddings API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const json = await res.json();
-  const rows = Array.isArray(json.data) ? json.data.slice() : [];
-  rows.sort((a, b) => (a.index || 0) - (b.index || 0));
-  const vectors = rows.map((d) => d.embedding);
+  /* batchEmbedContents は渡した順のまま embeddings を返す */
+  const vectors = (json.embeddings || []).map((e) => e && e.values);
   if (vectors.length !== texts.length || vectors.some((v) => !Array.isArray(v))) {
     throw new Error("embeddings API の応答が不正です");
   }
@@ -1358,6 +1385,19 @@ function sanitizeWordList(list, excludeWord) {
     .slice(0, 5);
 }
 
+/* AIの分解が失敗すると、ローカル辞書だけの簡易分解に落ちる。辞書に無い
+   接辞は「（意味を取得できませんでした）」と表示されるが、それだけでは
+   AIが呼べていないのか単に辞書未収録なのか区別がつかない。原因が分かる
+   よう、セッション中に一度だけ実際のエラーを知らせる */
+let decomposeFallbackNotified = false;
+
+function notifyDecomposeFallback(err) {
+  console.warn("Stage1 failed, falling back to local dictionary:", err);
+  if (decomposeFallbackNotified) return;
+  decomposeFallbackNotified = true;
+  toast(`AIの接辞分解に失敗したため簡易分解を使います: ${err.message}`);
+}
+
 async function decomposeWord(word, provider, apiKey) {
   try {
     const sys = decomposeSystemPrompt(word);
@@ -1395,7 +1435,7 @@ async function decomposeWord(word, provider, apiKey) {
 
     return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
   } catch (err) {
-    console.warn("Stage1 failed, falling back to local dictionary:", err);
+    notifyDecomposeFallback(err);
     return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: await fallbackDecompose(word) };
   }
 }
@@ -2758,8 +2798,7 @@ async function transcribeWithGemini(blob, apiKey, mime) {
     throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const json = await res.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-  try { return JSON.parse(text).word || ""; } catch { return ""; }
+  try { return JSON.parse(geminiTextFromResponse(json)).word || ""; } catch { return ""; }
 }
 
 function pickRecorderMime() {
@@ -7917,7 +7956,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "189";
+const APP_BUILD = "190";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
