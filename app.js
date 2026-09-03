@@ -6222,6 +6222,446 @@ async function runPhoenixTileResolve(el, delayMs) {
 }
 
 
+/* ================= 折り紙 ================= */
+
+/* 透視投影の視距離。実寸どおりの距離では折りの奥行き差がほとんど出ないので、
+   紙の形が破綻しない範囲まで近づけて立体感を強めている */
+const ORIGAMI_VIEW_D = 400;
+/* 左上手前からの照明。折りは縦軸まわりなので面の法線はy成分を持たず、xとzだけ使う */
+const ORIGAMI_LIGHT_X = -0.44;
+const ORIGAMI_LIGHT_Z = 0.85;
+/* 陰に回った面が黒く沈みきらないための環境光。紙は一灯ではなく部屋全体の
+   光を受けるので、ここが低すぎると畳んだ紙片が灰色の塊になってしまう */
+const ORIGAMI_AMBIENT = 0.58;
+/* 畳み切った角度(約71°)。これ以上折ると紙は幅を失って、
+   何が畳まれているのか分からない細片になってしまう */
+const ORIGAMI_THETA_MAX = 1.24;
+
+const origamiEaseOut = (p) => 1 - Math.pow(1 - p, 3);
+const origamiEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const origamiClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+/* 1をわずかに超えてから戻る。開ききった紙が一度反り返って落ち着く動き */
+const origamiEaseOutBack = (p) => {
+  const c1 = 1.1, c3 = c1 + 1;
+  const q = p - 1;
+  return 1 + c3 * q * q * q + c1 * q * q;
+};
+
+/* 面が受ける光の量を、平らなとき(θ=0)を1とした比で返す。
+   縦軸まわりにθだけ折られた面の法線は (sign·sinθ, 0, cosθ) なので、
+   折るほど片面は光の方を向いて明るく、隣の面は陰に回って暗くなる。
+   この交互の明暗が、蛇腹に折られた紙の見え方そのものになる */
+function origamiShade(theta, sign) {
+  const raw = Math.max(0, sign * Math.sin(theta) * ORIGAMI_LIGHT_X + Math.cos(theta) * ORIGAMI_LIGHT_Z);
+  return ORIGAMI_AMBIENT + (1 - ORIGAMI_AMBIENT) * (raw / ORIGAMI_LIGHT_Z);
+}
+
+/* 陰と光沢の色を、カードの地の色そのものから作る。
+   黒を被せて暗くすると紙が灰色の板になってしまうが、
+   地の色を暗くした色へ寄せれば「同じ紙が翳っている」ように見える。
+   明暗を地の色から導くので、明るいテーマでも暗いテーマでも破綻しない */
+function origamiPaperTones(cs) {
+  const m = /rgba?\(([^)]+)\)/.exec(cs.backgroundColor || "");
+  const base = m
+    ? m[1].split(",").slice(0, 3).map((v) => Math.max(0, Math.min(255, parseFloat(v) || 0)))
+    : [255, 255, 255];
+  return {
+    shadow: base.map((v) => Math.round(v * 0.36)).join(","),
+    light: base.map((v) => Math.round(v + (255 - v) * 0.74)).join(","),
+  };
+}
+
+/* 蛇腹に折られた一枚の紙を描く。
+   panels は元画像を横に切り分けた面の並びで、u0/u1が元画像に対する割合、
+   theta が折り角、sign が山折り(+1)と谷折り(-1)の向き。
+
+   面の横幅をcosθで詰めるだけでは正射影の「潰れ」にしか見えない。
+   面を細い短冊に切り、短冊ごとに奥行きから求めた倍率で高さと横位置を縮めることで、
+   手前に出た面はわずかに大きく、奥に退いた面は小さく写る本物の透視になる。 */
+function origamiDrawSheet(ctx, src, panels, opts) {
+  const W = opts.width, H = opts.height;
+  const cx = opts.centerX, cy = opts.centerY;
+  const D = opts.viewD || ORIGAMI_VIEW_D;
+  const shadeK = opts.shadeK != null ? opts.shadeK : 1;
+  const glowK = opts.glowK != null ? opts.glowK : 1.7;
+  const shadowTone = opts.shadow || "34,32,28";
+  const lightTone = opts.light || "255,252,244";
+  const n = panels.length;
+  /* cosが負になると面が裏返って幅の計算が壊れるので、手前で止める */
+  const thetas = panels.map((p) => Math.max(-1.5, Math.min(1.5, p.theta)));
+
+  /* ---- 1) 折り目の位置を、正射影の横幅と奥行きの2本立てで積み上げる。
+     谷と山が交互に来るので、奥行きはジグザグに前後する ---- */
+  const wx = new Array(n + 1);
+  const wz = new Array(n + 1);
+  wx[0] = 0;
+  wz[0] = 0;
+  for (let i = 0; i < n; i++) {
+    const pw = (panels[i].u1 - panels[i].u0) * W;
+    wx[i + 1] = wx[i] + pw * Math.abs(Math.cos(thetas[i]));
+    wz[i + 1] = wz[i] + panels[i].sign * pw * Math.sin(thetas[i]);
+  }
+  /* 畳んでも紙の重心が画面上で動かないよう、横も奥行きも中心を原点に寄せる */
+  let zSum = 0;
+  for (let i = 0; i <= n; i++) zSum += wz[i];
+  const zMid = zSum / (n + 1);
+  const xLeft = cx - wx[n] / 2;
+
+  /* ---- 2) 短冊の頂点を先に出しておく。紙・陰影・折り目の3回描くので使い回す ---- */
+  const geoms = [];
+  for (let i = 0; i < n; i++) {
+    const span = wx[i + 1] - wx[i];
+    const steps = Math.max(3, Math.min(24, Math.round(span / 5)));
+    const xs = [], tops = [], bots = [];
+    for (let k = 0; k <= steps; k++) {
+      const u = k / steps;
+      const z = wz[i] + (wz[i + 1] - wz[i]) * u - zMid;
+      const s = D / (D + z);
+      const halfH = (H / 2) * s;
+      xs.push(cx + (xLeft + wx[i] + span * u - cx) * s);
+      tops.push(cy - halfH);
+      bots.push(cy + halfH);
+    }
+    geoms.push({ steps, xs, tops, bots });
+  }
+
+  /* ---- 3) 紙そのもの。短冊ごとに元画像を切り出して置く。
+     隣り合う短冊の境目が画素の途中に来ると、両側の縁が半透明に重なって
+     髪の毛ほどの隙間が縦縞として残る。右へ1pxはみ出させて塞ぐが、
+     はみ出しぶんは元画像側も同じ割合だけ広げないと絵が縮んでしまう
+     （はみ出した部分は次の短冊がそのまま上書きするので見た目には出ない） ---- */
+  const srcScale = src.width / W;
+  for (let i = 0; i < n; i++) {
+    const p = panels[i], g = geoms[i];
+    const uSpan = p.u1 - p.u0;
+    for (let k = 0; k < g.steps; k++) {
+      const sx0 = (p.u0 + uSpan * (k / g.steps)) * W * srcScale;
+      const sx1 = (p.u0 + uSpan * ((k + 1) / g.steps)) * W * srcScale;
+      const dx0 = g.xs[k];
+      const dw = g.xs[k + 1] - dx0;
+      if (dw <= 0.02) continue;
+      const last = i === n - 1 && k === g.steps - 1;   // 紙の右端だけは、はみ出させない
+      const ext = last ? 0 : 1;
+      const sw = (sx1 - sx0) * (1 + ext / dw);
+      const top = (g.tops[k] + g.tops[k + 1]) / 2;
+      const bot = (g.bots[k] + g.bots[k + 1]) / 2;
+      ctx.drawImage(src, sx0, 0, Math.max(0.35, sw), src.height, dx0, top, dw + ext, bot - top);
+    }
+  }
+
+  /* ---- 4) 陰影と折り目。source-atopにしないと、角丸の外側の
+     透明な部分まで塗ってしまう ---- */
+  ctx.save();
+  ctx.globalCompositeOperation = "source-atop";
+
+  for (let i = 0; i < n; i++) {
+    const rel = origamiShade(thetas[i], panels[i].sign);
+    if (Math.abs(rel - 1) < 0.004) continue;
+    const g = geoms[i];
+    ctx.beginPath();
+    ctx.moveTo(g.xs[0], g.tops[0] - 1);
+    for (let k = 1; k <= g.steps; k++) ctx.lineTo(g.xs[k], g.tops[k] - 1);
+    for (let k = g.steps; k >= 0; k--) ctx.lineTo(g.xs[k], g.bots[k] + 1);
+    ctx.closePath();
+
+    const dark = rel < 1;
+    const tone = dark ? shadowTone : lightTone;
+    const peak = dark
+      ? Math.min(0.58, (1 - rel) * shadeK)
+      : Math.min(0.3, (rel - 1) * glowK);
+    /* 一様に塗ると平らな板に見えてしまう。実際の紙は完全な平面ではなく、
+       同じ面の中でも手前に出ている側ほど光が回り、奥へ退く側ほど翳る。
+       面の両端の奥行きから濃度に傾きを付けると、紙のたわみが出る */
+    const xA = g.xs[0], xB = g.xs[g.steps];
+    const nearIsLeft = (wz[i] - zMid) <= (wz[i + 1] - zMid);
+    const lit = dark ? 1 - 0.34 : 1 + 0.34;     // 手前側の濃度の倍率
+    const shy = dark ? 1 + 0.34 : 1 - 0.34;     // 奥側の濃度の倍率
+    if (Math.abs(xB - xA) < 0.5) {
+      ctx.fillStyle = `rgba(${tone},${peak})`;
+    } else {
+      const grad = ctx.createLinearGradient(xA, 0, xB, 0);
+      grad.addColorStop(0, `rgba(${tone},${peak * (nearIsLeft ? lit : shy)})`);
+      grad.addColorStop(1, `rgba(${tone},${peak * (nearIsLeft ? shy : lit)})`);
+      ctx.fillStyle = grad;
+    }
+    ctx.fill();
+  }
+
+  /* 折り目。手前に尖る山折りは光を鋭く受けて白く光り、
+     奥へへこむ谷折りは両側の面に挟まれて暗くなる（谷の遮蔽）。
+     まだ折られていない、筋を付けただけの折り目は、
+     窪みの片側が光って片側が翳る細い凹凸（浮き出し）として描く */
+  const score = opts.creaseScore || [];
+  for (let i = 1; i < n; i++) {
+    const gPrev = geoms[i - 1], g = geoms[i];
+    const x = g.xs[0];
+    const top = Math.min(g.tops[0], gPrev.tops[gPrev.steps]) - 1;
+    const bot = Math.max(g.bots[0], gPrev.bots[gPrev.steps]) + 1;
+    const bend = Math.max(Math.abs(Math.sin(thetas[i - 1])), Math.abs(Math.sin(thetas[i])));
+    if (bend > 0.02) {
+      const ridge = wz[i] - zMid <= ((wz[i - 1] - zMid) + (wz[i + 1] - zMid)) / 2;
+      const band = ridge ? 2.6 : 5.5;
+      const color = ridge ? lightTone : shadowTone;
+      const peak = Math.min(ridge ? 0.5 : 0.46, bend * (ridge ? 0.5 : 0.44));
+      const grad = ctx.createLinearGradient(x - band, 0, x + band, 0);
+      grad.addColorStop(0, `rgba(${color},0)`);
+      grad.addColorStop(0.5, `rgba(${color},${peak})`);
+      grad.addColorStop(1, `rgba(${color},0)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x - band, top, band * 2, bot - top);
+    } else if ((score[i - 1] || 0) > 0.01) {
+      const a = score[i - 1] * 0.4;
+      const lit = ctx.createLinearGradient(x - 2.6, 0, x, 0);
+      lit.addColorStop(0, `rgba(${lightTone},0)`);
+      lit.addColorStop(1, `rgba(${lightTone},${a})`);
+      ctx.fillStyle = lit;
+      ctx.fillRect(x - 2.6, top, 2.6, bot - top);
+      const dim = ctx.createLinearGradient(x, 0, x + 2.6, 0);
+      dim.addColorStop(0, `rgba(${shadowTone},${a})`);
+      dim.addColorStop(1, `rgba(${shadowTone},0)`);
+      ctx.fillStyle = dim;
+      ctx.fillRect(x, top, 2.6, bot - top);
+    }
+  }
+  ctx.restore();
+}
+
+/* 単語カードが一枚の紙になり、接辞の境目に筋が入って蛇腹に折り畳まれ、
+   畳まれた紙片がひらりと落ちて見えなくなる（分解アニメ本体） */
+async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  /* 折りは紙を横に縮めるだけなので余白は控えめでよいが、
+     最後に紙片が揺れながら落ちるぶん下側だけ厚く取る */
+  const padX = Math.max(46, rect.width * 0.2);
+  const padTop = Math.max(34, rect.height * 0.7);
+  const padBottom = Math.max(82, rect.height * 1.7);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "origami-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  /* 「紙」そのものの絵。地の色・枠線・文字を含めた、無傷のカードの見た目 */
+  const paperCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr);
+  const tones = origamiPaperTones(cs);
+
+  /* 紙は一度バッファに不透明なまま描いてから、落下ぶんの回転と透明度を
+     まとめて乗せる。短冊を半透明のまま重ねると、重なった1本ぶんだけ
+     濃い縦縞が出てしまうため */
+  const buf = document.createElement("canvas");
+  buf.width = canvas.width;
+  buf.height = canvas.height;
+  const bctx = buf.getContext("2d");
+
+  /* ---- 折り目＝接辞の境目。字送りの実測から求める（不死鳥・細胞分裂と
+     同じ理由で、文字数の比では境目が文字の途中に来てしまう） ---- */
+  const meas = document.createElement("canvas").getContext("2d");
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const textW = meas.measureText(word).width;
+  const textX0 = (rect.width - textW) / 2;
+  let prefix = "";
+  const boundaries = morphemes.slice(0, -1).map((m) => {
+    prefix += m.part || "";
+    return textX0 + meas.measureText(prefix).width;
+  });
+  const edges = [0, ...boundaries, rect.width];
+  const panels = edges.slice(0, -1).map((x, i) => ({
+    u0: x / rect.width,
+    u1: edges[i + 1] / rect.width,
+    sign: i % 2 === 0 ? 1 : -1,     // 山・谷が交互に来るのが蛇腹折り
+    theta: 0,
+  }));
+
+  /* ---- 筋を付ける → 順に折る → 畳まれた紙片が落ちる、の3段構え ---- */
+  const nCrease = panels.length - 1;
+  const T_SCORE0 = 50;
+  const SCORE_STAGGER = 70;
+  const SCORE_MS = 150;
+  const T_FOLD0 = T_SCORE0 + Math.max(0, nCrease - 1) * SCORE_STAGGER + SCORE_MS + 40;
+  /* 面ごとの遅れを折り時間に対して十分短くしておく。1面ずつ順に畳むと
+     動きが細切れになるので、波が伝わるように重ねて畳む */
+  const FOLD_STAGGER = panels.length >= 4 ? 65 : 85;
+  const FOLD_MS = 620;
+  const foldDone = T_FOLD0 + (panels.length - 1) * FOLD_STAGGER + FOLD_MS;
+  const T_FLY = foldDone - 140;     // 畳み終わる手前から落ち始めると動きが途切れない
+  const FLY_MS = 600;
+  const TOTAL_MS = T_FLY + FLY_MS + 60;
+
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bctx.clearRect(0, 0, canvasW, canvasH);
+
+      const flyP = origamiClamp01((t - T_FLY) / FLY_MS);
+      const s = Math.max(0, t - T_FLY) / 1000;    // 落ち始めてからの経過秒
+
+      const score = [];
+      for (let i = 0; i < nCrease; i++) {
+        score.push(origamiClamp01((t - (T_SCORE0 + i * SCORE_STAGGER)) / SCORE_MS));
+      }
+      panels.forEach((p, i) => {
+        const foldP = origamiEaseInOut(origamiClamp01((t - (T_FOLD0 + i * FOLD_STAGGER)) / FOLD_MS));
+        /* 落ちていく間、紙は空気を受けてわずかに開いたり閉じたりしながら、
+           さらに畳まって小さくなっていく */
+        const flex = flyP > 0 ? flyP * (0.2 + 0.08 * Math.sin(t * 0.011 + i * 1.4)) : 0;
+        p.theta = ORIGAMI_THETA_MAX * foldP + flex;
+      });
+
+      origamiDrawSheet(bctx, paperCanvas, panels, {
+        width: rect.width,
+        height: rect.height,
+        centerX: padX + rect.width / 2,
+        centerY: padTop + rect.height / 2,
+        shadow: tones.shadow,
+        light: tones.light,
+        creaseScore: score,
+      });
+
+      /* 畳まれた紙片が、左右に揺れながら落ちて薄れる */
+      const fade = 1 - origamiEaseInOut(origamiClamp01((flyP - 0.26) / 0.74));
+      if (fade > 0.004) {
+        const ax = padX + rect.width / 2;
+        const ay = padTop + rect.height / 2;
+        ctx.save();
+        ctx.translate(ax + Math.sin(s * 7.4) * 17 * flyP, ay + 150 * s * s + 24 * s);
+        ctx.rotate(Math.sin(s * 6.1 + 0.6) * 0.26 * flyP);
+        ctx.translate(-ax, -ay);
+        ctx.globalAlpha = fade;
+        ctx.drawImage(buf, 0, 0, canvasW, canvasH);
+        ctx.restore();
+      }
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが、畳まれた紙片からひらいて現れる（単語側の折りと対になる逆再生）。
+   開ききったところで紙がわずかに反り返って落ち着く */
+async function runOrigamiTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(24, rect.width * 0.3);
+  const padTop = Math.max(28, rect.height * 0.6);
+  const padBottom = Math.max(20, rect.height * 0.4);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "origami-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const partText = partEl ? partEl.textContent : "";
+  const paperCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
+  const tones = origamiPaperTones(cs);
+
+  const buf = document.createElement("canvas");
+  buf.width = canvas.width;
+  buf.height = canvas.height;
+  const bctx = buf.getContext("2d");
+
+  /* 3つに畳まれた紙片として現れ、開いて1枚のカードに戻る */
+  const N = 3;
+  const panels = Array.from({ length: N }, (_, i) => ({
+    u0: i / N,
+    u1: (i + 1) / N,
+    sign: i % 2 === 0 ? 1 : -1,
+    theta: ORIGAMI_THETA_MAX,
+  }));
+
+  /* 開き始める前にひと呼吸だけ畳まれた姿を見せる。すぐ開くと
+     「紙が畳まれていた」ことに気づけないまま終わってしまう */
+  const HOLD_MS = 70;
+  const OPEN_MS = 520;
+  const TOTAL_MS = HOLD_MS + OPEN_MS + 140;
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bctx.clearRect(0, 0, canvasW, canvasH);
+
+      const raw = origamiClamp01((t - HOLD_MS) / OPEN_MS);
+      const openP = origamiEaseOutBack(raw);
+      panels.forEach((p) => { p.theta = ORIGAMI_THETA_MAX * (1 - openP); });
+
+      origamiDrawSheet(bctx, paperCanvas, panels, {
+        width: rect.width,
+        height: rect.height,
+        centerX: padX + rect.width / 2,
+        centerY: padTop + rect.height / 2,
+        shadow: tones.shadow,
+        light: tones.light,
+      });
+
+      /* 畳まれているうちは少し浮いて斜めに、開くにつれて所定の位置へ落ち着く */
+      const settle = 1 - origamiEaseOut(raw);
+      const ax = padX + rect.width / 2;
+      const ay = padTop + rect.height / 2;
+      ctx.save();
+      ctx.translate(ax, ay - 11 * settle);
+      ctx.rotate(-0.13 * settle);
+      ctx.translate(-ax, -ay);
+      ctx.globalAlpha = Math.min(1, t / 110);
+      ctx.drawImage(buf, 0, 0, canvasW, canvasH);
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -6378,6 +6818,32 @@ const DECOMPOSE_ANIM_STYLES = {
     mountTile(el, i) {
       if (reducedMotion()) return;
       runPhoenixTileResolve(el, i * 130);
+    },
+  },
+
+  origami: {
+    label: "折り紙",
+    tileClass: "origami-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語カードが一枚の紙になり、接辞の境目に折り筋が入って
+       順に蛇腹へ畳まれ、畳まれた紙片がひらりと落ちて消える */
+    async intro(placeholder, word, morphemes) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runOrigamiDissolve(placeholder, word, morphemes, rect);
+    },
+    /* 接辞カードが、畳まれた紙片からひらいて現れる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runOrigamiTileResolve(el, i * 110);
     },
   },
 };
@@ -9247,7 +9713,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "195";
+const APP_BUILD = "196";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
