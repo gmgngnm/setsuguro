@@ -9247,7 +9247,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "194";
+const APP_BUILD = "195";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
