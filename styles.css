@@ -189,6 +189,11 @@ button{font-family:inherit;cursor:pointer;}
      ごく短い馴染みだけ持たせる */
   animation:phoenixTileIn .4s ease both;
 }
+.morph.origami-in{
+  /* 実体はcanvasの紙が担うので、こちらは最後に置き換わるときの
+     ごく短い馴染みだけ持たせる */
+  animation:origamiTileIn .38s ease both;
+}
 .morph.prism-in{
   animation:prismTileIn .6s ease both;
 }
@@ -208,6 +213,7 @@ button{font-family:inherit;cursor:pointer;}
 .prism-canvas{position:absolute;pointer-events:none;}
 .mitosis-canvas{position:absolute;pointer-events:none;}
 .phoenix-canvas{position:absolute;pointer-events:none;}
+.origami-canvas{position:absolute;pointer-events:none;}
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
 @keyframes shake{
@@ -242,6 +248,11 @@ button{font-family:inherit;cursor:pointer;}
   from{ opacity:0; transform:scale(.94); }
   to{ opacity:1; transform:scale(1); }
 }
+/* 紙が開ききる分はcanvas側が持つので、こちらは馴染ませるだけ */
+@keyframes origamiTileIn{
+  from{ opacity:0; }
+  to{ opacity:1; }
+}
 @keyframes cardFlipOut{
   from{ transform:perspective(600px) rotateY(0deg); }
   to{ transform:perspective(600px) rotateY(90deg); }
@@ -275,7 +286,7 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 @media (prefers-reduced-motion: reduce){
-  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.prism-in, .morph.mitosis-in, .morph.phoenix-in,
+  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.prism-in, .morph.mitosis-in, .morph.phoenix-in, .morph.origami-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
   .trash-can.show, .spinner, .goro-loading-dots::after,
   .letter-fix{animation:none;}
