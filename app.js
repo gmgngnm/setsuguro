@@ -1088,8 +1088,10 @@ const AI_ADAPTERS = {
           generationConfig,
         }),
       });
+      captureRateLimitHeaders(res);
       if (!res.ok) {
         const detail = await extractErrorDetail(res);
+        if (res.status === 429) recordQuotaHit().catch((e) => console.warn("使用量の記録に失敗しました:", e));
         if (res.status === 400 && generationConfig.thinkingConfig && /thinking/i.test(detail)) {
           console.warn("Geminiが思考レベルの指定を受け付けなかったため、指定なしでやり直します:", detail);
           this.thinkingSupported = false;
@@ -2112,11 +2114,72 @@ async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoi
   return fallback.candidates;
 }
 
+/* ---- 使用量の記録 ----
+   Geminiの開発者APIには「残りいくつ使えるか」を問い合わせる口が無い。
+   応答のレート制限ヘッダが読めればそれが唯一の実数なので拾い、読めない
+   場合に備えて、この端末から投げた回数を自分で数えておく。
+   無料枠の1日あたりの上限は太平洋時間の深夜にリセットされるので、
+   端末の日付ではなくその境目で区切らないと数が合わない */
+const USAGE_KEY = "usage_stats";
+const USAGE_RESET_TIMEZONE = "America/Los_Angeles";
+
+function usageDayKey(at = Date.now()) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: USAGE_RESET_TIMEZONE }).format(new Date(at));
+  } catch (err) {
+    /* タイムゾーンを扱えない環境では端末の日付で代用する（ずれても数え
+       直しが起きるだけで、機能は止まらない） */
+    return new Date(at).toISOString().slice(0, 10);
+  }
+}
+
+function emptyUsageStats(day) {
+  return { day, calls: 0, tokens: 0, recent: [], quotaHitAt: 0 };
+}
+
+async function loadUsageStats() {
+  const today = usageDayKey();
+  const raw = await kvGet(USAGE_KEY, null);
+  if (!raw || raw.day !== today) return emptyUsageStats(today);
+  return { ...emptyUsageStats(today), ...raw };
+}
+
+/* 直近1分の呼び出し数（RPMの目安）。古い記録は捨てる */
+function trimRecent(recent, now = Date.now()) {
+  return (recent || []).filter((t) => now - t < 60000).slice(-200);
+}
+
 async function bumpUsage(tokens) {
-  const calls = (await kvGet("usage_calls", 0)) + 1;
-  const total = (await kvGet("usage_tokens", 0)) + (tokens || 0);
-  await kvSet("usage_calls", calls);
-  await kvSet("usage_tokens", total);
+  const now = Date.now();
+  const stats = await loadUsageStats();
+  stats.calls += 1;
+  stats.tokens += tokens || 0;
+  stats.recent = trimRecent(stats.recent, now).concat(now);
+  await kvSet(USAGE_KEY, stats);
+}
+
+async function recordQuotaHit() {
+  const stats = await loadUsageStats();
+  stats.quotaHitAt = Date.now();
+  await kvSet(USAGE_KEY, stats);
+}
+
+/* サーバが返すレート制限ヘッダ。CORSで公開されていない場合はnullのままに
+   なるので、読めたときだけ実数として扱う */
+let rateLimitSnapshot = null;
+
+function captureRateLimitHeaders(res) {
+  const num = (name) => {
+    const raw = res.headers.get(name);
+    if (raw === null || raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const remainingRequests = num("x-ratelimit-remaining-requests");
+  const remainingTokens = num("x-ratelimit-remaining-tokens");
+  const resetRequests = num("x-ratelimit-reset-requests");
+  if (remainingRequests === null && remainingTokens === null) return;
+  rateLimitSnapshot = { remainingRequests, remainingTokens, resetRequests, at: Date.now() };
 }
 
 /* ------------------------------------------------------------------ *
@@ -6465,11 +6528,57 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   await refreshGeminiKeyAvailability();
 });
 
+/* 次に1日あたりの上限がリセットされる時刻（太平洋時間の深夜）を、
+   端末の時刻表記で返す */
+function nextQuotaResetText() {
+  const now = new Date();
+  for (let i = 1; i <= 2; i++) {
+    const candidate = new Date(now.getTime() + i * 86400000);
+    if (usageDayKey(candidate.getTime()) !== usageDayKey(now.getTime())) {
+      /* その日の境目を分単位で詰める */
+      let lo = now.getTime();
+      let hi = candidate.getTime();
+      const today = usageDayKey(lo);
+      while (hi - lo > 60000) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (usageDayKey(mid) === today) lo = mid; else hi = mid;
+      }
+      return new Date(hi).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
+  }
+  return "";
+}
+
 async function refreshUsageDisplay() {
-  const calls = await kvGet("usage_calls", 0);
-  const tokens = await kvGet("usage_tokens", 0);
-  document.getElementById("usage-calls").textContent = `${calls} 回`;
-  document.getElementById("usage-tokens").textContent = `約 ${tokens.toLocaleString()}`;
+  const stats = await loadUsageStats();
+  const perMinute = trimRecent(stats.recent).length;
+
+  const callsEl = document.getElementById("usage-calls");
+  const tokensEl = document.getElementById("usage-tokens");
+  const remainEl = document.getElementById("usage-remaining");
+  const noteEl = document.getElementById("usage-note");
+  if (!callsEl) return;
+
+  callsEl.textContent = `${stats.calls} 回（直近1分 ${perMinute} 回）`;
+  tokensEl.textContent = stats.tokens.toLocaleString();
+
+  /* 残量はサーバが教えてくれたときだけ実数を出す。教えてくれない場合に
+     推測値を出すと、当たっているように見えて外れるので出さない */
+  if (rateLimitSnapshot && rateLimitSnapshot.remainingRequests !== null) {
+    remainEl.textContent = `あと ${rateLimitSnapshot.remainingRequests} 回`;
+  } else if (stats.quotaHitAt) {
+    const at = new Date(stats.quotaHitAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    remainEl.textContent = `${at} に上限到達`;
+  } else {
+    remainEl.textContent = "API非公開";
+  }
+
+  const reset = nextQuotaResetText();
+  noteEl.textContent = [
+    "回数はこの端末から投げた分だけの集計です（他の端末やAI Studioからの利用は含みません）。",
+    reset ? `1日あたりの上限は ${reset} ごろにリセットされます。` : "",
+    "残り回数はGeminiが応答で教えてくれたときだけ表示されます。正確な使用状況は Google AI Studio の Usage 画面でご確認ください。",
+  ].filter(Boolean).join("");
 }
 
 /* ------------------------------------------------------------------ *
@@ -8040,7 +8149,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "192";
+const APP_BUILD = "193";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
