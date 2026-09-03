@@ -20,6 +20,8 @@ function goroLoadingHtml(label, suffix = "") {
    語呂合わせの実況表示のどちらからも同じ確率で抽選する */
 const LOADING_EASTER_EGGS = ["少女祈祷中", "少女瞑想中"];
 const LOADING_EASTER_EGG_CHANCE = 0.02;
+/* 引いたときに読める程度は残す時間 */
+const EASTER_EGG_LINGER_MS = 700;
 
 /* 接辞分解の待ち時間表示。実際の分解はAIへの単発の問い合わせで
    内部の工程を観測できないため、こちらは「それらしい」工程名を
@@ -33,7 +35,7 @@ const DECOMPOSE_LOADING_STEPS = [
   "既知の接辞と照合中", "暗記のヒントを組み立て中", "自動修正を確認中",
 ];
 /* 早送り時（分解自体は先に終わっている場合）の1工程あたりの表示時間 */
-const DECOMPOSE_LOADING_FAST_MS = [80, 180];
+const DECOMPOSE_LOADING_FAST_MS = [40, 110];
 
 function decomposeStepDwellRange(index, total) {
   const t = total > 1 ? index / (total - 1) : 0;
@@ -92,16 +94,23 @@ function startDecomposeLoadingSequence(containerId, writePhrase) {
   };
 
   const showStep = () => {
-    const phrase = Math.random() < LOADING_EASTER_EGG_CHANCE
+    /* イースターエッグは最後の工程だけに出す。途中に混ぜると、本物の工程が
+       1つ飛ばされたように見えてしまうため */
+    const isLastStep = stepIndex === total - 1;
+    const isEasterEgg = isLastStep && Math.random() < LOADING_EASTER_EGG_CHANCE;
+    const phrase = isEasterEgg
       ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
       : DECOMPOSE_LOADING_STEPS[stepIndex % total];
     write(phrase);
 
     stepIndex++;
     if (stepIndex >= total) {
-      /* 全工程を出し切ったので、ここで初めて呼び出し側に完了を知らせる */
+      /* 全工程を出し切ったので、ここで初めて呼び出し側に完了を知らせる。
+         ただしイースターエッグを引いた場合、最後の工程は早送り中のことが
+         多く一瞬で消えてしまう。せっかく出たので読める程度には残す */
       activeLoadingRotations.delete(containerId);
-      resolveDone();
+      if (isEasterEgg) setTimeout(resolveDone, EASTER_EGG_LINGER_MS);
+      else resolveDone();
       return;
     }
     scheduleNext();
@@ -1035,18 +1044,35 @@ const AI_ADAPTERS = {
   gemini: {
     label: "Gemini",
     modelsUrl: `${GEMINI_API_BASE}/models?pageSize=200`,
-    async chat(apiKey, systemPrompt, userPrompt, temperature) {
+    /* Gemini 3系は既定が thinkingLevel:"high"（じっくり考えてから答える）。
+       語呂合わせのように制約を満たす答えを探す工程では効くが、接辞分解は
+       知識の引き出しと定型の穴埋めが中心で、思考にかけた時間がそのまま
+       待ち時間になる。工程ごとに使い分ける。
+       モデルによっては受け付けず400を返すため、その場合は一度だけ外して
+       やり直し、機能自体は止めない（以前Groqの推論パラメータで同じ手当てを
+       していたのと同じ考え方） */
+    thinkingSupported: true,
+    async chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel) {
+      const generationConfig = { responseMimeType: "application/json", temperature };
+      if (thinkingLevel && this.thinkingSupported) {
+        generationConfig.thinkingConfig = { thinkingLevel };
+      }
       const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL}:generateContent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature },
+          generationConfig,
         }),
       });
       if (!res.ok) {
         const detail = await extractErrorDetail(res);
+        if (res.status === 400 && generationConfig.thinkingConfig && /thinking/i.test(detail)) {
+          console.warn("Geminiが思考レベルの指定を受け付けなかったため、指定なしでやり直します:", detail);
+          this.thinkingSupported = false;
+          return this.chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel);
+        }
         throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
       }
       const json = await res.json();
@@ -1260,7 +1286,13 @@ function isJsonValidationFailure(err) {
   return /failed to validate json|json_validate_failed/i.test(err.message || "");
 }
 
-async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9) {
+/* 思考レベル。minimalは待ち時間が最短、highは既定でいちばん深く考える。
+   分解のように答えが知識で決まる工程はminimal、語呂合わせのように探索が
+   要る工程は既定(high)のまま、という使い分けをする */
+const THINKING_MINIMAL = "minimal";
+const THINKING_LOW = "low";
+
+async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, thinkingLevel = null) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
   if (!apiKey) throw new Error("APIキーが設定されていません");
@@ -1268,7 +1300,7 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
   let lastErr;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature);
+      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel);
       await bumpUsage(tokens);
       return extractJson(text);
     } catch (err) {
@@ -1401,7 +1433,7 @@ function notifyDecomposeFallback(err) {
 async function decomposeWord(word, provider, apiKey) {
   try {
     const sys = decomposeSystemPrompt(word);
-    const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2);
+    const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2, THINKING_MINIMAL);
     if (json.word_exists === false) {
       return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: [] };
     }
@@ -1414,7 +1446,7 @@ async function decomposeWord(word, provider, apiKey) {
     if (!wordMeaning || !wordPhonetic || !memoryTip || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
       try {
         const retryPrompt = `単語: ${word}\n前回の応答ではword_meaning/word_phonetic/memory_tipや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
-        const retryJson = await callAI(provider, apiKey, sys, retryPrompt, 0.2);
+        const retryJson = await callAI(provider, apiKey, sys, retryPrompt, 0.2, THINKING_MINIMAL);
         const retryMorphemes = await reconcileWithLocalDict(retryJson.morphemes, provider, apiKey);
         if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
         if (!wordMeaning) wordMeaning = retryJson.word_meaning || "";
@@ -1557,7 +1589,7 @@ async function fillRequiredSegmentation(word, requiredParts, memoryTip, provider
     "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
     '{"morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}',
   ].filter(Boolean).join("\n");
-  const json = await callAI(provider, apiKey, sys, "確定した分割のまま、各要素の情報を埋めてJSON形式で出力してください。", 0.2);
+  const json = await callAI(provider, apiKey, sys, "確定した分割のまま、各要素の情報を埋めてJSON形式で出力してください。", 0.2, THINKING_MINIMAL);
   return reconcileWithLocalDict(json.morphemes, provider, apiKey);
 }
 
@@ -1567,6 +1599,14 @@ async function validateDecomposition(word, morphemes, provider, apiKey, memoryTi
      それに従っているかどうかまで検証する。検出しても強制しなければ、
      AIが「問題なし」と判断した時点で分割不足がそのまま通ってしまう */
   const requiredParts = requiredSegmentation(word, morphemes, memoryTip);
+  const hints = findUnderSplitHints(word, morphemes, memoryTip);
+  /* 校閲パスの主な仕事は分割不足の是正で、その疑いは findLeftoverAffixes と
+     memory_tipとの矛盾でこちら側から機械的に見つけられる。何も引っかから
+     なかった場合、校閲は「念のためもう一度全部見る」だけの汎用パスになり、
+     1語につきAIの往復が丸ごと1回増える割に得るものが薄い。疑わしい点が
+     あるときだけ走らせる */
+  if (!hints.length && !requiredParts) return morphemes;
+
   const accept = (revised) => {
     if (!revised.length) return false;
     if (revised.map((m) => m.part).join("").toLowerCase() !== word.toLowerCase()) return false;
@@ -1574,8 +1614,8 @@ async function validateDecomposition(word, morphemes, provider, apiKey, memoryTi
   };
 
   try {
-    const sys = decomposeValidationPrompt(word, morphemes, findUnderSplitHints(word, morphemes, memoryTip), requiredParts);
-    const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2);
+    const sys = decomposeValidationPrompt(word, morphemes, hints, requiredParts);
+    const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2, THINKING_LOW);
     const revised = await reconcileWithLocalDict(json.morphemes, provider, apiKey);
     if (accept(revised)) return revised;
 
@@ -2143,7 +2183,7 @@ async function batchDecomposeWords(words, provider, apiKey) {
 
   let json;
   try {
-    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(words), 0.2);
+    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(words), 0.2, THINKING_MINIMAL);
   } catch (err) {
     console.warn("まとめ分解に失敗しました。1語ずつの経路で処理します:", err);
     for (const word of words) await fallbackToSingle(word);
@@ -2208,7 +2248,7 @@ async function batchValidateDecompositions(entries, provider, apiKey) {
   if (!targets.length) return;
 
   try {
-    const json = await callAI(provider, apiKey, BATCH_DECOMPOSE_VALIDATION_SYS, batchDecomposeValidationUserPrompt(targets), 0.2);
+    const json = await callAI(provider, apiKey, BATCH_DECOMPOSE_VALIDATION_SYS, batchDecomposeValidationUserPrompt(targets), 0.2, THINKING_LOW);
     const byWord = indexAiResultsByWord(json.results, targets.map((t) => t.result.correctedWord));
     for (const t of targets) {
       const row = byWord.get(t.result.correctedWord.toLowerCase());
@@ -5691,7 +5731,7 @@ function relatedWordsPrompt(morpheme, excludeWords, count) {
 async function findRelatedWordsViaAI(morpheme, excludeWords, count, provider, apiKey) {
   try {
     const sys = relatedWordsPrompt(morpheme, excludeWords, count);
-    const json = await callAI(provider, apiKey, sys, "実在する単語をJSON形式で出力してください。", 0.5);
+    const json = await callAI(provider, apiKey, sys, "実在する単語をJSON形式で出力してください。", 0.5, THINKING_MINIMAL);
     const words = Array.isArray(json.words) ? json.words : [];
     const excludeLower = new Set(excludeWords.map((w) => w.toLowerCase()));
     const seen = new Set();
@@ -7956,7 +7996,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "190";
+const APP_BUILD = "191";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
