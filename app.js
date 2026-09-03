@@ -6233,9 +6233,10 @@ const ORIGAMI_LIGHT_Z = 0.85;
 /* 陰に回った面が黒く沈みきらないための環境光。紙は一灯ではなく部屋全体の
    光を受けるので、ここが低すぎると畳んだ紙片が灰色の塊になってしまう */
 const ORIGAMI_AMBIENT = 0.58;
-/* 畳み切った角度(約71°)。これ以上折ると紙は幅を失って、
-   何が畳まれているのか分からない細片になってしまう */
-const ORIGAMI_THETA_MAX = 1.24;
+/* 畳み切った角度(約86°)。ここまで折ると紙は幅を失い、何が畳まれているのか
+   分からない細片になる。その細片がそのまま接辞カードとして開くので、
+   単語側の畳み終わりと接辞側の畳み始まりは同じ角度でなければならない */
+const ORIGAMI_THETA_MAX = 1.5;
 
 const origamiEaseOut = (p) => 1 - Math.pow(1 - p, 3);
 const origamiEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
@@ -6288,7 +6289,7 @@ function origamiDrawSheet(ctx, src, panels, opts) {
   const lightTone = opts.light || "255,252,244";
   const n = panels.length;
   /* cosが負になると面が裏返って幅の計算が壊れるので、手前で止める */
-  const thetas = panels.map((p) => Math.max(-1.5, Math.min(1.5, p.theta)));
+  const thetas = panels.map((p) => Math.max(-1.52, Math.min(1.52, p.theta)));
 
   /* ---- 1) 折り目の位置を、正射影の横幅と奥行きの2本立てで積み上げる。
      谷と山が交互に来るので、奥行きはジグザグに前後する ---- */
@@ -6426,6 +6427,11 @@ function origamiDrawSheet(ctx, src, panels, opts) {
   ctx.restore();
 }
 
+/* 畳み切った紙片が画面のどこに、どれだけの高さで残ったか。
+   接辞カードはこの紙片がそのまま開いたものとして現れるので、
+   単語側の畳み終わりの位置をカード側へ引き継ぐ必要がある */
+let origamiPacket = null;
+
 /* 単語カードが一枚の紙になり、接辞の境目に筋が入って蛇腹に折り畳まれ、
    畳まれた紙片がひらりと落ちて見えなくなる（分解アニメ本体） */
 async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
@@ -6458,14 +6464,6 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
   const paperCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr);
   const tones = origamiPaperTones(cs);
 
-  /* 紙は一度バッファに不透明なまま描いてから、落下ぶんの回転と透明度を
-     まとめて乗せる。短冊を半透明のまま重ねると、重なった1本ぶんだけ
-     濃い縦縞が出てしまうため */
-  const buf = document.createElement("canvas");
-  buf.width = canvas.width;
-  buf.height = canvas.height;
-  const bctx = buf.getContext("2d");
-
   /* ---- 折り目＝接辞の境目。字送りの実測から求める（不死鳥・細胞分裂と
      同じ理由で、文字数の比では境目が文字の途中に来てしまう） ---- */
   const meas = document.createElement("canvas").getContext("2d");
@@ -6485,7 +6483,8 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
     theta: 0,
   }));
 
-  /* ---- 筋を付ける → 順に折る → 畳まれた紙片が落ちる、の3段構え ---- */
+  /* ---- 筋を付ける → 順に折る → 畳み切った紙片のまま留まる、の3段構え。
+     紙片は消さずに残し、そのまま接辞カードとして開かせる ---- */
   const nCrease = panels.length - 1;
   const T_SCORE0 = 50;
   const SCORE_STAGGER = 70;
@@ -6496,9 +6495,10 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
   const FOLD_STAGGER = panels.length >= 4 ? 65 : 85;
   const FOLD_MS = 620;
   const foldDone = T_FOLD0 + (panels.length - 1) * FOLD_STAGGER + FOLD_MS;
-  const T_FLY = foldDone - 140;     // 畳み終わる手前から落ち始めると動きが途切れない
-  const FLY_MS = 600;
-  const TOTAL_MS = T_FLY + FLY_MS + 60;
+  /* 畳み切った姿をひと呼吸だけ見せる。ここで「何が畳まれているのか
+     分からない一本の紙片」になったことが伝わってから、開きに移る */
+  const SHUT_HOLD_MS = 170;
+  const TOTAL_MS = foldDone + SHUT_HOLD_MS;
 
   const start = performance.now();
 
@@ -6507,11 +6507,6 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
       const t = Math.max(0, now - start);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, canvasW, canvasH);
-      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      bctx.clearRect(0, 0, canvasW, canvasH);
-
-      const flyP = origamiClamp01((t - T_FLY) / FLY_MS);
-      const s = Math.max(0, t - T_FLY) / 1000;    // 落ち始めてからの経過秒
 
       const score = [];
       for (let i = 0; i < nCrease; i++) {
@@ -6519,13 +6514,10 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
       }
       panels.forEach((p, i) => {
         const foldP = origamiEaseInOut(origamiClamp01((t - (T_FOLD0 + i * FOLD_STAGGER)) / FOLD_MS));
-        /* 落ちていく間、紙は空気を受けてわずかに開いたり閉じたりしながら、
-           さらに畳まって小さくなっていく */
-        const flex = flyP > 0 ? flyP * (0.2 + 0.08 * Math.sin(t * 0.011 + i * 1.4)) : 0;
-        p.theta = ORIGAMI_THETA_MAX * foldP + flex;
+        p.theta = ORIGAMI_THETA_MAX * foldP;
       });
 
-      origamiDrawSheet(bctx, paperCanvas, panels, {
+      origamiDrawSheet(ctx, paperCanvas, panels, {
         width: rect.width,
         height: rect.height,
         centerX: padX + rect.width / 2,
@@ -6535,49 +6527,58 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
         creaseScore: score,
       });
 
-      /* 畳まれた紙片が、左右に揺れながら落ちて薄れる */
-      const fade = 1 - origamiEaseInOut(origamiClamp01((flyP - 0.26) / 0.74));
-      if (fade > 0.004) {
-        const ax = padX + rect.width / 2;
-        const ay = padTop + rect.height / 2;
-        ctx.save();
-        ctx.translate(ax + Math.sin(s * 7.4) * 17 * flyP, ay + 150 * s * s + 24 * s);
-        ctx.rotate(Math.sin(s * 6.1 + 0.6) * 0.26 * flyP);
-        ctx.translate(-ax, -ay);
-        ctx.globalAlpha = fade;
-        ctx.drawImage(buf, 0, 0, canvasW, canvasH);
-        ctx.restore();
+      if (t >= TOTAL_MS) {
+        /* 畳み切った紙片の居場所を、画面がスクロールしても狂わない座標で残す。
+           接辞カードはこの一点から開き出す */
+        const box = canvas.getBoundingClientRect();
+        origamiPacket = {
+          x: box.left + window.scrollX + padX + rect.width / 2,
+          y: box.top + window.scrollY + padTop + rect.height / 2,
+          height: rect.height,
+          at: performance.now(),
+        };
+        resolve();
+        return;
       }
-
-      if (t >= TOTAL_MS) { resolve(); return; }
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
   });
 }
 
-/* 接辞カードが、畳まれた紙片からひらいて現れる（単語側の折りと対になる逆再生）。
+/* 単語が畳み切られた紙片が、そのまま接辞カードとして開く。
+   カードごとに紙片を同じ一点に描くので、画面上では1本の紙片に重なって見え、
+   そこから順に1枚ずつ開き出しては、自分の居場所へ収まっていく。
    開ききったところで紙がわずかに反り返って落ち着く */
 async function runOrigamiTileResolve(el, delayMs) {
   await ensureMorphFontLoaded();
   el.style.position = "relative";
+  if (!el.isConnected) return;
   const rect = { width: el.offsetWidth, height: el.offsetHeight };
   const partEl = el.querySelector(".morph-part");
   const elBox = el.getBoundingClientRect();
   const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
   const partCenterY = partBox.top - elBox.top + partBox.height / 2;
 
+  /* 待たずにすぐ紙片を描き始める。開くのだけを遅らせることで、
+     まだ開いていないカードも紙片として画面に残り、
+     「1本の紙片から順に開いていく」ように見える */
   el.style.visibility = "hidden";
-  if (delayMs > 0) await sleep(delayMs);
-  if (!el.isConnected) return;
 
   const cs = getComputedStyle(el);
   const partCs = partEl ? getComputedStyle(partEl) : cs;
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
-  const padX = Math.max(24, rect.width * 0.3);
-  const padTop = Math.max(28, rect.height * 0.6);
-  const padBottom = Math.max(20, rect.height * 0.4);
+  /* 直前に畳み切った紙片の位置。単語側の演出を経ていなければ、その場で開く */
+  const packet = origamiPacket && performance.now() - origamiPacket.at < 1500 ? origamiPacket : null;
+  const fromX = packet ? packet.x - (elBox.left + window.scrollX + rect.width / 2) : 0;
+  const fromY = packet ? packet.y - (elBox.top + window.scrollY + rect.height / 2) : 0;
+  const fromH = packet ? packet.height : rect.height;
+
+  /* 紙片は自分のカードの外から現れるので、その分だけ余白を広げる */
+  const padX = Math.max(24, rect.width * 0.3, Math.abs(fromX) + 30);
+  const padTop = Math.max(28, rect.height * 0.6, Math.abs(fromY) + 26);
+  const padBottom = Math.max(20, rect.height * 0.4, Math.abs(fromY) + 26);
   const canvasW = rect.width + padX * 2;
   const canvasH = rect.height + padTop + padBottom;
 
@@ -6611,11 +6612,13 @@ async function runOrigamiTileResolve(el, delayMs) {
     theta: ORIGAMI_THETA_MAX,
   }));
 
-  /* 開き始める前にひと呼吸だけ畳まれた姿を見せる。すぐ開くと
-     「紙が畳まれていた」ことに気づけないまま終わってしまう */
-  const HOLD_MS = 70;
+  /* 自分の番が来るまでは畳まれた紙片のまま待ち、来たら開く。
+     どのカードも最初のひと呼吸は開かないので、単語が畳み切られた紙片が
+     置き換わった直後にもそのまま残って見える */
+  const SHUT_HOLD_MS = 80;
   const OPEN_MS = 520;
-  const TOTAL_MS = HOLD_MS + OPEN_MS + 140;
+  const wait = SHUT_HOLD_MS + delayMs;
+  const TOTAL_MS = wait + OPEN_MS + 140;
   const start = performance.now();
 
   await new Promise((resolve) => {
@@ -6626,28 +6629,30 @@ async function runOrigamiTileResolve(el, delayMs) {
       bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       bctx.clearRect(0, 0, canvasW, canvasH);
 
-      const raw = origamiClamp01((t - HOLD_MS) / OPEN_MS);
+      const raw = origamiClamp01((t - wait) / OPEN_MS);
       const openP = origamiEaseOutBack(raw);
       panels.forEach((p) => { p.theta = ORIGAMI_THETA_MAX * (1 - openP); });
 
+      /* 開くにつれて、紙片の居場所から自分の居場所へ移りながら、
+         単語カードの背丈から自分の背丈へ伸びる */
+      const travel = 1 - origamiEaseInOut(raw);
       origamiDrawSheet(bctx, paperCanvas, panels, {
         width: rect.width,
-        height: rect.height,
-        centerX: padX + rect.width / 2,
-        centerY: padTop + rect.height / 2,
+        height: fromH + (rect.height - fromH) * (1 - travel),
+        centerX: padX + rect.width / 2 + fromX * travel,
+        centerY: padTop + rect.height / 2 + fromY * travel,
         shadow: tones.shadow,
         light: tones.light,
       });
 
-      /* 畳まれているうちは少し浮いて斜めに、開くにつれて所定の位置へ落ち着く */
+      /* 開ききるまではわずかに傾いていて、開くにつれて水平に落ち着く */
       const settle = 1 - origamiEaseOut(raw);
-      const ax = padX + rect.width / 2;
-      const ay = padTop + rect.height / 2;
+      const ax = padX + rect.width / 2 + fromX * travel;
+      const ay = padTop + rect.height / 2 + fromY * travel;
       ctx.save();
-      ctx.translate(ax, ay - 11 * settle);
-      ctx.rotate(-0.13 * settle);
+      ctx.translate(ax, ay);
+      ctx.rotate(-0.11 * settle);
       ctx.translate(-ax, -ay);
-      ctx.globalAlpha = Math.min(1, t / 110);
       ctx.drawImage(buf, 0, 0, canvasW, canvasH);
       ctx.restore();
 
@@ -6840,10 +6845,10 @@ const DECOMPOSE_ANIM_STYLES = {
       placeholder.style.position = "relative";
       await runOrigamiDissolve(placeholder, word, morphemes, rect);
     },
-    /* 接辞カードが、畳まれた紙片からひらいて現れる */
+    /* 畳み切った紙片が、接辞カードとして1枚ずつ開いて現れる */
     mountTile(el, i) {
       if (reducedMotion()) return;
-      runOrigamiTileResolve(el, i * 110);
+      runOrigamiTileResolve(el, i * 150);
     },
   },
 };
@@ -9713,7 +9718,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "196";
+const APP_BUILD = "197";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
