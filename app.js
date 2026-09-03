@@ -4607,10 +4607,11 @@ function prismFlashSprite() {
   return c;
 }
 
-/* 無傷のカードの見た目をオフスクリーンに一度だけ描き出す（分光・粒子化の元絵）。
+/* 無傷のカードの見た目をオフスクリーンに一度だけ描き出す。分光・粒子化・
+   細胞分裂など、カードを素材として加工する演出が共通で使う。
    filled=false では地の塗りを省いて枠線と文字だけにする。小さい接辞カードでは
    塗りごと7枚を加算合成すると中が真っ白に飛んでしまうため、そちらを使う */
-function prismRenderCard(cs, text, textCs, rect, textCenterY, dpr, filled = true) {
+function renderCardOffscreen(cs, text, textCs, rect, textCenterY, dpr, filled = true, stroked = true) {
   const c = document.createElement("canvas");
   c.width = Math.round(rect.width * dpr);
   c.height = Math.round(rect.height * dpr);
@@ -4623,9 +4624,11 @@ function prismRenderCard(cs, text, textCs, rect, textCenterY, dpr, filled = true
     g.fillStyle = cs.backgroundColor;
     g.fill();
   }
-  g.lineWidth = borderWidth;
-  g.strokeStyle = cs.borderTopColor;
-  g.stroke();
+  if (stroked) {
+    g.lineWidth = borderWidth;
+    g.strokeStyle = cs.borderTopColor;
+    g.stroke();
+  }
   g.font = `${textCs.fontWeight || 700} ${textCs.fontSize || "20px"} ${textCs.fontFamily || "'JetBrains Mono',monospace"}`;
   g.fillStyle = textCs.color || cs.color;
   g.textAlign = "center";
@@ -4687,7 +4690,7 @@ async function runPrismDissolve(placeholder, word, morphemes, rect) {
 
   const ctx = canvas.getContext("2d");
   const radius = parseFloat(cs.borderTopLeftRadius) || 12;
-  const srcCanvas = prismRenderCard(cs, word, cs, rect, rect.height / 2, dpr);
+  const srcCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr);
   const ghosts = PRISM_BANDS.map((color) => prismTintedCopy(srcCanvas, color));
 
   const cx = rect.width / 2, cy = rect.height / 2;
@@ -4976,10 +4979,10 @@ async function runPrismTileResolve(el, delayMs) {
   const ctx = canvas.getContext("2d");
   const radius = parseFloat(cs.borderTopLeftRadius) || 12;
   const partText = partEl ? partEl.textContent : "";
-  const srcCanvas = prismRenderCard(cs, partText, partCs, rect, partCenterY, dpr);
+  const srcCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
   /* ゴーストは地の塗りを抜いた枠線＋文字だけの像から作る。
      接辞カードは小さく像の重なりが深いので、塗りごと加算すると中身が白く飛ぶ */
-  const inkCanvas = prismRenderCard(cs, partText, partCs, rect, partCenterY, dpr, false);
+  const inkCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr, false);
   const ghosts = PRISM_BANDS.map((color) => prismTintedCopy(inkCanvas, color, true));
 
   const cx = rect.width / 2, cy = rect.height / 2;
@@ -5176,6 +5179,497 @@ async function runPrismTileResolve(el, delayMs) {
   el.style.visibility = "visible";
 }
 
+/* ---- 「細胞分裂」アニメーション -------------------------------------
+   単語カードをひとつの細胞と見なし、有糸分裂の順序（前期→中期→後期→
+   細胞質分裂）をそのままなぞって接辞へ分かれる。
+   接辞ごとの時間差は演出上の飾りではなく「収縮環がくびれる順番」そのもの
+   なので、どこで語が切れるのかが動きだけで伝わる。
+
+   膜の輪郭は角丸矩形の近似ではなく、xごとの高さを与える関数から毎フレーム
+   折れ線として起こしている。
+     h(x) = R ・ 端を丸めるエンベロープ(x) ・ Π(1 - 深さ_b ・ 境目bのくびれ)
+   掛け算なので、くびれが深まるほど細り、深さ1でちょうど0になる。
+   「つながっている」から「切れた」までが式のうえで連続なので、
+   分かれる瞬間に形が飛ばない。 */
+
+const MITOSIS_TAU = 0.5;            // 離れていく動きの指数減衰（空気抵抗に相当）
+const MITOSIS_FURROW_W = 0.34;      // くびれの広がり（セグメント幅に対する比）
+
+const mitosisEaseOut = (p) => 1 - Math.pow(1 - p, 3);
+const mitosisEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const mitosisClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/* 細胞内の顆粒。粒ごとにグラデーションを作ると数十個描いた時点で破綻するため、
+   プリズムと同じく一度だけ描いてキャッシュした画像を貼る。
+   白い光ではなく膜と同じ色で作る。明るいテーマでは細胞質が白なので、
+   白い粒だと地に沈んで見えなくなるため */
+const mitosisBlobCache = new Map();
+
+function mitosisBlobSprite(color) {
+  const hit = mitosisBlobCache.get(color);
+  if (hit) return hit;
+  const size = 48;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, color);
+  grad.addColorStop(0.42, color);
+  grad.addColorStop(1, "transparent");
+  g.globalAlpha = 0.75;
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  mitosisBlobCache.set(color, c);
+  return c;
+}
+
+/* 膜の高さ関数。両端は丸め、境目ごとにガウス状のくびれを掛ける */
+function mitosisHalfHeight(x, x0, x1, baseR, furrows) {
+  const mid = (x0 + x1) / 2;
+  const half = (x1 - x0) / 2;
+  if (half <= 0) return 0;
+  const u = mitosisClamp01(Math.abs(x - mid) / half);
+  /* 真円だと細長い単語で端が尖って見えるので、4乗にして端の直前まで
+     太さを保ってから落とす */
+  let h = baseR * Math.sqrt(Math.max(0, 1 - u * u * u * u));
+  for (const f of furrows) {
+    if (f.depth <= 0) continue;
+    const d = (x - f.x) / f.w;
+    h *= 1 - f.depth * Math.exp(-d * d);
+  }
+  return h;
+}
+
+/* 高さ関数から膜の閉じた輪郭を起こす。上の縁を左→右、下の縁を右→左。
+   サンプル数は幅で決めるので、長い単語でも輪郭が粗くならない */
+function mitosisMembranePath(ctx, x0, x1, cy, baseR, furrows, wobble) {
+  const span = x1 - x0;
+  const steps = Math.max(40, Math.min(190, Math.round(span / 2.2)));
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const x = x0 + (span * i) / steps;
+    ctx.lineTo(x, cy - mitosisHalfHeight(x, x0, x1, baseR, furrows) * wobble(x, -1));
+  }
+  for (let i = steps; i >= 0; i--) {
+    const x = x0 + (span * i) / steps;
+    ctx.lineTo(x, cy + mitosisHalfHeight(x, x0, x1, baseR, furrows) * wobble(x, 1));
+  }
+  ctx.closePath();
+}
+
+/* 単語カードがひとつの細胞として分裂し、接辞ごとの娘細胞に分かれる（分解アニメ本体） */
+async function runMitosisDissolve(placeholder, word, morphemes, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  /* 細胞は上下にふくらみ、分かれたあと左右へ離れる。はみ出しても切れないよう
+     実寸に比例した余白を取る */
+  const padX = Math.max(150, rect.width * 0.9);
+  const padY = Math.max(120, rect.height * 2.6);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "mitosis-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  /* 中身は文字だけ。地も枠線も膜が引き受けるので、どちらも描かせない
+     （枠を残すと、膜の内側に矩形の輪郭が二重に見えてしまう） */
+  const inkCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr, false, false);
+
+  const cx = rect.width / 2, cy = rect.height / 2;
+  const membraneColor = cs.borderTopColor || "#1F6F63";
+  const plasmaColor = cs.backgroundColor || "#FFFFFF";
+  const granuleSprite = mitosisBlobSprite(membraneColor);
+
+  /* ---- 接辞の境目 ----
+     細胞は文字ごと分かれるので、境目は実際の字送りで測る。カードには左右の
+     余白があるため、文字数の比で切ると境目が文字の途中に来てしまう
+     （"post|graduate" が "pos|tgraduate" になる） */
+  const meas = document.createElement("canvas").getContext("2d");
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const textW = meas.measureText(word).width;
+  const textX0 = (rect.width - textW) / 2;
+  let prefix = "";
+  const boundaries = morphemes.slice(0, -1).map((m) => {
+    prefix += m.part || "";
+    return textX0 + meas.measureText(prefix).width;
+  });
+  /* セグメントはカードの端から端までを覆う。内側の切れ目だけが字送り基準 */
+  const edges = [0, ...boundaries, rect.width];
+  const segments = edges.slice(0, -1).map((x, i) => ({ xStart: x, xEnd: edges[i + 1] }));
+  segments.forEach((s) => { s.cx = (s.xStart + s.xEnd) / 2; });
+  const avgSegW = rect.width / Math.max(1, segments.length);
+
+  /* ---- 各期の時刻 ---- */
+  const T_PROPHASE = 220;                              // 核が凝縮し、細胞がふくらむ
+  const T_METAPHASE = 520;                             // 紡錘糸が両極から伸びきる
+  const T_ANAPHASE = 700;                              // 染色体が両極へ引かれはじめる
+  const T_FURROW = 820;                                // 最初の収縮環ができる
+  const FURROW_MS = 460;                               // くびれ切るまで
+  const FURROW_STAGGER = segments.length >= 4 ? 130 : 180;
+  const lastCut = T_FURROW + Math.max(0, boundaries.length - 1) * FURROW_STAGGER + FURROW_MS;
+  const T_FADE = lastCut + 300;
+  const TOTAL_MS = lastCut + 620;
+
+  const furrowStart = (b) => T_FURROW + b * FURROW_STAGGER;
+  const furrowDepth = (b, t) => mitosisEaseInOut(mitosisClamp01((t - furrowStart(b)) / FURROW_MS));
+  /* 切れてから離れるまで。閉じた式なのでフレームレートが揺れても軌道が変わらない */
+  const sepAmount = (b, t) => {
+    const s = (t - (furrowStart(b) + FURROW_MS)) / 1000;
+    if (s <= 0) return 0;
+    return (1 - Math.exp(-s / MITOSIS_TAU)) * (avgSegW * 0.5 + 26);
+  };
+
+  /* セグメントの漂流量。境目bが開くと、その左側は左へ、右側は右へ等分に押される。
+     同じ塊のセグメントは内部の境目がまだ0なので、必ず同じ値になる */
+  function segDrift(i, t) {
+    let dx = 0;
+    boundaries.forEach((_, b) => {
+      const s = sepAmount(b, t) / 2;
+      dx += b < i ? s : -s;
+    });
+    return dx;
+  }
+
+  /* まだ切れていない境目でつながっているセグメントの塊 */
+  function currentGroups(t) {
+    const groups = [];
+    let start = 0;
+    boundaries.forEach((_, b) => {
+      if (furrowDepth(b, t) >= 1) { groups.push([start, b]); start = b + 1; }
+    });
+    groups.push([start, segments.length - 1]);
+    return groups;
+  }
+
+  /* 分かれた直後の表面張力の揺れ。上下で位相をずらすと、丸くなろうとして
+     いるように見える */
+  function makeWobble(cutT, t) {
+    const s = (t - cutT) / 1000;
+    if (!(s > 0)) return () => 1;
+    const amp = 0.16 * Math.exp(-s / 0.34);
+    if (amp < 0.004) return () => 1;
+    return (x, side) => 1 + amp * Math.sin(s * 26 + x * 0.045 + (side > 0 ? Math.PI * 0.62 : 0));
+  }
+
+  /* ---- 細胞内の顆粒。どのセグメントに属するかで、一緒に動く細胞が決まる ---- */
+  const granules = [];
+  for (let i = 0; i < 46; i++) {
+    const gx = Math.random() * rect.width;
+    let segIndex = segments.findIndex((s) => gx >= s.xStart && gx < s.xEnd);
+    if (segIndex === -1) segIndex = gx < 0 ? 0 : segments.length - 1;
+    granules.push({
+      x: gx,
+      y: cy + (Math.random() - 0.5) * rect.height * 0.9,
+      r: 1.4 + Math.random() * 3.4,
+      seg: segIndex,
+      phase: Math.random() * Math.PI * 2,
+      drift: 6 + Math.random() * 16,
+    });
+  }
+
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      const outFade = t < T_FADE ? 1 : Math.max(0, 1 - (t - T_FADE) / (TOTAL_MS - T_FADE));
+      /* 前期のふくらみ。ひと呼吸ぶん大きくなって落ち着く */
+      const swell = Math.sin(mitosisClamp01(t / T_PROPHASE) * Math.PI) * (rect.height * 0.1);
+      const baseR = rect.height * 0.72 + swell;
+
+      currentGroups(t).forEach(([gi0, gi1]) => {
+        const dx = segDrift(gi0, t);
+        /* この塊がいつ独立したか。両隣の境目のうち、遅く切れた方 */
+        const cutTimes = [];
+        if (gi0 > 0) cutTimes.push(furrowStart(gi0 - 1) + FURROW_MS);
+        if (gi1 < segments.length - 1) cutTimes.push(furrowStart(gi1) + FURROW_MS);
+        const wobble = cutTimes.length ? makeWobble(Math.max(...cutTimes), t) : () => 1;
+
+        const padCell = avgSegW * 0.08 + 7;
+        const x0 = segments[gi0].xStart - padCell;
+        const x1 = segments[gi1].xEnd + padCell;
+
+        /* この塊の内部に残っているくびれ */
+        const furrows = [];
+        for (let b = gi0; b < gi1; b++) {
+          furrows.push({ x: boundaries[b], w: avgSegW * MITOSIS_FURROW_W, depth: furrowDepth(b, t) });
+        }
+        const outline = () => mitosisMembranePath(ctx, x0, x1, cy, baseR, furrows, wobble);
+
+        ctx.save();
+        ctx.translate(dx, 0);
+        ctx.globalAlpha = outFade;
+
+        /* 1) 細胞質。中心が明るく縁が沈む球状の塗り */
+        outline();
+        const plasma = ctx.createRadialGradient(
+          (x0 + x1) / 2, cy - baseR * 0.35, baseR * 0.1,
+          (x0 + x1) / 2, cy, Math.max(baseR, (x1 - x0) * 0.55)
+        );
+        plasma.addColorStop(0, plasmaColor);
+        plasma.addColorStop(0.62, plasmaColor);
+        plasma.addColorStop(1, membraneColor);
+        ctx.save();
+        ctx.globalAlpha = outFade * 0.92;
+        ctx.fillStyle = plasma;
+        ctx.fill();
+        ctx.restore();
+
+        /* 2) 中身は膜でクリップする。はみ出すと細胞の外に漏れて見える */
+        ctx.save();
+        outline();
+        ctx.clip();
+
+        /* 2a) 顆粒。ゆっくり漂う */
+        for (const g of granules) {
+          if (g.seg < gi0 || g.seg > gi1) continue;
+          const gy = g.y + Math.sin(t / 900 + g.phase) * g.drift * 0.35;
+          const gx = g.x + Math.cos(t / 1100 + g.phase) * g.drift * 0.3;
+          ctx.globalAlpha = outFade * 0.34;
+          ctx.drawImage(granuleSprite, gx - g.r * 2, gy - g.r * 2, g.r * 4, g.r * 4);
+        }
+
+        /* 2b) 紡錘糸。中期に両極から伸び、くびれはじめると引っ込む */
+        const spindle = mitosisClamp01((t - T_PROPHASE) / (T_METAPHASE - T_PROPHASE))
+          * (1 - mitosisClamp01((t - T_FURROW) / FURROW_MS));
+        if (spindle > 0.02 && gi1 > gi0) {
+          ctx.save();
+          ctx.globalAlpha = outFade * spindle * 0.3;
+          ctx.strokeStyle = membraneColor;
+          ctx.lineWidth = 1;
+          for (let b = gi0; b < gi1; b++) {
+            const bx = boundaries[b];
+            for (const side of [-1, 1]) {
+              const poleX = side < 0 ? x0 + baseR * 0.4 : x1 - baseR * 0.4;
+              for (let k = -2; k <= 2; k++) {
+                ctx.beginPath();
+                ctx.moveTo(poleX, cy);
+                ctx.quadraticCurveTo((poleX + bx) / 2, cy + k * baseR * 0.24, bx, cy + k * baseR * 0.12);
+                ctx.stroke();
+              }
+            }
+          }
+          ctx.restore();
+        }
+
+        /* 2c) 文字。後期に入ると、それぞれの極（＝自分の細胞の側）へ引かれる。
+               セグメントのx範囲でクリップしてから動かすので、接辞ごとに
+               まとまって離れていくように見える */
+        const gather = mitosisEaseInOut(mitosisClamp01((t - T_ANAPHASE) / 520));
+        for (let i = gi0; i <= gi1; i++) {
+          const seg = segments[i];
+          const segW = seg.xEnd - seg.xStart;
+          const tx = gather * (seg.cx - cx) * 0.14;
+          ctx.save();
+          ctx.globalAlpha = outFade;
+          /* 切り抜きも文字と一緒に動かす。切り抜きを固定したまま中身だけ
+             ずらすと、隣の接辞の字が枠の中へ入り込んでくる
+             （"post"の細胞に"graduate"のgが顔を出す） */
+          ctx.translate(tx, 0);
+          ctx.beginPath();
+          ctx.rect(seg.xStart - 1, cy - baseR, segW + 2, baseR * 2);
+          ctx.clip();
+          ctx.drawImage(inkCanvas, 0, 0, inkCanvas.width, inkCanvas.height, 0, 0, rect.width, rect.height);
+          ctx.restore();
+        }
+
+        ctx.restore();  // 膜のクリップを解除
+
+        /* 3) 膜。太く淡い線を下に敷いてから細い線を重ね、厚みのある縁にする */
+        outline();
+        ctx.save();
+        ctx.strokeStyle = membraneColor;
+        ctx.globalAlpha = outFade * 0.28;
+        ctx.lineWidth = 4.5;
+        ctx.stroke();
+        ctx.globalAlpha = outFade;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.restore();
+
+        /* 4) 収縮環。くびれている最中の境目だけ、膜を太く締め直す。
+              白い光ではなく膜そのものを濃くするので、明暗どちらのテーマでも見える */
+        furrows.forEach((f) => {
+          if (f.depth <= 0.02 || f.depth >= 1) return;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(f.x - f.w * 1.1, cy - baseR * 1.3, f.w * 2.2, baseR * 2.6);
+          ctx.clip();
+          outline();
+          ctx.strokeStyle = membraneColor;
+          ctx.globalAlpha = outFade * Math.sin(f.depth * Math.PI) * 0.85;
+          ctx.lineWidth = 3.4;
+          ctx.stroke();
+          ctx.restore();
+        });
+
+        /* 5) 鏡面ハイライト。上側だけを短く光らせて、濡れた球に見せる */
+        ctx.save();
+        outline();
+        ctx.clip();
+        const spec = ctx.createLinearGradient(0, cy - baseR, 0, cy);
+        spec.addColorStop(0, "rgba(255,255,255,.5)");
+        spec.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.globalAlpha = outFade * 0.8;
+        ctx.fillStyle = spec;
+        ctx.fillRect(x0, cy - baseR, x1 - x0, baseR);
+        ctx.restore();
+
+        ctx.restore();  // translate(dx)
+      });
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが娘細胞として現れる。小さな細胞がふくらみ、表面張力で揺れながら
+   落ち着き、膜がカードの角丸へ硬化していく（単語側の分裂と対になる） */
+async function runMitosisTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(70, rect.width * 0.5);
+  const padY = Math.max(60, rect.height * 0.8);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "mitosis-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const partText = partEl ? partEl.textContent : "";
+  const srcCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
+  const membraneColor = cs.borderTopColor || "#1F6F63";
+  const plasmaColor = cs.backgroundColor || "#FFFFFF";
+  const granuleSprite = mitosisBlobSprite(membraneColor);
+
+  const cx = rect.width / 2, cy = rect.height / 2;
+  const granules = [];
+  for (let i = 0; i < 14; i++) {
+    granules.push({
+      x: cx + (Math.random() - 0.5) * rect.width * 0.7,
+      y: cy + (Math.random() - 0.5) * rect.height * 0.7,
+      r: 1.2 + Math.random() * 2.6,
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+
+  const TOTAL_MS = 760;
+  const T_FIRM = 360;          // 膜がカードの形へ硬化しはじめる
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      /* ふくらんで、表面張力で揺れながら落ち着く */
+      const grow = mitosisEaseOut(mitosisClamp01(t / 420));
+      const s = t / 1000;
+      const wob = 0.13 * Math.exp(-s / 0.26) * Math.sin(s * 30);
+      const rx = (rect.width / 2) * (0.42 + 0.58 * grow) * (1 + wob);
+      const ry = (rect.height / 2) * (0.42 + 0.58 * grow) * (1 - wob);
+
+      /* 膜の形。硬化が進むほど、丸から角丸矩形へ寄せる */
+      const firm = mitosisEaseInOut(mitosisClamp01((t - T_FIRM) / (TOTAL_MS - T_FIRM)));
+      const corner = radius + (Math.min(rx, ry) - radius) * (1 - firm);
+
+      ctx.save();
+      roundRectPath(ctx, cx - rx, cy - ry, rx * 2, ry * 2, Math.max(radius, corner));
+
+      const plasma = ctx.createRadialGradient(cx, cy - ry * 0.4, 0, cx, cy, Math.max(rx, ry));
+      plasma.addColorStop(0, plasmaColor);
+      plasma.addColorStop(0.6, plasmaColor);
+      plasma.addColorStop(1, membraneColor);
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = plasma;
+      ctx.fill();
+
+      ctx.save();
+      ctx.clip();
+      for (const g of granules) {
+        ctx.globalAlpha = 0.34 * (1 - firm);
+        ctx.drawImage(granuleSprite,
+          g.x - g.r * 2, g.y + Math.sin(t / 700 + g.phase) * 5 - g.r * 2, g.r * 4, g.r * 4);
+      }
+      ctx.restore();
+
+      ctx.strokeStyle = membraneColor;
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      /* 文字。膜が硬化してくるのに合わせて現れる */
+      if (firm > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = firm;
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -5254,6 +5748,32 @@ const DECOMPOSE_ANIM_STYLES = {
     mountTile(el, i) {
       if (reducedMotion()) return;
       runMatrixTileResolve(el, i * 110);
+    },
+  },
+
+  mitosis: {
+    label: "細胞分裂",
+    tileClass: "mitosis-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語カードがひとつの細胞として分裂し、接辞の境目が順にくびれて
+       娘細胞へ分かれる */
+    async intro(placeholder, word, morphemes) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runMitosisDissolve(placeholder, word, morphemes, rect);
+    },
+    /* 接辞カードが娘細胞としてふくらみ、膜が硬化してカードになる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runMitosisTileResolve(el, i * 130);
     },
   },
 
@@ -8149,7 +8669,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "193";
+const APP_BUILD = "194";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
