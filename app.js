@@ -39,7 +39,7 @@ const DECOMPOSE_LOADING_FAST_MS = [40, 110];
 
 function decomposeStepDwellRange(index, total) {
   const t = total > 1 ? index / (total - 1) : 0;
-  return { min: 100 + t * 1100, max: 900 + t * 3100 };
+  return { min: 90 + t * 260, max: 320 + t * 620 };
 }
 
 /* コンテナIDごとに動いているタイマーを管理する。実際のコンテンツに
@@ -60,8 +60,11 @@ function stopLoadingRotation(containerId) {
 /* 接辞分解の待ち表示を開始する。返り値のmarkWorkDone()は、裏側の実際の
    分解（AI応答 or デモの待機）が終わった時点で呼ぶ。まだ全10工程を
    見せ切っていなければ、残りは早送り（DECOMPOSE_LOADING_FAST_MS）で
-   消化してから終わる。donePromiseは「全工程を見せ終えた」時点で解決する
-   ので、呼び出し側はこれをawaitしてから次のアニメーションへ進むこと */
+   消化してから終わる。donePromiseは「全工程を見せ終え、かつ実処理も
+   終わった」時点で解決するので、呼び出し側はこれをawaitしてから次の
+   アニメーションへ進むこと。
+   工程を見せ切っても実処理が終わっていない場合は、最後の表示のまま待つ
+   （そのときの表示はイースターエッグになる。下記参照） */
 /* writePhraseを渡すと、工程名の書き込み先を差し替えられる（まとめ生成の
    進捗行のように、.goro-loading とは違う作りの表示に流し込むため） */
 function startDecomposeLoadingSequence(containerId, writePhrase) {
@@ -93,11 +96,29 @@ function startDecomposeLoadingSequence(containerId, writePhrase) {
     activeLoadingRotations.set(containerId, setTimeout(showStep, dwellMs));
   };
 
+  /* 工程を見せ切ったか / その最後がイースターエッグだったか。
+     実処理の完了と足並みが揃った時点で初めて閉じる */
+  let stepsExhausted = false;
+  let exhaustedWithEgg = false;
+  let settled = false;
+
+  const settle = () => {
+    if (settled || !stepsExhausted || !workDone) return;
+    settled = true;
+    /* イースターエッグは早送り中だと一瞬で消えてしまう。せっかく出たので
+       読める程度には残してから閉じる */
+    if (exhaustedWithEgg) setTimeout(resolveDone, EASTER_EGG_LINGER_MS);
+    else resolveDone();
+  };
+
   const showStep = () => {
     /* イースターエッグは最後の工程だけに出す。途中に混ぜると、本物の工程が
-       1つ飛ばされたように見えてしまうため */
+       1つ飛ばされたように見えてしまうため。
+       最後の工程まで来てもまだ実処理が終わっていない＝待ちが長引いている
+       ときは、確定で出す（ここから先はこの表示のまま待つことになるので、
+       ただ固まって見えるより、待った甲斐がある方がいい） */
     const isLastStep = stepIndex === total - 1;
-    const isEasterEgg = isLastStep && Math.random() < LOADING_EASTER_EGG_CHANCE;
+    const isEasterEgg = isLastStep && (!workDone || Math.random() < LOADING_EASTER_EGG_CHANCE);
     const phrase = isEasterEgg
       ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
       : DECOMPOSE_LOADING_STEPS[stepIndex % total];
@@ -105,12 +126,10 @@ function startDecomposeLoadingSequence(containerId, writePhrase) {
 
     stepIndex++;
     if (stepIndex >= total) {
-      /* 全工程を出し切ったので、ここで初めて呼び出し側に完了を知らせる。
-         ただしイースターエッグを引いた場合、最後の工程は早送り中のことが
-         多く一瞬で消えてしまう。せっかく出たので読める程度には残す */
       activeLoadingRotations.delete(containerId);
-      if (isEasterEgg) setTimeout(resolveDone, EASTER_EGG_LINGER_MS);
-      else resolveDone();
+      stepsExhausted = true;
+      exhaustedWithEgg = isEasterEgg;
+      settle();
       return;
     }
     scheduleNext();
@@ -129,6 +148,9 @@ function startDecomposeLoadingSequence(containerId, writePhrase) {
         clearTimeout(pending);
         scheduleNext();
       }
+      /* 工程は既に見せ切っていて実処理の完了だけを待っていた場合、
+         ここが閉じるきっかけになる */
+      settle();
     },
     donePromise,
   };
@@ -1274,6 +1296,24 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/* 無料枠を使い切った・呼び出しが多すぎる場合、Geminiは429(RESOURCE_EXHAUSTED)を
+   返す。原因がキーの誤りでもモデルの不調でもないので、「失敗しました」で
+   まとめてしまうと、直しようのないものを直そうとさせてしまう。
+   1分あたりの上限なら数分で回復し、1日あたりの上限なら日付が変わるまで
+   戻らないが、どちらの上限に当たったかは応答からは判別しきれないため、
+   両方あり得ることを伝える */
+const QUOTA_ERROR_MESSAGE = "Geminiの利用上限に達しました。しばらく時間をおいてからお試しください（1分あたりの上限なら数分、1日あたりの上限なら日付が変わるまで待つと回復します）。";
+
+function isQuotaError(err) {
+  const msg = String(err?.message || "");
+  return statusFromError(err) === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg);
+}
+
+/* 画面に出す文言。上限に当たったときだけ専用の案内に差し替える */
+function aiErrorMessage(err) {
+  return isQuotaError(err) ? QUOTA_ERROR_MESSAGE : String(err?.message || "原因不明のエラー");
+}
+
 function statusFromError(err) {
   const match = /\((\d+)\)/.exec(err.message || "");
   return match ? Number(match[1]) : null;
@@ -1427,7 +1467,9 @@ function notifyDecomposeFallback(err) {
   console.warn("Stage1 failed, falling back to local dictionary:", err);
   if (decomposeFallbackNotified) return;
   decomposeFallbackNotified = true;
-  toast(`AIの接辞分解に失敗したため簡易分解を使います: ${err.message}`);
+  toast(isQuotaError(err)
+    ? QUOTA_ERROR_MESSAGE
+    : `AIの接辞分解に失敗したため簡易分解を使います: ${err.message}`);
 }
 
 async function decomposeWord(word, provider, apiKey) {
@@ -3329,7 +3371,7 @@ async function startDecompose(rawWord) {
       placeholder.remove();
       stopLoadingRotation("decompose-spinner");
       spinnerRow.style.visibility = "visible";
-      spinnerRow.innerHTML = `<span class="spin-label">分解に失敗しました。ホームに戻ってお試しください。</span>`;
+      spinnerRow.innerHTML = `<span class="spin-label">${escapeHtml(isQuotaError(err) ? QUOTA_ERROR_MESSAGE : "分解に失敗しました。ホームに戻ってお試しください。")}</span>`;
       document.getElementById("decompose-appbar").style.display = "flex";
       console.error(err);
       return;
@@ -5302,7 +5344,9 @@ async function loadGoroCandidates(provider, apiKey) {
     list.innerHTML = "";
     const note = document.createElement("div");
     note.className = "empty-note";
-    note.textContent = `語呂合わせの生成に失敗しました（${err.message}）。作り直すボタンでもう一度お試しください。`;
+    note.textContent = isQuotaError(err)
+      ? QUOTA_ERROR_MESSAGE
+      : `語呂合わせの生成に失敗しました（${err.message}）。作り直すボタンでもう一度お試しください。`;
     list.appendChild(note);
     document.getElementById("regen-btn").disabled = false;
     console.error(err);
@@ -5706,7 +5750,7 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
     renderWordDetailGoro(record);
   } catch (err) {
     document.getElementById("word-detail-goro").innerHTML =
-      `<div class="empty-note">語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。</div>`;
+      `<div class="empty-note">${escapeHtml(isQuotaError(err) ? QUOTA_ERROR_MESSAGE : `語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。`)}</div>`;
     console.error(err);
   }
   btn.disabled = false;
@@ -6410,7 +6454,7 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
     await verifyApiKey(activeProvider, key);
     status.textContent = "✓ 保存しました。接続を確認できました。";
   } catch (err) {
-    status.textContent = `保存しましたが、疎通確認に失敗しました（${err.message}）。`;
+    status.textContent = `保存しましたが、疎通確認に失敗しました（${aiErrorMessage(err)}）。`;
   }
   btn.disabled = false;
   await refreshUsageDisplay();
@@ -7738,7 +7782,7 @@ async function runBatchGeneration() {
         /* 分解の途中で落ちた場合、工程名を回すタイマーが残ってしまう */
         stopLoadingRotation("batch-progress");
         for (const row of chunk) {
-          if (row.status === "pending") await markBatchFailed(row, err.message);
+          if (row.status === "pending") await markBatchFailed(row, aiErrorMessage(err));
         }
       }
       await renderBatchQueue();
@@ -7996,7 +8040,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "191";
+const APP_BUILD = "192";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
