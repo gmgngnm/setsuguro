@@ -5670,6 +5670,558 @@ async function runMitosisTileResolve(el, delayMs) {
   el.style.visibility = "visible";
 }
 
+/* ---- 「不死鳥」アニメーション -------------------------------------
+   単語カードを紙片と見なし、接辞の境目ごとに下端から上端へ燃え広がって
+   炭化・灰化し、燃え尽きる。接辞カードは逆に、炎の中から下から上へ
+   像を結んで現れる（単語側の燃焼と対になる逆再生）。
+   接辞ごとの時間差は演出上の飾りではなく「発火する順番」そのものなので、
+   どこで語が切れるのかが動きだけで伝わる。
+
+   燃焼前線はまっすぐな直線ではなく、複数のサイン波を足し合わせた
+   ゆらぎを載せて起こす。紙が燃える端はまっすぐにはならないため。
+   前線の位置は時刻の閉じた式（線形の進行＋サイン波のゆらぎ）で
+   求まるので、フレームレートが揺れても軌道が変わらない。 */
+
+const PHOENIX_TAU = 0.4;            // 火の粉・灰の指数減衰（空気抵抗に相当）
+
+const phoenixEaseOut = (p) => 1 - Math.pow(1 - p, 3);
+const phoenixEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const phoenixClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/* 炎のスプライト。粒子ごとにグラデーションを作ると数十枚描いた時点で
+   破綻するため、プリズム・細胞分裂と同じく一度だけ描いてキャッシュする。
+   芯（白〜黄）と外炎（橙〜赤）を別スプライトにして重ねると、
+   実際の炎に近い色の層になる */
+let phoenixFlameCoreCache = null;
+let phoenixFlameOuterCache = null;
+let phoenixSmokeCache = null;
+
+function phoenixFlameCoreSprite() {
+  if (phoenixFlameCoreCache) return phoenixFlameCoreCache;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size * 0.64, 0, size / 2, size * 0.52, size / 2);
+  grad.addColorStop(0, "rgba(255,250,222,.95)");
+  grad.addColorStop(0.35, "rgba(255,214,120,.78)");
+  grad.addColorStop(0.7, "rgba(255,150,60,.28)");
+  grad.addColorStop(1, "rgba(255,120,40,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  phoenixFlameCoreCache = c;
+  return c;
+}
+
+function phoenixFlameOuterSprite() {
+  if (phoenixFlameOuterCache) return phoenixFlameOuterCache;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size * 0.7, 0, size / 2, size * 0.54, size / 2);
+  grad.addColorStop(0, "rgba(255,140,50,.75)");
+  grad.addColorStop(0.45, "rgba(224,70,30,.4)");
+  grad.addColorStop(0.8, "rgba(140,30,20,.14)");
+  grad.addColorStop(1, "rgba(120,20,15,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  phoenixFlameOuterCache = c;
+  return c;
+}
+
+function phoenixSmokeSprite() {
+  if (phoenixSmokeCache) return phoenixSmokeCache;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, "rgba(92,86,80,.55)");
+  grad.addColorStop(0.5, "rgba(92,86,80,.26)");
+  grad.addColorStop(1, "rgba(92,86,80,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  phoenixSmokeCache = c;
+  return c;
+}
+
+/* 上端と下端をそれぞれxの関数で受け取り、閉じたリボン状のパスを起こす。
+   細胞分裂の膜と同じ考え方（xごとの高さを持つ輪郭）で、燃焼前線のような
+   まっすぐでない境界を、紙のクリップにも炭化の帯にも使い回せる */
+function phoenixRibbon(ctx, xStart, xEnd, topFn, bottomFn) {
+  const span = xEnd - xStart;
+  const steps = Math.max(10, Math.min(90, Math.round(span / 3)));
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const x = xStart + (span * i) / steps;
+    const y = topFn(x);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const x = xStart + (span * i) / steps;
+    ctx.lineTo(x, bottomFn(x));
+  }
+  ctx.closePath();
+}
+
+/* 単語カードが紙片のように燃え上がり、接辞ごとの灰へと燃え尽きる（分解アニメ本体） */
+async function runPhoenixDissolve(placeholder, word, morphemes, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  /* 炎と煙は上へ大きく伸びるため上側の余白を厚く取り、灰の落下ぶんだけ
+     下側にも少し余白を取る */
+  const padX = Math.max(50, rect.width * 0.1);
+  const padTop = Math.max(150, rect.height * 3.4);
+  const padBottom = Math.max(70, rect.height * 1.3);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "phoenix-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  /* 「紙」そのものの絵。地の色・枠線・文字を含めた、無傷のカードの見た目 */
+  const paperCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr);
+
+  /* ---- 接辞の境目。字送りの実測から求める（細胞分裂と同じ理由で、
+     文字数の比だと境目が文字の途中に来てしまうため） ---- */
+  const meas = document.createElement("canvas").getContext("2d");
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const textW = meas.measureText(word).width;
+  const textX0 = (rect.width - textW) / 2;
+  let prefix = "";
+  const boundaries = morphemes.slice(0, -1).map((m) => {
+    prefix += m.part || "";
+    return textX0 + meas.measureText(prefix).width;
+  });
+  const edges = [0, ...boundaries, rect.width];
+  const segments = edges.slice(0, -1).map((x, i) => ({ xStart: x, xEnd: edges[i + 1] }));
+
+  /* ---- 燃焼前線。下端(rect.height)から上端(0)へ、区切りごとに時間差を
+     つけて一定の速さで駆け上がる。まっすぐでは紙らしく見えないため、
+     3本のサイン波を足したゆらぎを重ねる（振幅・周波数・位相・明滅速度は
+     区切りごとに一度だけ乱数で決め、以後は時刻だけの関数として評価する） ---- */
+  const T_IGNITE0 = 100;
+  const IGNITE_STAGGER = segments.length >= 4 ? 130 : 180;
+  const BURN_MS = 560;
+  const OVERSHOOT = 24;
+  const ignite = (i) => T_IGNITE0 + i * IGNITE_STAGGER;
+  const burnP = (i, t) => phoenixClamp01((t - ignite(i)) / BURN_MS);
+  const frontYBase = (i, t) => rect.height - burnP(i, t) * (rect.height + OVERSHOOT);
+
+  const ragged = segments.map(() => Array.from({ length: 3 }, () => ({
+    amp: 4 + Math.random() * 7,
+    freq: 1.1 + Math.random() * 2.4,
+    phase: Math.random() * Math.PI * 2,
+    flicker: 0.0014 + Math.random() * 0.002,
+  })));
+  function frontY(i, x, t) {
+    const seg = segments[i];
+    const xf = seg.xEnd > seg.xStart ? (x - seg.xStart) / (seg.xEnd - seg.xStart) : 0;
+    let n = 0;
+    for (const w of ragged[i]) n += w.amp * Math.sin(xf * w.freq * Math.PI * 2 + w.phase + t * w.flicker);
+    return frontYBase(i, t) + n;
+  }
+
+  const lastIgnite = ignite(segments.length - 1);
+  const burnDone = lastIgnite + BURN_MS;
+  const T_FADE = burnDone + 500;     // 燃え尽きた後、火の粉と灰が収まるまで少し待つ
+  const TOTAL_MS = burnDone + 1300;  // 煙が薄れきるまで待つ
+
+  /* ---- 火の粉と灰。前線が通過する高さで発火時刻を逆算し、そこから
+     舞い上がる。線形の前線なので単純な引き算で厳密に逆算できる ---- */
+  const embers = [];
+  for (let i = 0; i < 60; i++) {
+    const segIndex = Math.floor(Math.random() * segments.length);
+    const seg = segments[segIndex];
+    const y0 = Math.random() * rect.height;
+    const bp = phoenixClamp01((rect.height - y0) / (rect.height + OVERSHOOT));
+    embers.push({
+      x: seg.xStart + Math.random() * (seg.xEnd - seg.xStart),
+      y: y0,
+      spawnT: ignite(segIndex) + bp * BURN_MS + Math.random() * 90,
+      vx: (Math.random() - 0.5) * 46,
+      vy: -60 - Math.random() * 90,
+      hot: 0.6 + Math.random() * 0.4,
+      size: 2 + Math.random() * 3.4,
+      life: 560 + Math.random() * 520,
+    });
+  }
+  const ashFlecks = [];
+  for (let i = 0; i < 34; i++) {
+    const segIndex = Math.floor(Math.random() * segments.length);
+    const seg = segments[segIndex];
+    const y0 = Math.random() * rect.height;
+    const bp = phoenixClamp01((rect.height - y0) / (rect.height + OVERSHOOT));
+    ashFlecks.push({
+      x: seg.xStart + Math.random() * (seg.xEnd - seg.xStart),
+      y: y0,
+      spawnT: ignite(segIndex) + bp * BURN_MS + Math.random() * 140,
+      vx: (Math.random() - 0.5) * 34,
+      vy: -30 - Math.random() * 40,
+      rot: Math.random() * Math.PI,
+      spin: (Math.random() - 0.5) * 5,
+      size: 2 + Math.random() * 3,
+      life: 700 + Math.random() * 600,
+    });
+  }
+  const smoke = [];
+  for (let i = 0; i < 12; i++) {
+    smoke.push({
+      x: Math.random() * rect.width,
+      spawnT: 260 + Math.random() * Math.max(200, TOTAL_MS - 700),
+      vx: (Math.random() - 0.5) * 16,
+      size: 20 + Math.random() * 26,
+      life: 1400 + Math.random() * 900,
+    });
+  }
+
+  const flameCore = phoenixFlameCoreSprite();
+  const flameOuter = phoenixFlameOuterSprite();
+  const smokeSprite = phoenixSmokeSprite();
+
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const outFade = t < T_FADE ? 1 : Math.max(0, 1 - (t - T_FADE) / (TOTAL_MS - T_FADE));
+
+      segments.forEach((seg, i) => {
+        const bp = burnP(i, t);
+        const segW = seg.xEnd - seg.xStart;
+
+        if (bp <= 0) {
+          /* まだ発火していない区間は、そのままの紙 */
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(seg.xStart, 0, segW, rect.height);
+          ctx.clip();
+          ctx.globalAlpha = outFade;
+          ctx.drawImage(paperCanvas, 0, 0, paperCanvas.width, paperCanvas.height, 0, 0, rect.width, rect.height);
+          ctx.restore();
+          return;
+        }
+
+        const fy = (x) => frontY(i, x, t);
+        /* 発火(bp=0)→燃え盛る(bp=0.5)→燃え尽きる(bp=1)で0→1→0となる
+           単一の式。ここから炎の強さと暗幕の濃さを両方導く */
+        const flameEnv = Math.sin(bp * Math.PI);
+
+        if (bp < 1) {
+          /* 1) 燃え残っている紙。前線より上側だけをそのまま見せる */
+          ctx.save();
+          phoenixRibbon(ctx, seg.xStart, seg.xEnd, () => 0, fy);
+          ctx.clip();
+          ctx.globalAlpha = outFade;
+          ctx.drawImage(paperCanvas, 0, 0, paperCanvas.width, paperCanvas.height, 0, 0, rect.width, rect.height);
+          ctx.restore();
+
+          /* 2) 炭化した縁。前線のすぐ内側を黒く焦がす */
+          ctx.save();
+          phoenixRibbon(ctx, seg.xStart, seg.xEnd, (x) => fy(x) - 13, fy);
+          const avgFront = (fy(seg.xStart) + fy((seg.xStart + seg.xEnd) / 2) + fy(seg.xEnd)) / 3;
+          const charGrad = ctx.createLinearGradient(0, avgFront - 13, 0, avgFront);
+          charGrad.addColorStop(0, "rgba(20,14,10,0)");
+          charGrad.addColorStop(1, "rgba(20,14,10,.88)");
+          ctx.fillStyle = charGrad;
+          ctx.globalAlpha = outFade;
+          ctx.fill();
+          ctx.restore();
+        }
+
+        /* 3) 前線を覆う暗幕。加算合成の炎が明るい紙の上で白飛びしないよう、
+              前線の周りだけ薄く落とす（プリズムと同じ理由）。
+              セグメントのx範囲でクリップしてしまうと、暗幕の半径が
+              セグメント幅を超えたときに境目でグラデーションが打ち切られ、
+              隣同士の暗幕の間に不自然な縦の継ぎ目が見えてしまう。
+              グラデーション自体が外側で透明に収束するので、クリップせず
+              半径ぶんの矩形にだけ描けば継ぎ目なく隣と混ざる */
+        if (flameEnv > 0.02) {
+          const midX = (seg.xStart + seg.xEnd) / 2;
+          const midY = fy(midX);
+          const dimR = segW * 0.75 + 34;
+          const dimGrad = ctx.createRadialGradient(midX, midY, 4, midX, midY, dimR);
+          dimGrad.addColorStop(0, "rgba(28,18,12,1)");
+          dimGrad.addColorStop(1, "rgba(28,18,12,0)");
+          ctx.save();
+          ctx.globalAlpha = flameEnv * 0.32 * outFade;
+          ctx.fillStyle = dimGrad;
+          ctx.fillRect(midX - dimR, midY - dimR, dimR * 2, dimR * 2);
+          ctx.restore();
+        }
+
+        /* 4) 前線を這う炎。数点おきに炎スプライトを重ねる */
+        if (flameEnv > 0.02) {
+          const steps = Math.max(3, Math.round(segW / 16));
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          for (let k = 0; k <= steps; k++) {
+            const x = seg.xStart + (segW * k) / steps;
+            const y = fy(x);
+            const flick = 0.72 + 0.28 * Math.sin(t * 0.021 + x * 0.28 + i * 1.7);
+            const h = (15 + 13 * flick) * flameEnv;
+            const a = flameEnv * outFade;
+            ctx.globalAlpha = a * 0.85;
+            ctx.drawImage(flameOuter, x - h * 0.95, y - h * 1.75, h * 1.9, h * 2.15);
+            ctx.globalAlpha = a;
+            ctx.drawImage(flameCore, x - h * 0.44, y - h * 1.05, h * 0.88, h * 1.15);
+          }
+          ctx.restore();
+        }
+      });
+
+      /* 5) 火の粉。舞い上がりながら赤から冷めて消える */
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const p of embers) {
+        const lt = t - p.spawnT;
+        if (lt <= 0 || lt >= p.life) continue;
+        const s = lt / 1000;
+        const travel = PHOENIX_TAU * (1 - Math.exp(-s / PHOENIX_TAU));
+        const x = p.x + p.vx * travel;
+        const y = p.y + p.vy * travel;
+        const lp = lt / p.life;
+        const a = Math.min(1, lt / 70) * Math.pow(1 - lp, 1.5) * outFade;
+        if (a <= 0.02) continue;
+        const r = p.size * (1 - lp * 0.3);
+        ctx.globalAlpha = a * p.hot;
+        ctx.drawImage(flameOuter, x - r * 2, y - r * 2, r * 4, r * 4);
+        ctx.globalAlpha = a;
+        ctx.drawImage(flameCore, x - r, y - r, r * 2, r * 2);
+      }
+      ctx.restore();
+
+      /* 6) 灰片。菱形の小片が回転しながら落ちていく */
+      for (const p of ashFlecks) {
+        const lt = t - p.spawnT;
+        if (lt <= 0 || lt >= p.life) continue;
+        const s = lt / 1000;
+        const travel = PHOENIX_TAU * (1 - Math.exp(-s / PHOENIX_TAU));
+        const x = p.x + p.vx * travel;
+        const y = p.y + p.vy * travel + 46 * s * s;
+        const lp = lt / p.life;
+        const a = Math.min(1, lt / 90) * (1 - lp) * outFade;
+        if (a <= 0.02) continue;
+        ctx.save();
+        ctx.globalAlpha = a * 0.8;
+        ctx.translate(x, y);
+        ctx.rotate(p.rot + p.spin * s);
+        ctx.fillStyle = "rgba(70,60,52,.9)";
+        ctx.beginPath();
+        ctx.moveTo(0, -p.size * 1.5);
+        ctx.lineTo(p.size * 0.7, 0);
+        ctx.lineTo(0, p.size * 1.5);
+        ctx.lineTo(-p.size * 0.7, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      /* 7) 煙。ゆっくり立ちのぼって薄れる */
+      for (const p of smoke) {
+        const lt = t - p.spawnT;
+        if (lt <= 0 || lt >= p.life) continue;
+        const s = lt / 1000;
+        const lp = lt / p.life;
+        const y = rect.height * 0.3 - s * 34;
+        const x = p.x + p.vx * s + Math.sin(s * 1.4) * 8;
+        const a = Math.min(1, lt / 300) * (1 - lp) * 0.16 * outFade;
+        if (a <= 0.01) continue;
+        const r = p.size * (0.6 + lp * 0.9);
+        ctx.globalAlpha = a;
+        ctx.drawImage(smokeSprite, x - r, y - r, r * 2, r * 2);
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* 接辞カードが炎の中から現れる。小さな炎が吹き上がり、そのただ中で
+   カードの像が下から上へ焼き付くように結ばれ、結び終えると炎が静まる
+   （単語側の燃焼と対になる逆再生） */
+async function runPhoenixTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(40, rect.width * 0.18);
+  const padTop = Math.max(90, rect.height * 1.7);
+  const padBottom = Math.max(30, rect.height * 0.5);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padTop + padBottom;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "phoenix-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padTop}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const partText = partEl ? partEl.textContent : "";
+  const paperCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
+
+  const cx = rect.width / 2;
+  const flameCore = phoenixFlameCoreSprite();
+  const flameOuter = phoenixFlameOuterSprite();
+
+  /* 立ち上がる炎の粒。カードの底から吹き上がり、像が結ぶにつれて収まる */
+  const tongues = [];
+  for (let i = 0; i < 16; i++) {
+    tongues.push({
+      x: cx + (Math.random() - 0.5) * rect.width * 0.9,
+      phase: Math.random() * Math.PI * 2,
+      freq: 0.018 + Math.random() * 0.01,
+      baseH: 20 + Math.random() * 26,
+      delay: Math.random() * 90,
+    });
+  }
+  const embers = [];
+  for (let i = 0; i < 20; i++) {
+    embers.push({
+      x: cx + (Math.random() - 0.5) * rect.width * 0.8,
+      y: rect.height * (0.6 + Math.random() * 0.5),
+      vx: (Math.random() - 0.5) * 30,
+      vy: -70 - Math.random() * 80,
+      size: 1.6 + Math.random() * 2.6,
+      spawnT: Math.random() * 420,
+      life: 420 + Math.random() * 380,
+    });
+  }
+
+  const RISE_MS = 260;    // 炎が立ち上がりきるまで
+  const REVEAL_START = 90;
+  const REVEAL_MS = 520;  // 像を結び終えるまで（前線が下から上へ駆け上がる）
+  const DIE_MS = 300;     // 像が結んだあと、炎が引くまで
+  const TOTAL_MS = REVEAL_START + REVEAL_MS + DIE_MS + 260;
+
+  const start = performance.now();
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padTop);
+
+      const rise = phoenixClamp01(t / RISE_MS);
+      const revealP = phoenixClamp01((t - REVEAL_START) / REVEAL_MS);
+      const dieP = phoenixClamp01((t - REVEAL_START - REVEAL_MS) / DIE_MS);
+      const flameLevel = phoenixEaseOut(rise) * (1 - dieP);
+
+      /* 1) カードの像。下から上へ焼き付くように現れる */
+      const revealY = rect.height * (1 - phoenixEaseInOut(revealP));
+      if (revealP > 0.01) {
+        ctx.save();
+        phoenixRibbon(ctx, 0, rect.width, () => revealY, () => rect.height + 2);
+        ctx.clip();
+        ctx.drawImage(paperCanvas, 0, 0, paperCanvas.width, paperCanvas.height, 0, 0, rect.width, rect.height);
+        ctx.restore();
+
+        /* 焼き付いた直後の縁を軽く焦がして、燃焼側と対になる余韻を出す */
+        if (revealP < 1) {
+          ctx.save();
+          phoenixRibbon(ctx, 0, rect.width, () => revealY, () => revealY + 10);
+          const g = ctx.createLinearGradient(0, revealY, 0, revealY + 10);
+          g.addColorStop(0, "rgba(20,14,10,.6)");
+          g.addColorStop(1, "rgba(20,14,10,0)");
+          ctx.fillStyle = g;
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      /* 2) 立ち上る炎。像が結ぶにつれて静まる */
+      if (flameLevel > 0.02) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        for (const f of tongues) {
+          const lt = t - f.delay;
+          if (lt <= 0) continue;
+          const flick = 0.7 + 0.3 * Math.sin(lt * f.freq + f.phase);
+          const h = f.baseH * flick * flameLevel;
+          const y = rect.height + 4;
+          ctx.globalAlpha = flameLevel * 0.8;
+          ctx.drawImage(flameOuter, f.x - h * 0.9, y - h * 1.7, h * 1.8, h * 2.0);
+          ctx.globalAlpha = flameLevel;
+          ctx.drawImage(flameCore, f.x - h * 0.4, y - h * 1.0, h * 0.8, h * 1.05);
+        }
+        ctx.restore();
+      }
+
+      /* 3) 火の粉。吹き上がって消える */
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const p of embers) {
+        const lt = t - p.spawnT;
+        if (lt <= 0 || lt >= p.life) continue;
+        const s = lt / 1000;
+        const travel = PHOENIX_TAU * (1 - Math.exp(-s / PHOENIX_TAU));
+        const x = p.x + p.vx * travel;
+        const y = p.y + p.vy * travel;
+        const lp = lt / p.life;
+        const a = Math.min(1, lt / 60) * Math.pow(1 - lp, 1.5);
+        if (a <= 0.02) continue;
+        ctx.globalAlpha = a * 0.8;
+        ctx.drawImage(flameOuter, x - p.size * 2, y - p.size * 2, p.size * 4, p.size * 4);
+        ctx.globalAlpha = a;
+        ctx.drawImage(flameCore, x - p.size, y - p.size, p.size * 2, p.size * 2);
+      }
+      ctx.restore();
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -5800,6 +6352,32 @@ const DECOMPOSE_ANIM_STYLES = {
     mountTile(el, i) {
       if (reducedMotion()) return;
       runPrismTileResolve(el, i * 120);
+    },
+  },
+
+  phoenix: {
+    label: "不死鳥",
+    tileClass: "phoenix-in",
+    tileVars() {
+      return {};
+    },
+    /* 単語カードが紙片のように燃え上がり、接辞の境目ごとに順番に
+       炭化・灰化して燃え尽きる */
+    async intro(placeholder, word, morphemes) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runPhoenixDissolve(placeholder, word, morphemes, rect);
+    },
+    /* 接辞カードが炎の中から、下から上へ像を結んで現れる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runPhoenixTileResolve(el, i * 130);
     },
   },
 };

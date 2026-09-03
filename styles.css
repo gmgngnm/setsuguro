@@ -184,6 +184,11 @@ button{font-family:inherit;cursor:pointer;}
      ごく短い馴染みだけ持たせる */
   animation:mitosisTileIn .45s ease both;
 }
+.morph.phoenix-in{
+  /* 実体はcanvasの炎が担うので、こちらは最後に置き換わるときの
+     ごく短い馴染みだけ持たせる */
+  animation:phoenixTileIn .4s ease both;
+}
 .morph.prism-in{
   animation:prismTileIn .6s ease both;
 }
@@ -202,6 +207,7 @@ button{font-family:inherit;cursor:pointer;}
 .matrix-canvas{position:absolute;pointer-events:none;}
 .prism-canvas{position:absolute;pointer-events:none;}
 .mitosis-canvas{position:absolute;pointer-events:none;}
+.phoenix-canvas{position:absolute;pointer-events:none;}
 @keyframes pop{from{transform:scale(.5);opacity:0;}to{transform:scale(1);opacity:1;}}
 @keyframes wordPulse{0%,100%{opacity:1;}50%{opacity:.5;}}
 @keyframes shake{
@@ -230,6 +236,10 @@ button{font-family:inherit;cursor:pointer;}
 /* 娘細胞が最後にわずかに落ち着く分だけ。膨らみの本体はcanvas側が持つ */
 @keyframes mitosisTileIn{
   from{ opacity:0; transform:scale(.96); }
+  to{ opacity:1; transform:scale(1); }
+}
+@keyframes phoenixTileIn{
+  from{ opacity:0; transform:scale(.94); }
   to{ opacity:1; transform:scale(1); }
 }
 @keyframes cardFlipOut{
@@ -265,7 +275,7 @@ button{font-family:inherit;cursor:pointer;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 @media (prefers-reduced-motion: reduce){
-  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.prism-in, .morph.mitosis-in,
+  .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.prism-in, .morph.mitosis-in, .morph.phoenix-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,
   .trash-can.show, .spinner, .goro-loading-dots::after,
   .letter-fix{animation:none;}
