@@ -1563,6 +1563,87 @@ async function writeDecomposeCache(word, data) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 分解結果の共有
+ *   ある単語の分解結果は誰が引いても同じなので、利用者どうしで使い回す。
+ *   誰が何を調べたかは残さない（行にuser_idを持たせない）ので、共有
+ *   されるのは「単語 → 分解結果」だけ。
+ *   サインインしていない場合は何もしない。SUPABASE_SETUP.mdが
+ *   「サインインしなければネットワークに触れない」と約束しているため。
+ *   表が無い・読めない場合も静かに諦めて、自分で分解する。
+ * ------------------------------------------------------------------ */
+const SHARED_DECOMPOSE_TABLE = "decompositions";
+
+/* 使える形の分解結果か。共有の表から来たものは他人が書いたものなので、
+   手元で作ったものと同じようには信用しない */
+function isSharedDecomposeUsable(payload, word) {
+  if (!payload || payload.wordExists === false) return false;
+  if (!Array.isArray(payload.morphemes) || !payload.morphemes.length) return false;
+  if (!payload.morphemes.every((m) => m && typeof m.part === "string" && m.part)) return false;
+  /* 綴りを直した結果も共有されるので、元の綴りか直った綴りのどちらかには
+     つながるはず。どちらでもないものは別の単語の結果が紛れている */
+  const joined = payload.morphemes.map((m) => m.part).join("").toLowerCase();
+  const corrected = String(payload.correctedWord || "").toLowerCase();
+  return joined === corrected && (corrected === String(word || "").toLowerCase() || !!payload.wasCorrected);
+}
+
+async function sharedDecomposeGet(words) {
+  const out = new Map();
+  if (!supabaseClient || !cloudUserId || !words.length) return out;
+  try {
+    const keys = words.map((w) => String(w || "").toLowerCase());
+    const { data, error } = await supabaseClient
+      .from(SHARED_DECOMPOSE_TABLE)
+      .select("word,payload")
+      .eq("version", DECOMPOSE_CACHE_VERSION)
+      .in("word", keys);
+    if (error) throw error;
+    for (const row of data || []) {
+      const word = String(row?.word || "").toLowerCase();
+      if (isSharedDecomposeUsable(row?.payload, word)) out.set(word, row.payload);
+    }
+  } catch (err) {
+    console.warn("共有された分解結果を読めませんでした（自分で分解します）:", err);
+  }
+  return out;
+}
+
+/* 共有の表へ差し出す。分解そのものは既に終わっているので、
+   失敗しても黙って諦める（待たせない・止めない） */
+function sharedDecomposePut(word, data) {
+  if (!supabaseClient || !cloudUserId) return;
+  if (!isSharedDecomposeUsable(data, word)) return;
+  /* 先に書いた人の結果を残す。上書き合戦にすると、同じ単語の行が
+     引くたびに入れ替わって、結果が安定しない */
+  supabaseClient.from(SHARED_DECOMPOSE_TABLE)
+    .upsert({ word: String(word || "").toLowerCase(), version: DECOMPOSE_CACHE_VERSION,
+              payload: data, created_at: Date.now() },
+            { onConflict: "word,version", ignoreDuplicates: true })
+    .then(({ error }) => { if (error) console.warn("分解結果を共有できませんでした（手元には保存できています）:", error); })
+    .catch((err) => console.warn("分解結果を共有できませんでした（手元には保存できています）:", err));
+}
+
+/* 手元の控え → 共有の表 の順に当たる。当たったものは手元にも控える */
+async function lookupDecomposeCaches(words) {
+  const out = new Map();
+  const remaining = [];
+  for (const word of words) {
+    const cached = await readDecomposeCache(word);
+    if (cached) out.set(word.toLowerCase(), cached);
+    else remaining.push(word);
+  }
+  if (!remaining.length) return { hits: out, misses: remaining };
+  const shared = await sharedDecomposeGet(remaining);
+  const misses = [];
+  for (const word of remaining) {
+    const hit = shared.get(word.toLowerCase());
+    if (!hit) { misses.push(word); continue; }
+    out.set(word.toLowerCase(), hit);
+    await writeDecomposeCache(word, hit);
+  }
+  return { hits: out, misses };
+}
+
 /* 空いた項目だけを埋め直す短い問い合わせ。分割はすでに確定しているので、
    同じプロンプトを丸ごと投げ直す必要はない（出力が短いぶん応答も速い） */
 async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
@@ -1610,8 +1691,9 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
 }
 
 async function decomposeWord(word, provider, apiKey) {
-  const cached = await readDecomposeCache(word);
-  if (cached) return cached;
+  const { hits } = await lookupDecomposeCaches([word]);
+  const hit = hits.get(word.toLowerCase());
+  if (hit) return hit;
   try {
     const sys = decomposeSystemPrompt(word);
     const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2, THINKING_MINIMAL);
@@ -1659,6 +1741,8 @@ async function decomposeWord(word, provider, apiKey) {
     /* 綴りを直した場合は、打った綴りと直った綴りのどちらで引いても当たるようにする */
     await writeDecomposeCache(word, result);
     if (wasCorrected) await writeDecomposeCache(correctedWord, result);
+    sharedDecomposePut(word, result);
+    if (wasCorrected) sharedDecomposePut(correctedWord, result);
     return result;
   } catch (err) {
     notifyDecomposeFallback(err);
@@ -2427,7 +2511,11 @@ function isDecomposeResultComplete(result) {
 }
 
 async function batchDecomposeWords(words, provider, apiKey) {
-  const out = new Map();
+  /* 既に分かっている語はAIに訊かない。まとめ登録はいちばん語数が多い
+     経路なので、控えと共有の表がここでいちばん効く */
+  const { hits: out, misses } = await lookupDecomposeCaches(words);
+  if (!misses.length) return out;
+
   const fallbackToSingle = async (word) => {
     try {
       out.set(word.toLowerCase(), await decomposeWord(word, provider, apiKey));
@@ -2438,16 +2526,16 @@ async function batchDecomposeWords(words, provider, apiKey) {
 
   let json;
   try {
-    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(words), 0.2, THINKING_MINIMAL);
+    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(misses), 0.2, THINKING_MINIMAL);
   } catch (err) {
     console.warn("まとめ分解に失敗しました。1語ずつの経路で処理します:", err);
-    for (const word of words) await fallbackToSingle(word);
+    for (const word of misses) await fallbackToSingle(word);
     return out;
   }
 
-  const byWord = indexAiResultsByWord(json.results, words);
+  const byWord = indexAiResultsByWord(json.results, misses);
   const validationTargets = [];
-  for (const word of words) {
+  for (const word of misses) {
     const row = byWord.get(word.toLowerCase());
     if (!row) { await fallbackToSingle(word); continue; }
     if (row.word_exists === false) {
@@ -2463,7 +2551,15 @@ async function batchDecomposeWords(words, provider, apiKey) {
     validationTargets.push({ word, result });
   }
 
+  /* 控えるのは校閲を通してから。校閲はresultを直接書き換えるので、
+     ここより前に控えると直る前の分割を配ってしまう */
   await batchValidateDecompositions(validationTargets, provider, apiKey);
+  for (const { word, result } of validationTargets) {
+    await writeDecomposeCache(word, result);
+    if (result.wasCorrected) await writeDecomposeCache(result.correctedWord, result);
+    sharedDecomposePut(word, result);
+    if (result.wasCorrected) sharedDecomposePut(result.correctedWord, result);
+  }
   return out;
 }
 
@@ -9724,6 +9820,23 @@ function sqlAddMissingColumns(names) {
   const adds = names.map((n) => `  add column if not exists ${n} ${CLOUD_WORD_COLUMN_TYPES[n] || "text"}`);
   return `alter table public.words\n${adds.join(",\n")};`;
 }
+/* 分解結果の共有表。行は誰の持ち物でもないのでuser_idを持たない。
+   追加だけ許し、更新・削除は許さない（他人の結果を書き換えられないように） */
+const SQL_CREATE_DECOMPOSITIONS = `create table if not exists public.decompositions (
+  word text not null,
+  version int not null,
+  payload jsonb not null,
+  created_at bigint,
+  primary key (word, version)
+);
+alter table public.decompositions enable row level security;
+create policy "signed in users read decompositions"
+  on public.decompositions for select
+  to authenticated using (true);
+create policy "signed in users add decompositions"
+  on public.decompositions for insert
+  to authenticated with check (true);`;
+
 const SQL_ENABLE_REALTIME = "alter publication supabase_realtime add table public.words;\nalter table public.words replica identity full;";
 
 /* Realtimeの配信が本当に届くかを、往復させて確かめる。購読が
@@ -9809,6 +9922,14 @@ async function runSyncDiagnostics() {
     sql.push(sqlAddMissingColumns(missing));
   } else {
     add(true, "必要な列がそろっています");
+  }
+
+  const { error: sharedErr } = await sb.from(SHARED_DECOMPOSE_TABLE).select("word").limit(1);
+  if (sharedErr) {
+    add(false, "分解結果の共有表がありません。単語ごとに毎回AIに分解させます");
+    sql.push(SQL_CREATE_DECOMPOSITIONS);
+  } else {
+    add(true, "分解結果の共有が使えます");
   }
 
   {
@@ -10713,7 +10834,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "208";
+const APP_BUILD = "209";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

@@ -101,6 +101,42 @@ alter table public.words
   add column if not exists antonyms jsonb;
 ```
 
+### 分解結果の共有（decompositions テーブル・任意）
+
+ある単語をどう接辞に分けるかは誰が引いても同じ結果になるので、サインイン
+した利用者どうしで使い回せる。この表を作ると、誰かが既に調べた単語は
+AIに訊かずに済み、待ち時間もAPIの消費も減る。
+
+行に `user_id` は持たせない。したがって**誰がどの単語を調べたかは残らない**。
+共有されるのは「単語 → 分解結果」だけ。表を作らなくてもアプリは従来どおり
+動く（毎回自分で分解する）。サインインしていない利用者は読み書きともに
+行わないため、ネットワークに触れない点も変わらない。
+
+```sql
+create table if not exists public.decompositions (
+  word text not null,
+  version int not null,
+  payload jsonb not null,
+  created_at bigint,
+  primary key (word, version)
+);
+alter table public.decompositions enable row level security;
+create policy "signed in users read decompositions"
+  on public.decompositions for select
+  to authenticated using (true);
+create policy "signed in users add decompositions"
+  on public.decompositions for insert
+  to authenticated with check (true);
+```
+
+追加だけを許し、更新・削除は許していない。先に書かれた結果がそのまま残る
+ので、同じ単語の分解が引くたびに入れ替わることがない。アプリ側は、校閲
+（`validateDecomposition`）を通った結果だけを差し出し、読み込む側でも
+「接辞をつなぐと単語に戻るか」を確かめてから使う。
+
+`version` は `DECOMPOSE_CACHE_VERSION` と同じ値で、分解のプロンプトを
+変えたときに上げる。古い版の結果を引かなくなる。
+
 ## 3. GoogleサインインをSupabase Authに接続する
 
 アプリは Google Identity Services（GSI）のボタンで取得したIDトークンを、
