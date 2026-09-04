@@ -88,6 +88,9 @@ button{font-family:inherit;cursor:pointer;}
 .icon-svg-book{color:var(--brand-blue);}
 .icon-svg-add{color:var(--brand-blue);}
 .icon-svg-camera{color:var(--brand-purple);}
+/* ホームの「写真で登録」だけはオレンジ。隣が画面移動のアイコンなので、
+   色を変えて「押すと何かが始まる」方だと分かるようにする */
+.icon-btn-camera .icon-svg-camera{color:var(--accent-2);}
 .icon-svg-eye{color:var(--accent);}
 .icon-svg-mic{color:var(--brand-purple);}
 .icon-svg-back{color:var(--ink-soft);}
@@ -663,9 +666,11 @@ button{font-family:inherit;cursor:pointer;}
 .usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-soft);}
 .usage-row b{color:var(--accent-ink);}
 .usage-note{font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;}
+/* 端末内に保存する旨の断り書き。読めれば十分な内容なので、枠も塗りも
+   持たせず、他の説明より一段小さく薄くして背景に沈める */
 .lockrow{
-  display:flex;gap:8px;align-items:flex-start;background:color-mix(in srgb, var(--accent) 10%, var(--surface));
-  border-radius:12px;padding:10px 12px;font-size:11.5px;color:var(--accent-ink);
+  display:flex;gap:6px;align-items:flex-start;
+  font-size:10.5px;line-height:1.55;color:var(--ink-faint);
 }
 .btn-solid{
   background:var(--accent);color:#fff;border:none;border-radius:999px;padding:13px 20px;
@@ -676,13 +681,17 @@ button{font-family:inherit;cursor:pointer;}
 
 /* 読み上げの声 */
 .tts-voice-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-#tts-speaker-select{
-  /* 話者名が長いので、ボタン2つと同じ行に収まらない幅では行を分ける */
-  flex:1 1 190px;min-width:0;border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;
-  font-family:'JetBrains Mono',monospace;font-size:12.5px;
+/* 設定画面のプルダウン。ブラウザ既定の<select>のままだと細くて頼りなく、
+   隣のボタンやピルと背丈が揃わないので、同じ高さ・同じ角丸に合わせる。
+   中身（話者名・モデルID）が長いので、1行に収まらない幅では行を分ける */
+#tts-speaker-select,
+#chat-model-select{
+  flex:1 1 210px;min-width:0;border:1.5px solid var(--line);border-radius:12px;padding:13px 12px;
+  font-family:'JetBrains Mono',monospace;font-size:13px;
   background:var(--surface);color:var(--ink);
 }
-#tts-speaker-select:disabled{opacity:.5;}
+#tts-speaker-select:disabled,
+#chat-model-select:disabled{opacity:.5;}
 
 /* Google サインイン */
 .google-signin-slot{display:flex;justify-content:center;min-height:0;}
