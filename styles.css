@@ -174,7 +174,9 @@ button{font-family:inherit;cursor:pointer;}
   animation:shatterIn .7s cubic-bezier(.22,1,.36,1) both;
 }
 .morph.burst-in{
-  animation:burstIn .8s cubic-bezier(.34,1.56,.64,1) both;
+  /* 実体はcanvasの破片が担うので、こちらは最後に置き換わるときの
+     ごく短い馴染みだけ持たせる */
+  animation:burstIn .3s ease both;
 }
 .morph.matrix-in{
   animation:matrixTileIn .6s ease both;
@@ -228,7 +230,9 @@ button{font-family:inherit;cursor:pointer;}
   to{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
 }
 @keyframes burstIn{
-  from{ transform:translate(var(--from-x,0), var(--from-y,0)) rotate(var(--from-rot,0)) scale(.3); opacity:0; }
+  from{ opacity:0; }
+  to{ opacity:1; }
+}
   to{ transform:translate(0,0) rotate(0) scale(1); opacity:1; }
 }
 @keyframes matrixTileIn{

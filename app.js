@@ -3909,16 +3909,167 @@ async function runCrackShatter(placeholder, word, morphemes, rect) {
   });
 }
 
-/* 単語カードをそのままCanvas上に再現し、各接辞の境界で破片として切り分けて
-   火球・衝撃波・火の粉・煙とともに爆発的に吹き飛ばす。placeholder自体は
-   visibility:hiddenにして隠し、その上に重ねたcanvasだけを見せる（亀裂演出と同じ手法） */
+/* ================= 爆発 ================= */
+
+/* 空気抵抗の時定数。破片も火の粉も、初速をこの時定数で失っていく。
+   加速度を毎フレーム足し込むと表示refresh rateで結果が変わってしまうため、
+   位置は時刻だけの関数として解いておく（プリズム・不死鳥と同じ考え方） */
+const BURST_DRAG_TAU = 0.42;
+const BURST_GRAVITY = 380;          // px/s²
+
+const burstEaseOut = (p) => 1 - Math.pow(1 - p, 3);
+const burstClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+/* 抗力を受けて減速する物体が、初速1のときに時刻sまでに進む距離 */
+const burstTravel = (s) => BURST_DRAG_TAU * (1 - Math.exp(-s / BURST_DRAG_TAU));
+
+/* 火球・火の粉・煙のスプライト。粒ごとにグラデーションを作ると
+   数十枚描いた時点で破綻するので、一度だけ描いてキャッシュする。
+   白熱・炎・煙の3枚を温度で混ぜると、燃え広がって冷めていく色が出せる */
+let burstCoreCache = null;
+let burstFireCache = null;
+let burstSmokeCache = null;
+
+function burstCoreSprite() {
+  if (burstCoreCache) return burstCoreCache;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, "rgba(255,255,250,.98)");
+  grad.addColorStop(0.28, "rgba(255,246,205,.8)");
+  grad.addColorStop(0.62, "rgba(255,206,110,.26)");
+  grad.addColorStop(1, "rgba(255,180,80,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  burstCoreCache = c;
+  return c;
+}
+
+function burstFireSprite() {
+  if (burstFireCache) return burstFireCache;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, "rgba(255,168,60,.85)");
+  grad.addColorStop(0.4, "rgba(233,92,28,.5)");
+  grad.addColorStop(0.75, "rgba(150,38,16,.18)");
+  grad.addColorStop(1, "rgba(120,26,12,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  burstFireCache = c;
+  return c;
+}
+
+function burstSmokeSprite() {
+  if (burstSmokeCache) return burstSmokeCache;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, "rgba(78,72,66,.5)");
+  grad.addColorStop(0.5, "rgba(78,72,66,.24)");
+  grad.addColorStop(1, "rgba(78,72,66,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  burstSmokeCache = c;
+  return c;
+}
+
+/* 板を放射状のひび割れで砕く。爆心から放射に走る割れ目と、それを横切る
+   同心の割れ目でできる区画を返す。半径は方向ごとにばらつかせるが、
+   隣り合う区画は同じ頂点を共有させる（別々に散らすと破片の間に隙間が空く） */
+function burstShatterCells(w, h, bx, by, sectors, ringFr) {
+  const rMax = Math.hypot(Math.max(bx, w - bx), Math.max(by, h - by)) * 1.08;
+  const angles = [];
+  for (let i = 0; i < sectors; i++) {
+    angles.push((i / sectors) * Math.PI * 2 + (Math.random() - 0.5) * (Math.PI / sectors) * 0.9);
+  }
+  angles.push(angles[0] + Math.PI * 2);
+
+  const radii = [];
+  for (let a = 0; a <= sectors; a++) {
+    radii.push(ringFr.map((fr, k) => {
+      if (k === 0) return 0;
+      if (k === ringFr.length - 1) return rMax * fr;      // 外周は板の外なので揺らさない
+      return rMax * fr * (1 + (Math.random() - 0.5) * 0.34);
+    }));
+  }
+  radii[sectors] = radii[0];
+
+  const cells = [];
+  for (let a = 0; a < sectors; a++) {
+    const a0 = angles[a], a1 = angles[a + 1];
+    for (let k = 0; k < ringFr.length - 1; k++) {
+      cells.push([
+        { x: bx + Math.cos(a0) * radii[a][k], y: by + Math.sin(a0) * radii[a][k] },
+        { x: bx + Math.cos(a0) * radii[a][k + 1], y: by + Math.sin(a0) * radii[a][k + 1] },
+        { x: bx + Math.cos(a1) * radii[a + 1][k + 1], y: by + Math.sin(a1) * radii[a + 1][k + 1] },
+        { x: bx + Math.cos(a1) * radii[a + 1][k], y: by + Math.sin(a1) * radii[a + 1][k] },
+      ]);
+    }
+  }
+  return { cells, rMax };
+}
+
+/* 区画を接辞の列で切り分け、破片1枚ずつの絵を先に焼いておく。
+   毎フレームclipし直すと破片の数だけ経路を切る羽目になるので、
+   ここで焼いた画像を後は貼るだけにする */
+function burstBakeFragments(src, rect, cells, columns, dpr) {
+  const frags = [];
+  cells.forEach((poly) => {
+    const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
+    const bx0 = Math.min(...xs), bx1 = Math.max(...xs);
+    const by0 = Math.min(...ys), by1 = Math.max(...ys);
+    columns.forEach((col, ci) => {
+      const x0 = Math.max(bx0, col.x0, 0), x1 = Math.min(bx1, col.x1, rect.width);
+      const y0 = Math.max(by0, 0), y1 = Math.min(by1, rect.height);
+      if (x1 - x0 < 1.5 || y1 - y0 < 1.5) return;         // 板に掛からない区画は捨てる
+      const fw = x1 - x0, fh = y1 - y0;
+      const fc = document.createElement("canvas");
+      fc.width = Math.max(1, Math.round(fw * dpr));
+      fc.height = Math.max(1, Math.round(fh * dpr));
+      const fg = fc.getContext("2d");
+      fg.setTransform(dpr, 0, 0, dpr, 0, 0);
+      fg.translate(-x0, -y0);
+      /* clipを2回掛けると交差になる。区画∩接辞の列がこの破片の形 */
+      fg.beginPath();
+      poly.forEach((p, i) => (i ? fg.lineTo(p.x, p.y) : fg.moveTo(p.x, p.y)));
+      fg.closePath();
+      fg.clip();
+      fg.beginPath();
+      fg.rect(col.x0, -1, col.x1 - col.x0, rect.height + 2);
+      fg.clip();
+      fg.drawImage(src, 0, 0, src.width, src.height, 0, 0, rect.width, rect.height);
+      /* 焦げた姿も焼いておく。破片の絵だけを持つcanvasなので、
+         source-atopで暗い色を乗せれば形の内側だけが黒ずむ */
+      const cc = document.createElement("canvas");
+      cc.width = fc.width;
+      cc.height = fc.height;
+      const cg = cc.getContext("2d");
+      cg.drawImage(fc, 0, 0);
+      cg.globalCompositeOperation = "source-atop";
+      cg.fillStyle = "rgba(38,28,22,.72)";
+      cg.fillRect(0, 0, cc.width, cc.height);
+      frags.push({ img: fc, char: cc, x0, y0, w: fw, h: fh, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, col: ci });
+    });
+  });
+  return frags;
+}
+
+/* 単語カードが爆発して砕け散る（分解アニメ本体）。
+   割れ目は接辞の境目を必ず通るので、どこで語が切れるのかは破片の飛び方に残る */
 async function runBurstExplosion(placeholder, word, morphemes, rect) {
   const cs = getComputedStyle(placeholder);
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
-  const padX = rect.width * 1.3;
-  const padTop = rect.height * 1.7;
-  const padBottom = rect.height * 2.1;
+  /* 破片は横へ大きく飛び、火球と煙は上へ伸び、重い破片は下へ落ちる */
+  const padX = Math.max(190, rect.width * 0.9);
+  const padTop = Math.max(180, rect.height * 3.4);
+  const padBottom = Math.max(230, rect.height * 4.2);
   const canvasW = rect.width + padX * 2;
   const canvasH = rect.height + padTop + padBottom;
 
@@ -3936,248 +4087,415 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
   canvas.style.visibility = "visible";
 
   const ctx = canvas.getContext("2d");
+  const srcCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr);
 
-  const bg = cs.backgroundColor;
-  const borderColor = cs.borderTopColor;
-  const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
-  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
-  const textColor = cs.color;
-  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  /* ---- 接辞の境目。字送りの実測から求める（細胞分裂・不死鳥・折り紙と
+     同じ理由で、文字数の比では境目が文字の途中に来てしまう） ---- */
+  const meas = document.createElement("canvas").getContext("2d");
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const textW = meas.measureText(word).width;
+  const textX0 = (rect.width - textW) / 2;
+  let prefix = "";
+  const boundaries = morphemes.slice(0, -1).map((m) => {
+    prefix += m.part || "";
+    return textX0 + meas.measureText(prefix).width;
+  });
+  const edges = [0, ...boundaries, rect.width];
+  const columns = edges.slice(0, -1).map((x, i) => ({ x0: x, x1: edges[i + 1] }));
 
-  /* 元絵(無傷のカード)を一度だけオフスクリーンに描き、破片を切り抜く元画像にする */
-  const srcCanvas = document.createElement("canvas");
-  srcCanvas.width = Math.round(rect.width * dpr);
-  srcCanvas.height = Math.round(rect.height * dpr);
-  const srcCtx = srcCanvas.getContext("2d");
-  srcCtx.scale(dpr, dpr);
-  roundRectPath(srcCtx, borderWidth / 2, borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth, radius);
-  srcCtx.fillStyle = bg;
-  srcCtx.fill();
-  srcCtx.lineWidth = borderWidth;
-  srcCtx.strokeStyle = borderColor;
-  srcCtx.stroke();
-  srcCtx.font = font;
-  srcCtx.fillStyle = textColor;
-  srcCtx.textAlign = "center";
-  srcCtx.textBaseline = "middle";
-  srcCtx.fillText(word, rect.width / 2, rect.height / 2);
+  /* 爆心はカードの中心よりわずかに散らす。真ん中ちょうどだと割れ方が整いすぎる */
+  const bx = rect.width * (0.46 + Math.random() * 0.08);
+  const by = rect.height * (0.44 + Math.random() * 0.12);
 
-  /* 各接辞の文字数比率の位置で、破片に切り分ける境界線(わずかにギザギザ) */
-  let acc = 0;
-  const boundaryFracs = [];
-  morphemes.slice(0, -1).forEach((m) => {
-    acc += (m.part || "").length;
-    boundaryFracs.push(acc / word.length);
+  const { cells, rMax } = burstShatterCells(rect.width, rect.height, bx, by, 13, [0, 0.3, 0.62, 1]);
+  const frags = burstBakeFragments(srcCanvas, rect, cells, columns, dpr);
+
+  /* 破片の初速。爆心に近いほど強い衝撃を受けて速く、遠いほど鈍い。
+     接辞ごとの横方向の偏りを足すので、破片は自分の接辞の側へまとまって飛ぶ */
+  const mid = (columns.length - 1) / 2;
+  frags.forEach((f) => {
+    const dx = f.cx - bx, dy = f.cy - by;
+    const dist = Math.hypot(dx, dy) || 1;
+    const near = 1 - burstClamp01(dist / rMax);
+    const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.5;
+    const speed = (150 + near * 340) * (0.72 + Math.random() * 0.56);
+    const lateral = columns.length > 1 ? (f.col - mid) / Math.max(1, mid) : 0;
+    f.vx = Math.cos(ang) * speed + lateral * 110;
+    f.vy = Math.sin(ang) * speed - 130;                  // 吹き上げ
+    /* 爆心から外れて当たった破片ほど強く回る（力のモーメント） */
+    f.vrot = ((f.cy - by) * f.vx - (f.cx - bx) * f.vy) / (dist * 42);
+    f.spawn = dist / rMax * 26;                          // 衝撃が届くまでのわずかな差
   });
 
-  const JAG_STEPS = 5;
-  const jagPaths = boundaryFracs.map((frac) => {
-    const baseX = rect.width * frac;
-    const pts = [];
-    for (let j = 0; j <= JAG_STEPS; j++) {
-      const y = (rect.height / JAG_STEPS) * j;
-      const jitter = j === 0 || j === JAG_STEPS ? 0 : (Math.random() - 0.5) * Math.min(rect.width * 0.12, 16);
-      pts.push({ x: baseX + jitter, y });
-    }
-    return pts;
-  });
-  const leftEdge = [{ x: 0, y: 0 }, { x: 0, y: rect.height }];
-  const rightEdge = [{ x: rect.width, y: 0 }, { x: rect.width, y: rect.height }];
-  const allBoundaries = [leftEdge, ...jagPaths, rightEdge];
+  /* 火球。カードは点ではなく横に長いので、火の玉も横に並べて湧かせる。
+     数を絞って一つずつ大きくしないと、粒が溶け合って一本の帯に見えてしまう */
+  const puffs = [];
+  for (let i = 0; i < 11; i++) {
+    const along = (i / 10 - 0.5) * rect.width * 0.88;
+    puffs.push({
+      x: bx + along + (Math.random() - 0.5) * 16,
+      y: by + (Math.random() - 0.5) * rect.height * 1.05,
+      vx: along * 0.55 + (Math.random() - 0.5) * 46,
+      vy: -40 - Math.random() * 74,                      // 熱で浮き上がる
+      r0: rect.height * (0.2 + Math.random() * 0.16),
+      grow: rect.height * (0.42 + Math.random() * 0.4),
+      spawn: Math.random() * 70,
+      cool: 260 + Math.random() * 200,                   // 冷えきるまで
+      life: 620 + Math.random() * 320,
+      phase: Math.random() * Math.PI * 2,
+      swirl: (Math.random() < 0.5 ? -1 : 1) * (1.6 + Math.random() * 2.2),
+      lobe: 0.7 + Math.random() * 0.5,
+    });
+  }
 
-  const shardCount = morphemes.length;
-  const cx = rect.width / 2, cy = rect.height / 2;
-  const shards = allBoundaries.slice(0, -1).map((leftPath, i) => {
-    const rightPath = allBoundaries[i + 1];
-    const xs = [...leftPath, ...rightPath].map((p) => p.x);
-    const pivotX = (Math.min(...xs) + Math.max(...xs)) / 2;
-    const pivotY = rect.height / 2;
-    const dir = shardCount > 1 ? (i - (shardCount - 1) / 2) / ((shardCount - 1) / 2) : 0;
-    /* 上向き中心に左右へ広がる扇状に、接辞の並び順を反映した角度で吹き飛ばす */
-    const angle = -Math.PI / 2 + dir * (Math.PI * 0.4) + (Math.random() - 0.5) * 0.4;
-    const speed = 330 + Math.random() * 230;
-    return {
-      leftPath, rightPath, pivotX, pivotY,
-      x: 0, y: 0,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      rot: 0,
-      vrot: (Math.random() < 0.5 ? -1 : 1) * (240 + Math.random() * 280) * (Math.PI / 180),
-      opacity: 1,
-    };
-  });
+  /* 火の粉。線として描くと、速いほど長く伸びて残像になる */
+  const sparks = [];
+  for (let i = 0; i < 54; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const speed = 200 + Math.random() * 520;
+    sparks.push({
+      x: bx + (Math.random() - 0.5) * rect.width * 0.8,
+      y: by + (Math.random() - 0.5) * rect.height * 0.6,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed - 90,
+      w: 1 + Math.random() * 1.6,
+      spawn: Math.random() * 40,
+      life: 320 + Math.random() * 460,
+    });
+  }
 
-  const rootStyle = getComputedStyle(document.documentElement);
-  const accentColor = rootStyle.getPropertyValue("--accent-2").trim() || "#E2622F";
-  const smokeColor = rootStyle.getPropertyValue("--ink-faint").trim() || "#8A8A8A";
+  /* 砕けた地の細かい欠片。光らない黒い粒が混じると、光の粒だけのときより重さが出る */
+  const debris = [];
+  for (let i = 0; i < 26; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const speed = 120 + Math.random() * 300;
+    debris.push({
+      x: bx + (Math.random() - 0.5) * rect.width * 0.9,
+      y: by + (Math.random() - 0.5) * rect.height * 0.7,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed - 110,
+      r: 1 + Math.random() * 2.2,
+      rot: Math.random() * Math.PI,
+      vrot: (Math.random() - 0.5) * 14,
+      life: 620 + Math.random() * 420,
+    });
+  }
 
-  /* 火の粉 */
-  const embers = Array.from({ length: 28 }, () => {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 150 + Math.random() * 340;
-    return {
-      x: cx, y: cy,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 60,
-      r: 1.3 + Math.random() * 2.4,
-      lifeMs: 420 + Math.random() * 340,
-      hot: Math.random(),
-    };
-  });
+  const T_FLASH = 110;              // 白熱の閃光が消えるまで
+  const SHOCK_MS = 480;             // 衝撃波が広がりきるまで
+  const FRAG_FADE_FROM = 560;
+  const FRAG_FADE_MS = 340;
+  const TOTAL_MS = 1040;
+  const shockMax = Math.max(rect.width, rect.height) * 2.2;
 
-  /* 煙: 重なって塊状の灰色ブロブにならないよう、控えめな数・薄さ・広がりに抑える */
-  const smokes = Array.from({ length: 4 }, () => {
-    const angle = Math.random() * Math.PI * 2;
-    const dist = rect.height * 0.18 + Math.random() * rect.height * 0.22;
-    return {
-      x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist,
-      vx: Math.cos(angle) * (14 + Math.random() * 18),
-      vy: -(22 + Math.random() * 30),
-      r0: 5 + Math.random() * 6,
-      grow: 20 + Math.random() * 22,
-      delayMs: 90 + Math.random() * 160,
-    };
-  });
-
-  const SHAKE_MS = 130;
-  const FLASH_PEAK_MS = 110;
-  const BURST_MS = 700;
-  const FADE_FROM = BURST_MS * 0.4;
-  const gravity = 640;
-  const dt = 1 / 60;
+  const core = burstCoreSprite();
+  const fire = burstFireSprite();
+  const smoke = burstSmokeSprite();
   const start = performance.now();
 
   return new Promise((resolve) => {
     function frame(now) {
-      /* rAFの最初のコールバックのtimestampがperformance.now()より
-         わずかに前になることがあるため、経過時間は0未満にならないようクランプする */
       const t = Math.max(0, now - start);
+      const s = t / 1000;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, canvasW, canvasH);
-
       ctx.save();
-      const shakeP = Math.max(0, 1 - t / SHAKE_MS);
-      const shakeMag = shakeP * shakeP * 7;
+      /* 爆発の瞬間だけ画面を揺らす。揺れは時刻の関数なので、
+         フレームが飛んでも揺れ幅は同じように収まる */
+      const shakeP = Math.max(0, 1 - t / 170);
+      const shake = shakeP * shakeP * 9;
       ctx.translate(
-        padX + (Math.random() - 0.5) * shakeMag,
-        padTop + (Math.random() - 0.5) * shakeMag
+        padX + Math.sin(t * 0.09) * shake,
+        padTop + Math.sin(t * 0.13 + 1.7) * shake * 0.7
       );
 
-      /* 衝撃波リング */
-      const ringP = Math.min(1, t / (BURST_MS * 0.75));
-      if (ringP < 1) {
-        const ringR = ringP * Math.max(rect.width, rect.height) * 1.35;
+      const heat = Math.max(0, 1 - t / 520);
+
+      /* 1) 火球の下に暗幕を敷く。加算合成の炎は明るい地の上では白飛びして
+            消えてしまうので、爆心のまわりだけ落としておく（不死鳥と同じ） */
+      if (heat > 0.02) {
+        const dimR = Math.max(rect.width, rect.height) * (0.66 + (1 - heat) * 0.5);
+        const dim = ctx.createRadialGradient(bx, by, 4, bx, by, dimR);
+        dim.addColorStop(0, "rgba(26,16,10,1)");
+        dim.addColorStop(0.55, "rgba(26,16,10,.5)");
+        dim.addColorStop(1, "rgba(26,16,10,0)");
+        ctx.save();
+        ctx.globalAlpha = heat * 0.22;
+        ctx.fillStyle = dim;
+        ctx.fillRect(bx - dimR, by - dimR, dimR * 2, dimR * 2);
+        ctx.restore();
+      }
+
+      /* 2) 衝撃波。実際の爆風は音速を超えた直後がいちばん速く、
+            広がるにつれて急に鈍るので、半径は指数で頭打ちにする */
+      const shockP = 1 - Math.exp(-t / (SHOCK_MS * 0.34));
+      if (t < SHOCK_MS) {
+        const r = shockMax * shockP;
+        const fade = Math.pow(1 - t / SHOCK_MS, 1.6);
         ctx.save();
         ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = (1 - ringP) * 0.85;
-        ctx.strokeStyle = "#fff8e6";
-        ctx.lineWidth = Math.max(1, 9 * (1 - ringP));
+        /* 圧縮された空気の帯。前縁の内側が薄く光る */
+        ctx.globalAlpha = fade * 0.22;
+        ctx.strokeStyle = "rgba(255,226,170,1)";
+        ctx.lineWidth = Math.max(1, 16 * (1 - shockP));
         ctx.beginPath();
-        ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+        ctx.arc(bx, by, Math.max(0, r - 8 * (1 - shockP)), 0, Math.PI * 2);
+        ctx.stroke();
+        /* 前縁そのもの */
+        ctx.globalAlpha = fade * 0.75;
+        ctx.strokeStyle = "rgba(255,248,226,1)";
+        ctx.lineWidth = Math.max(0.8, 3.4 * (1 - shockP));
+        ctx.beginPath();
+        ctx.arc(bx, by, r, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
 
-      /* 火球: 中心から白熱→黄→橙→赤へグラデーションする光の玉 */
-      const fireGrow = Math.min(1, t / FLASH_PEAK_MS);
-      const fireFadeEnd = FLASH_PEAK_MS + BURST_MS * 0.55;
-      const fireAlpha = t < FLASH_PEAK_MS ? 1 : Math.max(0, 1 - (t - FLASH_PEAK_MS) / (fireFadeEnd - FLASH_PEAK_MS));
-      if (fireAlpha > 0) {
-        const fireR = rect.height * (0.5 + fireGrow * 0.85) * (1 + (Math.max(0, t - FLASH_PEAK_MS) / BURST_MS) * 0.7);
-        ctx.save();
-        ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = fireAlpha;
-        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, fireR);
-        grad.addColorStop(0, "#ffffff");
-        grad.addColorStop(0.16, "#fff6c9");
-        grad.addColorStop(0.38, "#ffd25f");
-        grad.addColorStop(0.62, accentColor);
-        grad.addColorStop(1, "rgba(200,60,20,0)");
-        ctx.fillStyle = grad;
+      /* 3) 火球。湧いて膨らみ、浮き上がりながら冷めて煙になる */
+      ctx.save();
+      for (const p of puffs) {
+        const lt = t - p.spawn;
+        if (lt <= 0 || lt >= p.life) continue;
+        const ls = lt / 1000;
+        const tr = burstTravel(ls);
+        const x = p.x + p.vx * tr;
+        const y = p.y + p.vy * tr;
+        /* 膨らみは頭打ちになる。温度は冷却時間で1→0 */
+        const r = p.r0 + p.grow * (1 - Math.exp(-lt / 260));
+        const temp = Math.max(0, 1 - lt / p.cool);
+        const lifeFade = Math.min(1, lt / 60) * Math.pow(1 - lt / p.life, 1.4);
+        if (lifeFade <= 0.01) continue;
+        if (temp > 0.01) {
+          ctx.globalCompositeOperation = "lighter";
+          /* 真円のぼかしを1枚置くと綿玉にしか見えない。芯の周りを回る
+             3つの塊に分けて重ねると、輪郭が崩れて煮え立つ火の玉になる */
+          ctx.globalAlpha = lifeFade * temp * 0.62;
+          for (let k = 0; k < 3; k++) {
+            const a = p.phase + k * 2.094 + ls * p.swirl;
+            const lr = r * p.lobe * (0.78 + 0.22 * Math.sin(a * 1.7));
+            const lx = x + Math.cos(a) * r * 0.4;
+            const ly = y + Math.sin(a) * r * 0.32;
+            ctx.drawImage(fire, lx - lr, ly - lr, lr * 2, lr * 2);
+          }
+          ctx.globalAlpha = lifeFade * temp * 0.5;
+          ctx.drawImage(fire, x - r, y - r, r * 2, r * 2);
+          /* 芯。噴き出した直後がいちばん白い */
+          ctx.globalAlpha = lifeFade * Math.pow(temp, 1.8);
+          ctx.drawImage(core, x - r * 0.58, y - r * 0.58, r * 1.16, r * 1.16);
+        }
+        /* 冷めたぶんだけ煙に置き換わる。ここを濃くすると、重なった煙が
+           一枚の灰色の板になって爆発そのものを覆い隠してしまう */
+        if (temp < 0.9) {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = lifeFade * (1 - temp) * 0.16;
+          ctx.drawImage(smoke, x - r * 0.75, y - r * 0.75, r * 1.5, r * 1.5);
+        }
+      }
+      ctx.restore();
+
+      /* 4) 破片。抗力で鈍りながら飛び、重力で落ちて、回りながら消える */
+      const fragFade = t < FRAG_FADE_FROM ? 1
+        : Math.max(0, 1 - (t - FRAG_FADE_FROM) / FRAG_FADE_MS);
+      if (fragFade > 0.004) {
+        for (const f of frags) {
+          const lt = t - f.spawn;
+          if (lt <= 0) {
+            ctx.drawImage(f.img, f.x0, f.y0, f.w, f.h);
+            continue;
+          }
+          const ls = lt / 1000;
+          const tr = burstTravel(ls);
+          const x = f.x0 + f.vx * tr;
+          const y = f.y0 + f.vy * tr + 0.5 * BURST_GRAVITY * ls * ls;
+          ctx.save();
+          ctx.globalAlpha = fragFade;
+          ctx.translate(x + f.w / 2, y + f.h / 2);
+          ctx.rotate(f.vrot * ls);
+          ctx.drawImage(f.img, -f.w / 2, -f.h / 2, f.w, f.h);
+          /* 火球を抜けた破片は煤けていく。白いままだと紙吹雪に見える */
+          const char = burstClamp01((lt - 40) / 420) * 0.62;
+          if (char > 0.01) {
+            ctx.globalAlpha = fragFade * char;
+            ctx.drawImage(f.char, -f.w / 2, -f.h / 2, f.w, f.h);
+          }
+          ctx.restore();
+        }
+      }
+
+      /* 5) 火の粉。速いほど長い線になる＝そのまま残像になる */
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineCap = "round";
+      for (const p of sparks) {
+        const lt = t - p.spawn;
+        if (lt <= 0 || lt >= p.life) continue;
+        const ls = lt / 1000;
+        const tr = burstTravel(ls);
+        const x = p.x + p.vx * tr;
+        const y = p.y + p.vy * tr + 0.5 * BURST_GRAVITY * 0.75 * ls * ls;
+        /* 今の速さ。抗力で指数的に落ちる */
+        const decay = Math.exp(-ls / BURST_DRAG_TAU);
+        const vx = p.vx * decay, vy = p.vy * decay + BURST_GRAVITY * 0.75 * ls;
+        const streak = Math.min(26, Math.hypot(vx, vy) * 0.028);
+        const lp = lt / p.life;
+        const a = Math.min(1, lt / 40) * Math.pow(1 - lp, 1.5);
+        if (a <= 0.02) continue;
+        /* 冷めるほど白→黄→橙へ落ちる */
+        const warm = Math.pow(1 - lp, 0.7);
+        ctx.strokeStyle = `rgba(255,${Math.round(150 + 95 * warm)},${Math.round(60 + 130 * warm * warm)},1)`;
+        ctx.globalAlpha = a;
+        ctx.lineWidth = p.w;
+        const len = Math.hypot(vx, vy) || 1;
         ctx.beginPath();
-        ctx.arc(cx, cy, fireR, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - (vx / len) * streak, y - (vy / len) * streak);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      /* 6) 黒い欠片。光らない粒が混じると、光の粒だけのときより重さが出る */
+      for (const d of debris) {
+        if (t >= d.life) continue;
+        const ls = t / 1000;
+        const tr = burstTravel(ls);
+        const x = d.x + d.vx * tr;
+        const y = d.y + d.vy * tr + 0.5 * BURST_GRAVITY * ls * ls;
+        const a = Math.pow(1 - t / d.life, 1.2) * 0.8;
+        if (a <= 0.02) continue;
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate(x, y);
+        ctx.rotate(d.rot + d.vrot * ls);
+        ctx.fillStyle = "rgba(48,40,34,.95)";
+        ctx.fillRect(-d.r, -d.r * 0.7, d.r * 2, d.r * 1.4);
         ctx.restore();
       }
 
-      /* 破片: 接辞ごとに切り分けたカードの断片が吹き飛ぶ */
-      shards.forEach((s) => {
-        if (s.opacity <= 0) return;
-        s.vy += gravity * dt;
-        s.x += s.vx * dt;
-        s.y += s.vy * dt;
-        s.rot += s.vrot * dt;
-        if (t > FADE_FROM) s.opacity = Math.max(0, 1 - (t - FADE_FROM) / (BURST_MS - FADE_FROM));
-
-        ctx.save();
-        ctx.globalAlpha = s.opacity;
-        ctx.translate(s.pivotX + s.x, s.pivotY + s.y);
-        ctx.rotate(s.rot);
-        ctx.translate(-s.pivotX, -s.pivotY);
-        shardClipPath(ctx, s.leftPath, s.rightPath);
-        ctx.clip();
-        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, rect.width, rect.height);
-        if (t < 220) {
-          /* 爆発直後は火球の光を浴びて一瞬白飛びする */
-          ctx.globalCompositeOperation = "lighter";
-          ctx.globalAlpha = s.opacity * Math.max(0, 1 - t / 220) * 0.6;
-          ctx.fillStyle = "#fff3c4";
-          ctx.fillRect(0, 0, rect.width, rect.height);
-        }
-        ctx.restore();
-      });
-
-      /* 火の粉 */
-      embers.forEach((e) => {
-        if (t > e.lifeMs) return;
-        e.vy += gravity * 0.35 * dt;
-        e.x += e.vx * dt;
-        e.y += e.vy * dt;
-        const lifeP = t / e.lifeMs;
+      /* 7) 閃光。爆発の瞬間だけ、あたり一面を白く飛ばす */
+      if (t < T_FLASH) {
+        const fp = 1 - t / T_FLASH;
+        const r = Math.max(rect.width, rect.height) * (0.7 + (1 - fp) * 1.6);
         ctx.save();
         ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = Math.max(0, 1 - lifeP);
-        const col = e.hot < 0.5 ? "#ffe58a" : "#ff7a3c";
-        const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
-        g.addColorStop(0, col);
-        g.addColorStop(1, "rgba(255,120,50,0)");
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r * 3, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.globalAlpha = Math.pow(fp, 1.4);
+        ctx.drawImage(core, bx - r, by - r, r * 2, r * 2);
         ctx.restore();
-      });
-
-      /* 煙: 火球が収まった後、輪郭をぼかして薄く漂わせる(fill+strokeの二重塗りを避け
-         隣接する煙同士が重なっても濃い塊にならないよう、ごく低いピーク濃度に抑える) */
-      smokes.forEach((sm) => {
-        const lt = t - sm.delayMs;
-        if (lt < 0) return;
-        const p = Math.min(1, lt / (BURST_MS - sm.delayMs));
-        sm.x += sm.vx * dt;
-        sm.y += sm.vy * dt;
-        const r = sm.r0 + sm.grow * p;
-        const fadeIn = Math.min(1, lt / 120);
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, 0.12 * fadeIn * (1 - p));
-        const g = ctx.createRadialGradient(sm.x, sm.y, 0, sm.x, sm.y, r);
-        g.addColorStop(0, smokeColor);
-        g.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(sm.x, sm.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      });
+      }
 
       ctx.restore();
 
-      if (t >= BURST_MS) { resolve(); return; }
+      if (t >= TOTAL_MS) { resolve(); return; }
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
   });
 }
+
+/* 接辞カードが、飛び散った破片が巻き戻るように組み上がって現れる
+   （単語側の爆発と対になる逆再生）。噛み合った瞬間に衝撃が走る */
+async function runBurstTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  if (!el.isConnected) return;
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(90, rect.width * 0.7);
+  const padY = Math.max(80, rect.height * 1.1);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "burst-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const partText = partEl ? partEl.textContent : "";
+  const srcCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
+
+  const bx = rect.width / 2, by = rect.height / 2;
+  const { cells, rMax } = burstShatterCells(rect.width, rect.height, bx, by, 9, [0, 0.45, 1]);
+  const frags = burstBakeFragments(srcCanvas, rect, cells, [{ x0: 0, x1: rect.width }], dpr);
+  frags.forEach((f) => {
+    const dx = f.cx - bx, dy = f.cy - by;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.6;
+    const away = 40 + (1 - burstClamp01(dist / rMax)) * 70;
+    f.fromX = Math.cos(ang) * away;
+    f.fromY = Math.sin(ang) * away - 16;
+    f.fromRot = (Math.random() - 0.5) * 1.7;
+    f.delay = Math.random() * 90;
+  });
+
+  const IN_MS = 380;
+  const TOTAL_MS = 620;
+  const core = burstCoreSprite();
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      /* 破片が定位置へ吸い戻る */
+      let landed = 1;
+      for (const f of frags) {
+        const p = burstEaseOut(burstClamp01((t - f.delay) / IN_MS));
+        landed = Math.min(landed, p);
+        const back = 1 - p;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, p * 2.2);
+        ctx.translate(f.x0 + f.w / 2 + f.fromX * back, f.y0 + f.h / 2 + f.fromY * back);
+        ctx.rotate(f.fromRot * back);
+        ctx.drawImage(f.img, -f.w / 2, -f.h / 2, f.w, f.h);
+        ctx.restore();
+      }
+
+      /* 噛み合った瞬間の衝撃。最後の破片が収まってから短く光る */
+      const hit = burstClamp01((t - (IN_MS + 40)) / 170);
+      if (landed > 0.98 && hit > 0 && hit < 1) {
+        const fp = 1 - hit;
+        const r = Math.max(rect.width, rect.height) * (0.45 + hit * 0.75);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = Math.pow(fp, 1.6) * 0.75;
+        ctx.drawImage(core, bx - r, by - r, r * 2, r * 2);
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
 
 /* ---- 「マトリックス」アニメーション: 単語カードが上から緑の数字の雨へと
    分解されて消え、続いて接辞カードが数字の雨として降ってきてカードの形へと
@@ -6565,16 +6883,11 @@ const DECOMPOSE_ANIM_STYLES = {
   burst: {
     label: "爆発",
     tileClass: "burst-in",
-    tileVars(i, mid) {
-      const dir = i - mid || (i % 2 === 0 ? -0.5 : 0.5);
-      const dist = 60 + Math.abs(dir) * 32;
-      return {
-        "--from-x": `${Math.sign(dir) * dist}px`,
-        "--from-y": `${-28 - Math.random() * 26}px`,
-        "--from-rot": `${dir * 36}deg`,
-      };
+    tileVars() {
+      return {};
     },
-    /* 単語ブロックが接辞ごとの破片になり、火球・衝撃波・火の粉とともに爆発する */
+    /* 単語カードが砕けて、火球・衝撃波・火の粉とともに爆発する。
+       割れ目は接辞の境目を通るので、破片の飛び方に語の切れ目が残る */
     async intro(placeholder, word, morphemes) {
       if (reducedMotion()) return;
       await ensureMorphFontLoaded();
@@ -6587,6 +6900,11 @@ const DECOMPOSE_ANIM_STYLES = {
       const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
       placeholder.style.position = "relative";
       await runBurstExplosion(placeholder, word, morphemes, rect);
+    },
+    /* 接辞カードは、飛び散った破片が巻き戻るように組み上がって現れる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runBurstTileResolve(el, i * 110);
     },
   },
 
@@ -9585,7 +9903,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "199";
+const APP_BUILD = "200";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
