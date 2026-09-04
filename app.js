@@ -6909,6 +6909,411 @@ async function runOrigamiTileResolve(el, delayMs) {
 }
 
 
+/* ================= ジッパー ================= */
+
+/* ほどける帯の幅。カードの縁を1周するごとに、この幅だけ内側へ食い込む */
+const ZIPPER_STRIP = 5.4;
+/* ほどけた帯が飛んでいくときの空気抵抗の時定数 */
+const ZIPPER_DRAG_TAU = 0.5;
+
+const zipperClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const zipperEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const zipperEaseOut = (p) => 1 - Math.pow(1 - p, 3);
+const zipperTravel = (s) => ZIPPER_DRAG_TAU * (1 - Math.exp(-s / ZIPPER_DRAG_TAU));
+
+/* 中心から角度th方向へ進んだとき、角丸矩形の輪郭に当たるまでの距離。
+   まず角のない矩形との交点を出し、その点が角の領域に入っていたら
+   角の円との交点で取り直す（角を丸く回り込ませないと、ジッパーが
+   カードの縁からずれて走ってしまう） */
+function zipperEdgeRadius(hw, hh, r, th) {
+  const cx = Math.cos(th), cy = Math.sin(th);
+  const tx = Math.abs(cx) < 1e-6 ? Infinity : hw / Math.abs(cx);
+  const ty = Math.abs(cy) < 1e-6 ? Infinity : hh / Math.abs(cy);
+  const t = Math.min(tx, ty);
+  if (r <= 0.01) return t;
+  const px = cx * t, py = cy * t;
+  if (Math.abs(px) <= hw - r || Math.abs(py) <= hh - r) return t;
+  /* 角の円との交点。|t·dir - c| = r を解いて外側の根を取る */
+  const ax = Math.sign(px) * (hw - r), ay = Math.sign(py) * (hh - r);
+  const dot = cx * ax + cy * ay;
+  const disc = dot * dot - (ax * ax + ay * ay) + r * r;
+  if (disc <= 0) return t;
+  return dot + Math.sqrt(disc);
+}
+
+/* 外周から内へ向かう螺旋を、点の列として起こす。
+   1周ごとに帯の幅だけ内側へ寄せるので、角丸矩形に沿って渦を巻く。
+   角度を等間隔に刻むと横長のカードでは点の間隔が偏るため、
+   弧長も一緒に持たせて、走る速さは弧長で測れるようにしておく */
+function zipperSpiral(w, h, radius, strip) {
+  const hw = w / 2, hh = h / 2;
+  const cx = w / 2, cy = h / 2;
+  const maxInset = Math.min(hw, hh);
+  const th0 = Math.atan2(-hh, -hw);          // 左上の角から始める
+  const step = 0.05;
+  const pts = [];
+  const arc = [0];
+  let total = 0;
+  for (let k = 0; ; k++) {
+    const th = th0 + k * step;
+    const inset = strip * ((th - th0) / (Math.PI * 2));
+    if (inset > maxInset) break;
+    const p = {
+      x: cx + Math.cos(th) * zipperEdgeRadius(hw - inset, hh - inset, Math.max(0, radius - inset), th),
+      y: cy + Math.sin(th) * zipperEdgeRadius(hw - inset, hh - inset, Math.max(0, radius - inset), th),
+    };
+    if (k > 0) {
+      const d = Math.hypot(p.x - pts[k - 1].x, p.y - pts[k - 1].y);
+      total += d;
+      arc.push(total);
+    }
+    pts.push(p);
+    if (k > 6000) break;                      // 念のための歯止め
+  }
+  return { pts, arc, total };
+}
+
+/* 弧長sの位置と、そこでの進行方向を返す */
+function zipperAt(spiral, s) {
+  const { pts, arc } = spiral;
+  if (pts.length < 2) return { x: 0, y: 0, ang: 0, i: 0 };
+  const target = Math.max(0, Math.min(arc[arc.length - 1], s));
+  let lo = 0, hi = arc.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (arc[mid] <= target) lo = mid; else hi = mid;
+  }
+  const seg = arc[hi] - arc[lo] || 1;
+  const f = (target - arc[lo]) / seg;
+  const a = pts[lo], b = pts[hi];
+  return {
+    x: a.x + (b.x - a.x) * f,
+    y: a.y + (b.y - a.y) * f,
+    ang: Math.atan2(b.y - a.y, b.x - a.x),
+    i: lo,
+  };
+}
+
+/* 残っているカードを描く。無傷のカードを敷き直してから、
+   ほどけ終わった区間を screen 上から destination-out で削り取る。
+   毎フレーム敷き直すので、削った跡が積み上がって狂うことがない */
+function zipperCarve(buf, bctx, card, rect, spiral, from, to, strip, edgeColor) {
+  bctx.setTransform(1, 0, 0, 1, 0, 0);
+  bctx.clearRect(0, 0, buf.width, buf.height);
+  bctx.setTransform(buf.width / rect.width, 0, 0, buf.height / rect.height, 0, 0);
+  bctx.globalCompositeOperation = "source-over";
+  bctx.drawImage(card, 0, 0, card.width, card.height, 0, 0, rect.width, rect.height);
+  if (to <= from) return;
+  const { pts } = spiral;
+  const head = zipperAt(spiral, from);
+  const tail = zipperAt(spiral, to);
+  /* ほどけた跡をなぞる経路。削るのにも、切り口を残すのにも同じ形を使う */
+  const trace = () => {
+    bctx.beginPath();
+    bctx.moveTo(head.x, head.y);
+    for (let i = head.i + 1; i <= tail.i && i < pts.length; i++) bctx.lineTo(pts[i].x, pts[i].y);
+    bctx.lineTo(tail.x, tail.y);
+  };
+  bctx.lineCap = "round";
+  bctx.lineJoin = "round";
+  /* 帯より少し太く縁の色を敷いてから、内側だけを削り取る。
+     残るのは両脇のごく細い筋＝切り口になる。カードの地は白いので、
+     これがないと明るいテーマでは、どこまでほどけたのかが見えない */
+  if (edgeColor) {
+    bctx.globalCompositeOperation = "source-over";
+    bctx.strokeStyle = edgeColor;
+    bctx.lineWidth = strip * 1.08 + 2.4;
+    trace();
+    bctx.stroke();
+  }
+  bctx.globalCompositeOperation = "destination-out";
+  bctx.lineWidth = strip * 1.08;              // 隣の周とわずかに重ねて削り残しを防ぐ
+  trace();
+  bctx.stroke();
+  bctx.globalCompositeOperation = "source-over";
+}
+
+/* ジッパーの務歯。まだ開いていない側の縁に、進行方向と直交する小さな歯を並べる */
+function zipperTeeth(ctx, spiral, from, to, color, alpha) {
+  if (to <= from || alpha <= 0.01) return;
+  const pitch = 4.6;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineCap = "round";
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  for (let s = from, k = 0; s < to; s += pitch, k++) {
+    const p = zipperAt(spiral, s);
+    const nx = -Math.sin(p.ang), ny = Math.cos(p.ang);
+    /* 左右で歯の長さを変えると、噛み合った務歯らしい互い違いになる */
+    const inner = k % 2 === 0 ? 3.3 : 1.5;
+    const outer = k % 2 === 0 ? 1.5 : 3.3;
+    ctx.moveTo(p.x - nx * inner, p.y - ny * inner);
+    ctx.lineTo(p.x + nx * outer, p.y + ny * outer);
+  }
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* 引き手。進行方向を向いた小さな金具として描く */
+function zipperSlider(ctx, x, y, ang, color, faceColor, alpha) {
+  if (alpha <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  ctx.fillStyle = color;
+  roundRectPath(ctx, -7, -4.6, 14, 9.2, 3);
+  ctx.fill();
+  /* 上面のあたり。金具に見えるだけの最小限の照り */
+  ctx.fillStyle = faceColor;
+  ctx.globalAlpha = alpha * 0.75;
+  roundRectPath(ctx, -5, -3.1, 7.5, 2.4, 1.2);
+  ctx.fill();
+  /* 引き手の輪 */
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.7;
+  ctx.beginPath();
+  ctx.ellipse(-12.5, 0, 6.5, 3.6, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* 帯の切れ端を1つずつ焼いておく。螺旋の上の小さな回転した矩形なので、
+   カードの絵を逆向きに変換して切り出せば、その場所の色と文字がそのまま乗る */
+function zipperBakeThreads(card, rect, spiral, strip, dpr, edgeColor) {
+  const segLen = 16;
+  const threads = [];
+  for (let s = segLen / 2; s < spiral.total; s += segLen) {
+    const p = zipperAt(spiral, s);
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(segLen * dpr));
+    c.height = Math.max(1, Math.round(strip * dpr));
+    const g = c.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.translate(segLen / 2, strip / 2);
+    g.rotate(-p.ang);
+    g.translate(-p.x, -p.y);
+    g.drawImage(card, 0, 0, card.width, card.height, 0, 0, rect.width, rect.height);
+    /* 切れ端の輪郭。カードの地は白いので、縁取りがないと地に溶けて見えなくなる */
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.globalCompositeOperation = "source-atop";
+    g.strokeStyle = edgeColor || "rgba(120,120,120,1)";
+    g.globalAlpha = 0.55;
+    g.lineWidth = 1.6;
+    g.strokeRect(0, 0, segLen, strip);
+    /* 中心から外へ向く向き。ほどけた帯はカードから離れる側へ流れる。
+       速さを揃えておかないと、ばらばらの紙片になって帯に見えない */
+    const ox = p.x - rect.width / 2, oy = p.y - rect.height / 2;
+    const on = Math.hypot(ox, oy) || 1;
+    threads.push({
+      img: c, w: segLen, h: strip,
+      x: p.x, y: p.y, ang: p.ang, at: s,
+      vx: (ox / on) * (24 + Math.random() * 20) + Math.cos(p.ang) * 10,
+      vy: (oy / on) * (24 + Math.random() * 20) + Math.sin(p.ang) * 10 - 6,
+      spin: (Math.random() - 0.5) * 2.6,
+      life: 290 + Math.random() * 160,
+    });
+  }
+  return threads;
+}
+
+/* 単語カードが、外周から内側へジッパーを開くようにほどけて消える（分解アニメ本体） */
+async function runZipperUnravel(placeholder, word, morphemes, rect) {
+  const cs = getComputedStyle(placeholder);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(150, rect.width * 0.55);
+  const padY = Math.max(130, rect.height * 2.2);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "zipper-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+
+  placeholder.appendChild(canvas);
+  placeholder.style.visibility = "hidden";
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const cardCanvas = renderCardOffscreen(cs, word, cs, rect, rect.height / 2, dpr);
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const teethColor = cs.borderTopColor || "#1F6F63";
+  const faceColor = cs.backgroundColor || "#FFFFFF";
+
+  const spiral = zipperSpiral(rect.width, rect.height, radius, ZIPPER_STRIP);
+  const threads = zipperBakeThreads(cardCanvas, rect, spiral, ZIPPER_STRIP, dpr, teethColor);
+
+  /* 残りのカードを削り出すための下絵 */
+  const buf = document.createElement("canvas");
+  buf.width = Math.round(rect.width * dpr);
+  buf.height = Math.round(rect.height * dpr);
+  const bctx = buf.getContext("2d");
+
+  const T_TEETH = 210;            // 縁に務歯が並ぶまで
+  const UNZIP_MS = 940;           // 開ききるまで
+  const TAIL_MS = 360;            // ほどけた帯が飛び去るまで
+  const TOTAL_MS = T_TEETH + UNZIP_MS + TAIL_MS;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      const unzip = zipperEaseInOut(zipperClamp01((t - T_TEETH) / UNZIP_MS));
+      const front = spiral.total * unzip;
+
+      /* 1) 残っているカード。ほどけた区間だけ削り取られている */
+      zipperCarve(buf, bctx, cardCanvas, rect, spiral, 0, front, ZIPPER_STRIP, teethColor);
+      ctx.drawImage(buf, 0, 0, rect.width, rect.height);
+
+      /* 2) まだ閉じている縁の務歯。引き手の先だけに並べる */
+      const teethIn = zipperClamp01(t / T_TEETH);
+      zipperTeeth(ctx, spiral, front, Math.min(spiral.total, front + 150), teethColor,
+        teethIn * (unzip < 1 ? 1 : 0));
+
+      /* 3) ほどけた帯。切れ端が外へ流れて薄れる */
+      for (const th of threads) {
+        const lt = t - (T_TEETH + UNZIP_MS * inverseEase(th.at / spiral.total));
+        if (lt <= 0 || lt >= th.life) continue;
+        const ls = lt / 1000;
+        const tr = zipperTravel(ls);
+        const x = th.x + th.vx * tr;
+        const y = th.y + th.vy * tr + 300 * ls * ls;   // めくれた帯は垂れて落ちる
+        const a = Math.min(1, lt / 50) * Math.pow(1 - lt / th.life, 1.3);
+        if (a <= 0.02) continue;
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate(x, y);
+        ctx.rotate(th.ang + th.spin * ls);
+        ctx.drawImage(th.img, -th.w / 2, -th.h / 2, th.w, th.h);
+        ctx.restore();
+      }
+
+      /* 4) 引き手。開ききるまで先頭を走る */
+      if (unzip < 1) {
+        const p = zipperAt(spiral, front);
+        zipperSlider(ctx, p.x, p.y, p.ang, teethColor, faceColor, zipperClamp01(t / T_TEETH));
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  /* 弧長の位置から、引き手がそこを通る時刻の割合を逆に求める。
+     引き手の速さは一定ではないので、切れ端の飛び出す時刻もそれに合わせる */
+  function inverseEase(target) {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 22; i++) {
+      const mid = (lo + hi) / 2;
+      if (zipperEaseInOut(mid) < target) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+}
+
+/* 接辞カードが、内側から外へジッパーを閉じるように編み上がって現れる
+   （単語側のほどけと対になる逆再生） */
+async function runZipperTileResolve(el, delayMs) {
+  await ensureMorphFontLoaded();
+  el.style.position = "relative";
+  if (!el.isConnected) return;
+  const rect = { width: el.offsetWidth, height: el.offsetHeight };
+  const partEl = el.querySelector(".morph-part");
+  const elBox = el.getBoundingClientRect();
+  const partBox = partEl ? partEl.getBoundingClientRect() : elBox;
+  const partCenterY = partBox.top - elBox.top + partBox.height / 2;
+
+  el.style.visibility = "hidden";
+  if (delayMs > 0) await sleep(delayMs);
+  if (!el.isConnected) return;
+
+  const cs = getComputedStyle(el);
+  const partCs = partEl ? getComputedStyle(partEl) : cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+
+  const padX = Math.max(26, rect.width * 0.2);
+  const padY = Math.max(26, rect.height * 0.3);
+  const canvasW = rect.width + padX * 2;
+  const canvasH = rect.height + padY * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "zipper-canvas";
+  canvas.style.left = `${-padX}px`;
+  canvas.style.top = `${-padY}px`;
+  canvas.width = Math.round(canvasW * dpr);
+  canvas.height = Math.round(canvasH * dpr);
+  canvas.style.width = `${canvasW}px`;
+  canvas.style.height = `${canvasH}px`;
+  el.appendChild(canvas);
+  canvas.style.visibility = "visible";
+
+  const ctx = canvas.getContext("2d");
+  const partText = partEl ? partEl.textContent : "";
+  const cardCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
+  const radius = parseFloat(cs.borderTopLeftRadius) || 12;
+  const teethColor = cs.borderTopColor || "#1F6F63";
+  const faceColor = cs.backgroundColor || "#FFFFFF";
+
+  const spiral = zipperSpiral(rect.width, rect.height, radius, ZIPPER_STRIP);
+  const buf = document.createElement("canvas");
+  buf.width = Math.round(rect.width * dpr);
+  buf.height = Math.round(rect.height * dpr);
+  const bctx = buf.getContext("2d");
+
+  const ZIP_MS = 470;
+  const TOTAL_MS = ZIP_MS + 130;
+  const start = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const t = Math.max(0, now - start);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.save();
+      ctx.translate(padX, padY);
+
+      /* 引き手は中心から外周へ戻っていく。まだ通っていない外側だけが欠けている */
+      const zip = zipperEaseInOut(zipperClamp01(t / ZIP_MS));
+      const front = spiral.total * (1 - zip);
+      zipperCarve(buf, bctx, cardCanvas, rect, spiral, 0, front, ZIPPER_STRIP, teethColor);
+      ctx.drawImage(buf, 0, 0, rect.width, rect.height);
+
+      if (zip < 1) {
+        zipperTeeth(ctx, spiral, Math.max(0, front - 130), front, teethColor, 1);
+        const p = zipperAt(spiral, front);
+        zipperSlider(ctx, p.x, p.y, p.ang + Math.PI, teethColor, faceColor, 1);
+      }
+
+      ctx.restore();
+
+      if (t >= TOTAL_MS) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+
+  canvas.remove();
+  el.style.visibility = "visible";
+}
+
+
 /* ---- 分解アニメーション（設定画面から選択可能） ---- */
 const DECOMPOSE_ANIM_STYLES = {
   crack: {
@@ -6962,6 +7367,31 @@ const DECOMPOSE_ANIM_STYLES = {
     mountTile(el, i) {
       if (reducedMotion()) return;
       runBurstTileResolve(el, i * 110);
+    },
+  },
+
+  zipper: {
+    label: "ジッパー",
+    tileClass: "zipper-in",
+    tileVars() {
+      return {};
+    },
+    /* カードの縁をジッパーのように開き、外周から内側へ渦を巻いてほどけていく */
+    async intro(placeholder, word, morphemes) {
+      if (reducedMotion()) return;
+      await ensureMorphFontLoaded();
+
+      placeholder.classList.remove("word-pulse");
+      placeholder.style.whiteSpace = "nowrap";
+      placeholder.style.maxWidth = window.innerWidth >= 860 ? "min(60vw, 620px)" : "min(90vw, 320px)";
+      const rect = { width: placeholder.offsetWidth, height: placeholder.offsetHeight };
+      placeholder.style.position = "relative";
+      await runZipperUnravel(placeholder, word, morphemes, rect);
+    },
+    /* 接辞カードは、内側から外へジッパーを閉じるように編み上がって現れる */
+    mountTile(el, i) {
+      if (reducedMotion()) return;
+      runZipperTileResolve(el, i * 120);
     },
   },
 
@@ -9960,7 +10390,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "201";
+const APP_BUILD = "202";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
