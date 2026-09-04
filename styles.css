@@ -462,6 +462,8 @@ button{font-family:inherit;cursor:pointer;}
 }
 .regen-btn:active{transform:scale(.92);}
 .regen-btn:disabled{opacity:.5;}
+/* display指定のある要素はhidden属性だけでは消えないので、明示的に落とす */
+.regen-btn[hidden]{display:none;}
 .add-goro-btn{
   background:none;border:none;padding:0;font-family:inherit;font-weight:600;
 }
@@ -475,6 +477,17 @@ button{font-family:inherit;cursor:pointer;}
 }
 .add-goro-form .btn-solid{padding:9px 16px;font-size:12.5px;}
 .empty-note{font-size:13px;color:var(--ink-faint);text-align:center;padding:20px 0;}
+
+/* 語呂合わせがまだ無いときの生成ボタン。押す場所を探させないよう、
+   語呂合わせが出てくるその位置に横いっぱいで置く。塗りつぶしにすると
+   下の「単語を保存」と主役を取り合うため、線だけにしている */
+.goro-generate-btn{
+  width:100%;background:var(--surface);border:1px solid var(--accent);border-radius:999px;
+  padding:13px 20px;font-size:14px;font-family:'JetBrains Mono',monospace;font-weight:700;
+  color:var(--accent);
+}
+.goro-generate-btn:active{transform:scale(.99);}
+.goro-generate-btn[hidden]{display:none;}
 
 /* Record book */
 .book-list{display:flex;flex-direction:column;gap:10px;}

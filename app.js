@@ -1279,6 +1279,12 @@ async function isRagEnabled() {
   return !!(await kvGet("rag_enabled", false));
 }
 
+/* 設定画面の「語呂合わせの自動生成」。オフのときは分解だけで止め、
+   単語ページの「語呂合わせを作る」を押したときだけ生成する */
+async function isGoroAutoEnabled() {
+  return !!(await kvGet("goro_auto", true));
+}
+
 function cosineSim(a, b) {
   let dot = 0, na = 0, nb = 0;
   const len = Math.min(a.length, b.length);
@@ -3621,13 +3627,15 @@ async function startDecompose(rawWord) {
      デモ単語(APIキー未登録時)は、あらかじめ用意した語呂合わせをそのまま使う */
   document.getElementById("regen-btn").disabled = true;
   /* 新しい単語の初回生成では、別の単語の候補を「避けるべき前回の候補」として
-     引き継いでしまわないようにリセットする */
+     引き継いでしまわないようにリセットする。表示も一緒に消す：自動生成が
+     オフだと以降なにも描き直さないため、前の単語の語呂合わせが残ってしまう */
   currentCandidates = [];
+  renderGoroList();
   if (demo) {
     currentCandidates = [{ text: demo.goroText, highlight: [] }];
     renderGoroList();
     document.getElementById("regen-btn").disabled = false;
-  } else {
+  } else if (await isGoroAutoEnabled()) {
     /* 待たずに裏側で先行実行する。完了はloadGoroCandidates内のrenderGoroList
        が、進捗はgenerateGoroからのreportGoroStatusがgoro-listへ直接反映する */
     loadGoroCandidates(provider, apiKey);
@@ -7831,6 +7839,7 @@ async function renderResultScreen() {
   document.getElementById("add-goro-form").style.display = "none";
   document.getElementById("add-goro-btn").style.display = "block";
   document.getElementById("add-goro-input").value = "";
+  syncGoroControls();
 
   document.getElementById("result-word-label").textContent = `${currentWord} の接辞`;
   const list = document.getElementById("affix-list");
@@ -7848,10 +7857,26 @@ async function renderResultScreen() {
 }
 
 /* ---- 語呂合わせ候補（タップ=読み上げ / 保存） ---- */
+/* 生成中は「作る」ボタンを引っ込める。生成が始まった合図はgoro-listの
+   実況表示なので、ボタンを出したままにすると二重に押せてしまう */
+let goroInFlight = false;
+
+/* 語呂合わせがまだ無いときは「作り直す」ではなく「作る」を出す。
+   自動生成をオフにしている場合、ここが唯一の生成の入口になる */
+function syncGoroControls() {
+  const has = currentCandidates.length > 0;
+  const regen = document.getElementById("regen-btn");
+  const gen = document.getElementById("goro-generate-btn");
+  if (regen) regen.hidden = !has;
+  if (gen) gen.hidden = has || goroInFlight;
+}
+
 async function loadGoroCandidates(provider, apiKey) {
   /* 再生成の場合、直前の候補は気に入らなかったということなので、
      同じような内容を繰り返さないようAIに明示的に伝える */
   const previousTexts = currentCandidates.map((c) => c.text).filter(Boolean);
+  goroInFlight = true;
+  syncGoroControls();
   try {
     currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts, (phrase) => reportGoroStatus("goro-list", phrase));
   } catch (err) {
@@ -7861,12 +7886,15 @@ async function loadGoroCandidates(provider, apiKey) {
     note.className = "empty-note";
     note.textContent = isQuotaError(err)
       ? QUOTA_ERROR_MESSAGE
-      : `語呂合わせの生成に失敗しました（${err.message}）。作り直すボタンでもう一度お試しください。`;
+      : `語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。`;
     list.appendChild(note);
+    goroInFlight = false;
+    syncGoroControls();
     document.getElementById("regen-btn").disabled = false;
     console.error(err);
     return;
   }
+  goroInFlight = false;
   renderGoroList();
   await refreshSaveWordBtn();
   document.getElementById("regen-btn").disabled = false;
@@ -7923,6 +7951,7 @@ function renderGoroList() {
 
     card.querySelector(".goro-edit-btn").addEventListener("click", () => startGoroEdit(card, idx));
   });
+  syncGoroControls();
 }
 
 /* 単語帳のレコードIDは単語そのものだけで決める(語呂合わせの内容を含めない)。
@@ -7982,7 +8011,9 @@ async function toggleSaveWord() {
 
 document.getElementById("save-word-btn").addEventListener("click", toggleSaveWord);
 
-document.getElementById("regen-btn").addEventListener("click", async () => {
+/* 「作り直す」と「作る」は、直前の候補を避けるかどうかが違うだけで
+   やることは同じ。loadGoroCandidatesが現在の候補を見て使い分ける */
+async function requestGoro() {
   const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
   if (!apiKey) {
@@ -7992,9 +8023,12 @@ document.getElementById("regen-btn").addEventListener("click", async () => {
     return;
   }
   document.getElementById("regen-btn").disabled = true;
-  reportGoroStatus("goro-list", "語呂合わせを作り直し中");
+  reportGoroStatus("goro-list", currentCandidates.length ? "語呂合わせを作り直し中" : "語呂合わせを生成中");
   await loadGoroCandidates(provider, apiKey);
-});
+}
+
+document.getElementById("regen-btn").addEventListener("click", requestGoro);
+document.getElementById("goro-generate-btn").addEventListener("click", requestGoro);
 
 const addGoroBtn = document.getElementById("add-goro-btn");
 const addGoroForm = document.getElementById("add-goro-form");
@@ -8194,14 +8228,17 @@ csvImportInput.addEventListener("change", async (e) => {
 function renderWordDetailGoro(record) {
   const goroList = document.getElementById("word-detail-goro");
   goroList.innerHTML = "";
-  if (record.goro_text) {
+  const has = !!record.goro_text;
+  if (has) {
     const card = document.createElement("div");
     card.className = "goro-card";
     card.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     goroList.appendChild(card);
-  } else {
-    goroList.innerHTML = `<div class="empty-note">語呂合わせは登録されていません</div>`;
   }
+  /* 語呂合わせ無しで保存した単語（自動生成をオフにしている場合）は、
+     ここから作れるようにする。作り直すアイコンは、直すものがある時だけ */
+  document.getElementById("word-detail-regen-btn").hidden = !has;
+  document.getElementById("word-detail-goro-generate-btn").hidden = has;
 }
 
 let currentWordDetailRecord = null;
@@ -8239,7 +8276,7 @@ function openWordDetail(record) {
   showScreen("screen-word-detail");
 }
 
-document.getElementById("word-detail-regen-btn").addEventListener("click", async () => {
+async function requestWordDetailGoro() {
   const record = currentWordDetailRecord;
   if (!record) return;
 
@@ -8253,8 +8290,10 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
   }
 
   const btn = document.getElementById("word-detail-regen-btn");
+  const genBtn = document.getElementById("word-detail-goro-generate-btn");
   btn.disabled = true;
-  reportGoroStatus("word-detail-goro", "語呂合わせを作り直し中");
+  genBtn.hidden = true;
+  reportGoroStatus("word-detail-goro", record.goro_text ? "語呂合わせを作り直し中" : "語呂合わせを生成中");
 
   try {
     const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean), (phrase) => reportGoroStatus("word-detail-goro", phrase));
@@ -8266,10 +8305,15 @@ document.getElementById("word-detail-regen-btn").addEventListener("click", async
   } catch (err) {
     document.getElementById("word-detail-goro").innerHTML =
       `<div class="empty-note">${escapeHtml(isQuotaError(err) ? QUOTA_ERROR_MESSAGE : `語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。`)}</div>`;
+    /* 失敗しても、まだ語呂合わせが無いならもう一度押せるように戻す */
+    genBtn.hidden = !!record.goro_text;
     console.error(err);
   }
   btn.disabled = false;
-});
+}
+
+document.getElementById("word-detail-regen-btn").addEventListener("click", requestWordDetailGoro);
+document.getElementById("word-detail-goro-generate-btn").addEventListener("click", requestWordDetailGoro);
 
 /* ---- 接辞タップ → 同じ接辞を含む単語一覧（マイ単語→AI検索の順） ---- */
 const RELATED_WORDS_TARGET = 20;
@@ -8840,6 +8884,11 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.animToggle === (animationsEnabled ? "on" : "off"));
   });
 
+  const goroAuto = await isGoroAutoEnabled();
+  document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.goroToggle === (goroAuto ? "on" : "off"));
+  });
+
   const ragOn = await isRagEnabled();
   document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
@@ -8937,6 +8986,13 @@ document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((pill) => {
     animationsEnabled = pill.dataset.animToggle === "on";
     await kvSet("anim_enabled", animationsEnabled);
     document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+  });
+});
+
+document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("goro_auto", pill.dataset.goroToggle === "on");
+    document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
   });
 });
 
@@ -10601,7 +10657,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "206";
+const APP_BUILD = "207";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

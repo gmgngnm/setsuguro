@@ -25,7 +25,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#206</span>
+        <span class="build-tag" id="build-tag">#207</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -91,6 +91,7 @@
       <button class="add-goro-btn hint-text" id="add-goro-btn" type="button">＋ ゴロ自作</button>
     </div>
     <div class="goro-list" id="goro-list"></div>
+    <button class="goro-generate-btn" id="goro-generate-btn" type="button" hidden>語呂合わせを作る</button>
     <div class="add-goro-form" id="add-goro-form" style="display:none;">
       <input id="add-goro-input" type="text" placeholder="自分で考えた語呂合わせを入力" autocomplete="off">
       <button id="add-goro-submit" class="btn-solid">追加</button>
@@ -159,6 +160,7 @@
       <span class="goro-label-group">語呂合わせ<button class="regen-btn" id="word-detail-regen-btn" type="button" title="語呂を作り直す" aria-label="語呂を作り直す"><svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></span>
     </div>
     <div class="goro-list" id="word-detail-goro"></div>
+    <button class="goro-generate-btn" id="word-detail-goro-generate-btn" type="button" hidden>語呂合わせを作る</button>
   </section>
 
   <!-- ============ SCREEN 05b: 同じ接辞を含む単語 ============ -->
@@ -264,6 +266,13 @@
 
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
+
+    <div class="section-label" style="margin-top:6px;">語呂合わせの自動生成</div>
+    <div class="provider-row" id="goro-toggle-row">
+      <button class="mode-pill on" data-goro-toggle="on">オン</button>
+      <button class="mode-pill" data-goro-toggle="off">オフ</button>
+    </div>
+    <div class="usage-note">オンにすると、単語を分解したあと語呂合わせを自動で作ります。オフにすると分解だけで止まり、単語ページ下部の「語呂合わせを作る」を押したときだけ作ります。分解結果が出るまでの呼び出しが減ります。</div>
 
     <div class="section-label" style="margin-top:6px;">RAGによる精度向上</div>
     <div class="provider-row" id="rag-toggle-row">
