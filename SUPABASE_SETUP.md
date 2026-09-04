@@ -16,6 +16,12 @@ Supabaseにも同期されるようになります。サインインしない場
 
 ダッシュボードの **SQL Editor** で以下を実行する。
 
+このファイルのSQLはすべて**何度実行しても安全**な形で書いてある。SQL Editor
+は貼り付けた内容を1つのトランザクションで流すため、1文でもエラーになると
+前の行まで巻き戻り、**何も適用されないまま終わる**。`create policy` や
+`alter publication ... add table` は「既にある」だけでエラーになるので、
+そのまま並べると2回目以降が丸ごと無効になる。
+
 ```sql
 create table public.words (
   id text not null,
@@ -73,8 +79,19 @@ RLSにより、各行は自分の`user_id`のものしか読み書きできな�
 alter table public.words
   add column if not exists deleted boolean not null default false;
 
-alter publication supabase_realtime add table public.words;
+-- 既にpublicationに入っているとalter publicationはエラーになる。
+-- SQL Editorは全体を1つのトランザクションで流すので、1文でも転ぶと
+-- 前の行（列の追加など）まで巻き戻り、何も適用されないまま終わる
+do $$
+begin
+  alter publication supabase_realtime add table public.words;
+exception when duplicate_object then null;
+end $$;
 alter table public.words replica identity full;
+
+-- 列や表を足しても、PostgRESTが持っている定義の控えが古いままだと
+-- 「schema cacheに見つからない」と言われ続ける
+notify pgrst, 'reload schema';
 ```
 
 `deleted` 列が無いままでも保存・同期は止まらない（アプリ側が列の不在を
@@ -99,6 +116,8 @@ alter table public.words replica identity full;
 alter table public.words
   add column if not exists synonyms jsonb,
   add column if not exists antonyms jsonb;
+
+notify pgrst, 'reload schema';
 ```
 
 ### 分解結果の共有（decompositions テーブル・任意）
@@ -121,12 +140,18 @@ create table if not exists public.decompositions (
   primary key (word, version)
 );
 alter table public.decompositions enable row level security;
+-- create policy には if not exists が無いので、作り直す形にしておく。
+-- こうしないと2回目の実行で転び、同じスクリプトの他の行まで巻き戻る
+drop policy if exists "signed in users read decompositions" on public.decompositions;
 create policy "signed in users read decompositions"
   on public.decompositions for select
   to authenticated using (true);
+drop policy if exists "signed in users add decompositions" on public.decompositions;
 create policy "signed in users add decompositions"
   on public.decompositions for insert
   to authenticated with check (true);
+
+notify pgrst, 'reload schema';
 ```
 
 追加だけを許し、更新・削除は許していない。先に書かれた結果がそのまま残る

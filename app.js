@@ -9830,14 +9830,28 @@ const SQL_CREATE_DECOMPOSITIONS = `create table if not exists public.decompositi
   primary key (word, version)
 );
 alter table public.decompositions enable row level security;
+drop policy if exists "signed in users read decompositions" on public.decompositions;
 create policy "signed in users read decompositions"
   on public.decompositions for select
   to authenticated using (true);
+drop policy if exists "signed in users add decompositions" on public.decompositions;
 create policy "signed in users add decompositions"
   on public.decompositions for insert
   to authenticated with check (true);`;
 
-const SQL_ENABLE_REALTIME = "alter publication supabase_realtime add table public.words;\nalter table public.words replica identity full;";
+/* 既にpublicationに入っているとalter publicationはエラーになる。
+   SQL Editorは全体を1つのトランザクションで流すので、1文でも転ぶと
+   前の行（列の追加など）まで巻き戻り、何も適用されないまま終わる */
+const SQL_ENABLE_REALTIME = `do $$
+begin
+  alter publication supabase_realtime add table public.words;
+exception when duplicate_object then null;
+end $$;
+alter table public.words replica identity full;`;
+
+/* 列や表を足しても、PostgRESTが持っている定義の控えが古いままだと
+   「schema cacheに見つからない」と言われ続ける。最後に必ず作り直させる */
+const SQL_RELOAD_SCHEMA = "notify pgrst, 'reload schema';";
 
 /* Realtimeの配信が本当に届くかを、往復させて確かめる。購読が
    SUBSCRIBEDになっても、テーブルがpublicationに入っていなければ変更は
@@ -9960,8 +9974,8 @@ function renderSyncDiagnostics({ lines, sql }) {
   const items = lines.map((l) =>
     `<div class="sync-diag-line ${l.ok ? "ok" : "ng"}"><span>${l.ok ? "✓" : "✗"}</span><span>${escapeHtml(l.text)}</span></div>`).join("");
   const fix = sql.length
-    ? `<div class="sync-diag-fix"><div class="sync-diag-fix-head">Supabaseの SQL Editor で以下を実行してください</div>`
-      + `<pre>${escapeHtml(sql.join("\n\n"))}</pre></div>`
+    ? `<div class="sync-diag-fix"><div class="sync-diag-fix-head">Supabaseの SQL Editor で以下をまとめて実行してください（何度実行しても安全です）</div>`
+      + `<pre>${escapeHtml([...sql, SQL_RELOAD_SCHEMA].join("\n\n"))}</pre></div>`
     : "";
   box.innerHTML = items + fix;
   box.hidden = false;
@@ -10834,7 +10848,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "209";
+const APP_BUILD = "210";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
