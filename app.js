@@ -3916,6 +3916,8 @@ async function runCrackShatter(placeholder, word, morphemes, rect) {
    位置は時刻だけの関数として解いておく（プリズム・不死鳥と同じ考え方） */
 const BURST_DRAG_TAU = 0.42;
 const BURST_GRAVITY = 380;          // px/s²
+/* 透視の視距離。破片が手前に来るほど大きく、奥へ退くほど小さく写る */
+const BURST_VIEW_D = 520;
 
 const burstEaseOut = (p) => 1 - Math.pow(1 - p, 3);
 const burstClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -3979,46 +3981,37 @@ function burstSmokeSprite() {
   return c;
 }
 
-/* 板を放射状のひび割れで砕く。爆心から放射に走る割れ目と、それを横切る
-   同心の割れ目でできる区画を返す。半径は方向ごとにばらつかせるが、
-   隣り合う区画は同じ頂点を共有させる（別々に散らすと破片の間に隙間が空く） */
-function burstShatterCells(w, h, bx, by, sectors, ringFr) {
-  const rMax = Math.hypot(Math.max(bx, w - bx), Math.max(by, h - by)) * 1.08;
-  const angles = [];
-  for (let i = 0; i < sectors; i++) {
-    angles.push((i / sectors) * Math.PI * 2 + (Math.random() - 0.5) * (Math.PI / sectors) * 0.9);
-  }
-  angles.push(angles[0] + Math.PI * 2);
-
-  const radii = [];
-  for (let a = 0; a <= sectors; a++) {
-    radii.push(ringFr.map((fr, k) => {
-      if (k === 0) return 0;
-      if (k === ringFr.length - 1) return rMax * fr;      // 外周は板の外なので揺らさない
-      return rMax * fr * (1 + (Math.random() - 0.5) * 0.34);
-    }));
-  }
-  radii[sectors] = radii[0];
-
-  const cells = [];
-  for (let a = 0; a < sectors; a++) {
-    const a0 = angles[a], a1 = angles[a + 1];
-    for (let k = 0; k < ringFr.length - 1; k++) {
-      cells.push([
-        { x: bx + Math.cos(a0) * radii[a][k], y: by + Math.sin(a0) * radii[a][k] },
-        { x: bx + Math.cos(a0) * radii[a][k + 1], y: by + Math.sin(a0) * radii[a][k + 1] },
-        { x: bx + Math.cos(a1) * radii[a + 1][k + 1], y: by + Math.sin(a1) * radii[a + 1][k + 1] },
-        { x: bx + Math.cos(a1) * radii[a + 1][k], y: by + Math.sin(a1) * radii[a + 1][k] },
-      ]);
+/* 板を接辞の境目でちぎる。境目はまっすぐ切らずギザギザに走らせる
+   （直線で切ると裁断に見えて、破裂した感じが出ない）。
+   返すのは接辞1つにつき1枚の多角形。爆発しても接辞は塊のまま飛ぶ */
+function burstTearPieces(w, h, boundaries) {
+  const JAG = 6;
+  const jag = boundaries.map((bxLine) => {
+    const pts = [];
+    for (let j = 0; j <= JAG; j++) {
+      const y = (h / JAG) * j;
+      /* 上下の端は動かさない。動かすと隣の破片との間に隙間が空く */
+      const off = j === 0 || j === JAG ? 0 : (Math.random() - 0.5) * Math.min(w * 0.1, 15);
+      pts.push({ x: bxLine + off, y });
     }
-  }
-  return { cells, rMax };
+    return pts;
+  });
+  const edges = [
+    [{ x: 0, y: 0 }, { x: 0, y: h }],
+    ...jag,
+    [{ x: w, y: 0 }, { x: w, y: h }],
+  ];
+  return edges.slice(0, -1).map((left, i) => {
+    const right = edges[i + 1];
+    /* 左の割れ目を上から下へ、右の割れ目を下から上へ辿って閉じる */
+    return [...left, ...right.slice().reverse()];
+  });
 }
 
 /* 区画を接辞の列で切り分け、破片1枚ずつの絵を先に焼いておく。
    毎フレームclipし直すと破片の数だけ経路を切る羽目になるので、
    ここで焼いた画像を後は貼るだけにする */
-function burstBakeFragments(src, rect, cells, columns, dpr) {
+function burstBakeFragments(src, rect, cells, columns, dpr, backColor) {
   const frags = [];
   cells.forEach((poly) => {
     const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
@@ -4054,10 +4047,40 @@ function burstBakeFragments(src, rect, cells, columns, dpr) {
       cg.globalCompositeOperation = "source-atop";
       cg.fillStyle = "rgba(38,28,22,.72)";
       cg.fillRect(0, 0, cc.width, cc.height);
-      frags.push({ img: fc, char: cc, x0, y0, w: fw, h: fh, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, col: ci });
+      /* 裏面。宙で反転したときに文字が鏡文字で見えては困るので、
+         刷りのない地の色だけの面を作っておく */
+      const bc = document.createElement("canvas");
+      bc.width = fc.width;
+      bc.height = fc.height;
+      const bg = bc.getContext("2d");
+      bg.drawImage(fc, 0, 0);
+      bg.globalCompositeOperation = "source-in";
+      bg.fillStyle = backColor || "rgba(214,208,198,1)";
+      bg.fillRect(0, 0, bc.width, bc.height);
+      frags.push({ img: fc, char: cc, back: bc, x0, y0, w: fw, h: fh, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, col: ci });
     });
   });
   return frags;
+}
+
+/* 前後左右に振り回された平板が、画面にどう写るか。
+   板の上の点(u,v)は3次元では R·(u,v,0) に移るので、その1列目と2列目を
+   透視の倍率ごと掛けたものが、そのままcanvasの変換行列になる。
+   奥行きzは手前ほど大きく写る倍率として効かせる。
+   R22（面の法線のz成分）が負なら裏を向いているので、裏面を描く */
+function burstPose(rx, ry, rz, z, viewD) {
+  const sa = Math.sin(rx), ca = Math.cos(rx);
+  const sb = Math.sin(ry), cb = Math.cos(ry);
+  const sg = Math.sin(rz), cg = Math.cos(rz);
+  const scale = viewD / Math.max(40, viewD + z);
+  return {
+    a: cg * cb * scale,
+    b: sg * cb * scale,
+    c: (cg * sb * sa - sg * ca) * scale,
+    d: (sg * sb * sa + cg * ca) * scale,
+    scale,
+    facing: cb * ca,
+  };
 }
 
 /* 単語カードが爆発して砕け散る（分解アニメ本体）。
@@ -4067,7 +4090,7 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
 
   /* 破片は横へ大きく飛び、火球と煙は上へ伸び、重い破片は下へ落ちる */
-  const padX = Math.max(190, rect.width * 0.9);
+  const padX = Math.max(230, rect.width * 1.1);
   const padTop = Math.max(180, rect.height * 3.4);
   const padBottom = Math.max(230, rect.height * 4.2);
   const canvasW = rect.width + padX * 2;
@@ -4100,31 +4123,38 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
     prefix += m.part || "";
     return textX0 + meas.measureText(prefix).width;
   });
-  const edges = [0, ...boundaries, rect.width];
-  const columns = edges.slice(0, -1).map((x, i) => ({ x0: x, x1: edges[i + 1] }));
+  /* 裏面は刷りのない地。表より少し落としておくと、宙で翻ったのが分かる */
+  const bgm = /rgba?\(([^)]+)\)/.exec(cs.backgroundColor || "");
+  const bgc = bgm
+    ? bgm[1].split(",").slice(0, 3).map((v) => Math.round(Math.max(0, Math.min(255, parseFloat(v) || 0)) * 0.74))
+    : [214, 208, 198];
+  const backTone = `rgb(${bgc.join(",")})`;
 
   /* 爆心はカードの中心よりわずかに散らす。真ん中ちょうどだと割れ方が整いすぎる */
   const bx = rect.width * (0.46 + Math.random() * 0.08);
   const by = rect.height * (0.44 + Math.random() * 0.12);
 
-  const { cells, rMax } = burstShatterCells(rect.width, rect.height, bx, by, 13, [0, 0.3, 0.62, 1]);
-  const frags = burstBakeFragments(srcCanvas, rect, cells, columns, dpr);
+  const pieces = burstTearPieces(rect.width, rect.height, boundaries);
+  const frags = burstBakeFragments(srcCanvas, rect, pieces, [{ x0: 0, x1: rect.width }], dpr, backTone);
 
-  /* 破片の初速。爆心に近いほど強い衝撃を受けて速く、遠いほど鈍い。
-     接辞ごとの横方向の偏りを足すので、破片は自分の接辞の側へまとまって飛ぶ */
-  const mid = (columns.length - 1) / 2;
-  frags.forEach((f) => {
-    const dx = f.cx - bx, dy = f.cy - by;
-    const dist = Math.hypot(dx, dy) || 1;
-    const near = 1 - burstClamp01(dist / rMax);
-    const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.5;
-    const speed = (150 + near * 340) * (0.72 + Math.random() * 0.56);
-    const lateral = columns.length > 1 ? (f.col - mid) / Math.max(1, mid) : 0;
-    f.vx = Math.cos(ang) * speed + lateral * 110;
-    f.vy = Math.sin(ang) * speed - 130;                  // 吹き上げ
-    /* 爆心から外れて当たった破片ほど強く回る（力のモーメント） */
-    f.vrot = ((f.cy - by) * f.vx - (f.cx - bx) * f.vy) / (dist * 42);
-    f.spawn = dist / rMax * 26;                          // 衝撃が届くまでのわずかな差
+  /* 破片は接辞1つにつき1枚。自分の接辞の側へ飛びつつ、前後左右に
+     でたらめに振り回される。角速度も奥行き方向の速度も、破片ごとに引く */
+  const mid = (frags.length - 1) / 2;
+  frags.forEach((f, i) => {
+    f.col = i;
+    const lateral = frags.length > 1 ? (i - mid) / Math.max(1, mid) : 0;
+    const dy = f.cy - by;
+    const ang = Math.atan2(dy, f.cx - bx) + (Math.random() - 0.5) * 0.7;
+    const speed = 120 + Math.random() * 130;
+    f.vx = Math.cos(ang) * speed * 0.55 + lateral * (155 + Math.random() * 110);
+    f.vy = Math.sin(ang) * speed * 0.7 - (120 + Math.random() * 120);   // 吹き上げ
+    f.vz = (Math.random() - 0.5) * 620;                  // 手前へ、あるいは奥へ
+    /* 角速度は、飛んでいる間に半回転する程度に留める。速く回しすぎると
+       刷りのない裏ばかりが見えて、どの接辞が飛んでいるのか分からなくなる */
+    f.wx = (Math.random() - 0.5) * 5.4;                  // 縦に回る
+    f.wy = (Math.random() - 0.5) * 5.4;                  // 横に回る
+    f.wz = (Math.random() - 0.5) * 4.4;                  // 面のなかで回る
+    f.spawn = Math.random() * 24;
   });
 
   /* 火球。カードは点ではなく横に長いので、火の玉も横に並べて湧かせる。
@@ -4297,26 +4327,38 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
       const fragFade = t < FRAG_FADE_FROM ? 1
         : Math.max(0, 1 - (t - FRAG_FADE_FROM) / FRAG_FADE_MS);
       if (fragFade > 0.004) {
-        for (const f of frags) {
-          const lt = t - f.spawn;
-          if (lt <= 0) {
-            ctx.drawImage(f.img, f.x0, f.y0, f.w, f.h);
-            continue;
-          }
+        /* 奥の破片から先に描かないと、手前へ飛んできた破片の上に
+           奥の破片が被さってしまう */
+        const order = frags.map((f) => {
+          const lt = Math.max(0, t - f.spawn);
           const ls = lt / 1000;
           const tr = burstTravel(ls);
-          const x = f.x0 + f.vx * tr;
-          const y = f.y0 + f.vy * tr + 0.5 * BURST_GRAVITY * ls * ls;
+          return {
+            f, ls,
+            x: f.x0 + f.vx * tr,
+            y: f.y0 + f.vy * tr + 0.5 * BURST_GRAVITY * ls * ls,
+            z: f.vz * tr,
+          };
+        }).sort((p, q) => q.z - p.z);
+
+        for (const it of order) {
+          const f = it.f;
+          const pose = burstPose(f.wx * it.ls, f.wy * it.ls, f.wz * it.ls, it.z, BURST_VIEW_D);
           ctx.save();
           ctx.globalAlpha = fragFade;
-          ctx.translate(x + f.w / 2, y + f.h / 2);
-          ctx.rotate(f.vrot * ls);
-          ctx.drawImage(f.img, -f.w / 2, -f.h / 2, f.w, f.h);
-          /* 火球を抜けた破片は煤けていく。白いままだと紙吹雪に見える */
-          const char = burstClamp01((lt - 40) / 420) * 0.62;
-          if (char > 0.01) {
-            ctx.globalAlpha = fragFade * char;
-            ctx.drawImage(f.char, -f.w / 2, -f.h / 2, f.w, f.h);
+          ctx.translate(it.x + f.w / 2, it.y + f.h / 2);
+          ctx.transform(pose.a, pose.b, pose.c, pose.d, 0, 0);
+          if (pose.facing < 0) {
+            /* 裏を向いた面。刷りがないので地の色だけが見える */
+            ctx.drawImage(f.back, -f.w / 2, -f.h / 2, f.w, f.h);
+          } else {
+            ctx.drawImage(f.img, -f.w / 2, -f.h / 2, f.w, f.h);
+            /* 火球を抜けた破片は煤けていく。白いままだと紙吹雪に見える */
+            const char = burstClamp01((it.ls * 1000 - 40) / 420) * 0.62;
+            if (char > 0.01) {
+              ctx.globalAlpha = fragFade * char;
+              ctx.drawImage(f.char, -f.w / 2, -f.h / 2, f.w, f.h);
+            }
           }
           ctx.restore();
         }
@@ -4430,20 +4472,32 @@ async function runBurstTileResolve(el, delayMs) {
   const ctx = canvas.getContext("2d");
   const partText = partEl ? partEl.textContent : "";
   const srcCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
+  /* 裏返ったときに見える、刷りのない地の面 */
+  const bgm = /rgba?\(([^)]+)\)/.exec(cs.backgroundColor || "");
+  const bgc = bgm
+    ? bgm[1].split(",").slice(0, 3).map((v) => Math.round(Math.max(0, Math.min(255, parseFloat(v) || 0)) * 0.74))
+    : [214, 208, 198];
+  const backImg = document.createElement("canvas");
+  backImg.width = srcCanvas.width;
+  backImg.height = srcCanvas.height;
+  const bimg = backImg.getContext("2d");
+  bimg.drawImage(srcCanvas, 0, 0);
+  bimg.globalCompositeOperation = "source-in";
+  bimg.fillStyle = `rgb(${bgc.join(",")})`;
+  bimg.fillRect(0, 0, backImg.width, backImg.height);
 
   const bx = rect.width / 2, by = rect.height / 2;
-  const { cells, rMax } = burstShatterCells(rect.width, rect.height, bx, by, 9, [0, 0.45, 1]);
-  const frags = burstBakeFragments(srcCanvas, rect, cells, [{ x0: 0, x1: rect.width }], dpr);
-  frags.forEach((f) => {
-    const dx = f.cx - bx, dy = f.cy - by;
-    const dist = Math.hypot(dx, dy) || 1;
-    const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.6;
-    const away = 40 + (1 - burstClamp01(dist / rMax)) * 70;
-    f.fromX = Math.cos(ang) * away;
-    f.fromY = Math.sin(ang) * away - 16;
-    f.fromRot = (Math.random() - 0.5) * 1.7;
-    f.delay = Math.random() * 90;
-  });
+  /* 単語の破片が接辞ごとの塊で飛んだのと対になるよう、
+     カードも1枚の板として、前後左右に回りながら定位置へ収まる */
+  const ang = Math.random() * Math.PI * 2;
+  const from = {
+    x: Math.cos(ang) * (70 + Math.random() * 60),
+    y: Math.sin(ang) * (46 + Math.random() * 44) - 24,
+    z: (Math.random() < 0.5 ? -1 : 1) * (180 + Math.random() * 200),
+    rx: (Math.random() - 0.5) * 2.6,
+    ry: (Math.random() - 0.5) * 2.6,
+    rz: (Math.random() - 0.5) * 1.5,
+  };
 
   const IN_MS = 380;
   const TOTAL_MS = 620;
@@ -4458,21 +4512,24 @@ async function runBurstTileResolve(el, delayMs) {
       ctx.save();
       ctx.translate(padX, padY);
 
-      /* 破片が定位置へ吸い戻る */
-      let landed = 1;
-      for (const f of frags) {
-        const p = burstEaseOut(burstClamp01((t - f.delay) / IN_MS));
-        landed = Math.min(landed, p);
-        const back = 1 - p;
-        ctx.save();
-        ctx.globalAlpha = Math.min(1, p * 2.2);
-        ctx.translate(f.x0 + f.w / 2 + f.fromX * back, f.y0 + f.h / 2 + f.fromY * back);
-        ctx.rotate(f.fromRot * back);
-        ctx.drawImage(f.img, -f.w / 2, -f.h / 2, f.w, f.h);
-        ctx.restore();
+      /* 板が回りながら飛んできて、定位置で水平に落ち着く */
+      const landed = burstEaseOut(burstClamp01(t / IN_MS));
+      const back = 1 - landed;
+      const pose = burstPose(from.rx * back, from.ry * back, from.rz * back,
+        from.z * back, BURST_VIEW_D);
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, landed * 2.4);
+      ctx.translate(bx + from.x * back, by + from.y * back);
+      ctx.transform(pose.a, pose.b, pose.c, pose.d, 0, 0);
+      if (pose.facing < 0) {
+        ctx.drawImage(backImg, -rect.width / 2, -rect.height / 2, rect.width, rect.height);
+      } else {
+        ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height,
+          -rect.width / 2, -rect.height / 2, rect.width, rect.height);
       }
+      ctx.restore();
 
-      /* 噛み合った瞬間の衝撃。最後の破片が収まってから短く光る */
+      /* 収まった瞬間の衝撃。着地してから短く光る */
       const hit = burstClamp01((t - (IN_MS + 40)) / 170);
       if (landed > 0.98 && hit > 0 && hit < 1) {
         const fp = 1 - hit;
@@ -9903,7 +9960,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "200";
+const APP_BUILD = "201";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
