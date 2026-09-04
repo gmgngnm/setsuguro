@@ -1082,12 +1082,12 @@ const AI_ADAPTERS = {
        やり直し、機能自体は止めない（以前Groqの推論パラメータで同じ手当てを
        していたのと同じ考え方） */
     thinkingSupported: true,
-    async chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel) {
+    async chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel, model) {
       const generationConfig = { responseMimeType: "application/json", temperature };
       if (thinkingLevel && this.thinkingSupported) {
         generationConfig.thinkingConfig = { thinkingLevel };
       }
-      const res = await fetch(`${GEMINI_API_BASE}/models/${geminiChatModel}:generateContent`, {
+      const res = await fetch(`${GEMINI_API_BASE}/models/${model || GEMINI_CHAT_MODEL_DEFAULT}:generateContent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
@@ -1103,7 +1103,7 @@ const AI_ADAPTERS = {
         if (res.status === 400 && generationConfig.thinkingConfig && /thinking/i.test(detail)) {
           console.warn("Geminiが思考レベルの指定を受け付けなかったため、指定なしでやり直します:", detail);
           this.thinkingSupported = false;
-          return this.chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel);
+          return this.chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel, model);
         }
         throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
       }
@@ -1132,8 +1132,8 @@ async function getActiveProvider() {
  *    ここだけ generateContent を直接叩く。APIキーは分解・語呂合わせと
  *    共通のものを使う。
  * ------------------------------------------------------------------ */
-/* 画像認識も文章と同じモデルで賄う。設定で差し替えたら一緒に切り替わる
-   よう、定数に写し取らず呼ぶ時点の値を見る */
+/* 写真の読み取りも、画像を受け取れるモデルでないと動かない。
+   音声認識と同じ理由で既定のモデルに固定する */
 
 /* 画像(dataURL)を渡すと、写っている英単語をJSON配列で返す。
    手書き・活字どちらのノートでも読める前提のプロンプトにしてある */
@@ -1151,7 +1151,7 @@ async function recognizeWordsFromImage(dataUrl, apiKey) {
     '{"words":["abandon","bereavement"]}',
   ].join("\n");
 
-  const res = await fetch(`${GEMINI_API_BASE}/models/${geminiChatModel}:generateContent`, {
+  const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL_DEFAULT}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
@@ -1220,7 +1220,7 @@ async function verifyApiKey(provider, apiKey) {
      省略される可能性があり、使えるのに使えないと言う方が困るため。
      実際に叩いて駄目だったときに初めて、一覧を材料に理由を説明する */
   try {
-    const probe = await adapter.chat(apiKey, "JSONだけを返してください。", '{"ok":true} とだけ返してください。', 0);
+    const probe = await adapter.chat(apiKey, "JSONだけを返してください。", '{"ok":true} とだけ返してください。', 0, null, geminiChatModel);
     extractJson(probe.text);
   } catch (err) {
     const ids = (listed?.models || []).map((m) => String(m?.name || "").replace(/^models\//, ""));
@@ -1347,7 +1347,10 @@ function isJsonValidationFailure(err) {
 const THINKING_MINIMAL = "minimal";
 const THINKING_LOW = "low";
 
-async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, thinkingLevel = null) {
+/* modelを渡さなければ既定のモデルを使う。設定で選んだモデルを使うのは
+   接辞分解だけで、そこだけが明示的に渡す。あとから工程を足したときに
+   うっかり選択中のモデルに巻き込まれないよう、安全な側を既定にしてある */
+async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 0.9, thinkingLevel = null, model = null) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
   if (!apiKey) throw new Error("APIキーが設定されていません");
@@ -1355,7 +1358,7 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
   let lastErr;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel);
+      const { text, tokens } = await adapter.chat(apiKey, systemPrompt, userPrompt, temperature, thinkingLevel, model);
       await bumpUsage(tokens);
       return extractJson(text);
     } catch (err) {
@@ -1686,7 +1689,7 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
     "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
     JSON.stringify(shape),
   ].join("\n");
-  const json = await callAI(provider, apiKey, sys, "指定された項目だけをJSON形式で出力してください。", 0.2, THINKING_MINIMAL);
+  const json = await callAI(provider, apiKey, sys, "指定された項目だけをJSON形式で出力してください。", 0.2, THINKING_MINIMAL, geminiChatModel);
   return {
     wordMeaning: json.word_meaning || "",
     wordPhonetic: json.word_phonetic || "",
@@ -1703,7 +1706,7 @@ async function decomposeWord(word, provider, apiKey) {
   if (hit) return hit;
   try {
     const sys = decomposeSystemPrompt(word);
-    const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2, THINKING_MINIMAL);
+    const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2, THINKING_MINIMAL, geminiChatModel);
     if (json.word_exists === false) {
       return { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: [] };
     }
@@ -1874,7 +1877,7 @@ async function fillRequiredSegmentation(word, requiredParts, memoryTip, provider
     "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
     '{"morphemes":[{"part":"in","reading":"イン","meaning":"中へ","origin":"ラテン語 in-","phonetic":"ɪn"}]}',
   ].filter(Boolean).join("\n");
-  const json = await callAI(provider, apiKey, sys, "確定した分割のまま、各要素の情報を埋めてJSON形式で出力してください。", 0.2, THINKING_MINIMAL);
+  const json = await callAI(provider, apiKey, sys, "確定した分割のまま、各要素の情報を埋めてJSON形式で出力してください。", 0.2, THINKING_MINIMAL, geminiChatModel);
   return reconcileWithLocalDict(json.morphemes, provider, apiKey);
 }
 
@@ -1900,7 +1903,7 @@ async function validateDecomposition(word, morphemes, provider, apiKey, memoryTi
 
   try {
     const sys = decomposeValidationPrompt(word, morphemes, hints, requiredParts);
-    const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2, THINKING_LOW);
+    const json = await callAI(provider, apiKey, sys, "各接辞を精査し、必要なら修正して、全要素をJSON形式で出力してください。", 0.2, THINKING_LOW, geminiChatModel);
     const revised = await reconcileWithLocalDict(json.morphemes, provider, apiKey);
     if (accept(revised)) return revised;
 
@@ -2535,7 +2538,7 @@ async function batchDecomposeWords(words, provider, apiKey) {
 
   let json;
   try {
-    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(misses), 0.2, THINKING_MINIMAL);
+    json = await callAI(provider, apiKey, BATCH_DECOMPOSE_SYS, batchDecomposeUserPrompt(misses), 0.2, THINKING_MINIMAL, geminiChatModel);
   } catch (err) {
     console.warn("まとめ分解に失敗しました。1語ずつの経路で処理します:", err);
     for (const word of misses) await fallbackToSingle(word);
@@ -2608,7 +2611,7 @@ async function batchValidateDecompositions(entries, provider, apiKey) {
   if (!targets.length) return;
 
   try {
-    const json = await callAI(provider, apiKey, BATCH_DECOMPOSE_VALIDATION_SYS, batchDecomposeValidationUserPrompt(targets), 0.2, THINKING_LOW);
+    const json = await callAI(provider, apiKey, BATCH_DECOMPOSE_VALIDATION_SYS, batchDecomposeValidationUserPrompt(targets), 0.2, THINKING_LOW, geminiChatModel);
     const byWord = indexAiResultsByWord(json.results, targets.map((t) => t.result.correctedWord));
     for (const t of targets) {
       const row = byWord.get(t.result.correctedWord.toLowerCase());
@@ -3131,9 +3134,9 @@ const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押し
    対応プロバイダを増やす場合はここに足せば、選択可否の判定も
    フォールバックもこのマップの有無だけで動く */
 const STT_ENDPOINTS = {
-  /* 設定でモデルを差し替えたら追従するよう、URLは都度組み立てる
-     （リテラルに埋めると読み込み時の値で固まってしまう） */
-  gemini: { get url() { return `${GEMINI_API_BASE}/models/${geminiChatModel}:generateContent`; } },
+  /* 音声を受け取れるかはモデルによって違う。設定で軽いモデルに替えると
+     文字起こしごと失敗するので、ここは既定のモデルに固定する */
+  gemini: { url: `${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL_DEFAULT}:generateContent` },
 };
 
 /* ほぼ無音の録音を渡すと、学習データ由来の定型句をでっち上げて
@@ -3542,12 +3545,49 @@ function pickSampleWords(count, exclude = []) {
   return picked;
 }
 
+/* 履歴は「最近引いた順」に意味があるので、端末をまたいで同じ並びに
+   するには語ごとに引いた時刻が要る。以前は文字列の配列を
+   「手元のぶん → 相手のぶん」の順につないでいたので、同じ2台でも
+   端末ごとに違う並びになり、表示が食い違っていた */
+const RECENT_LIMIT = 20;
+
+/* 古い版が書いた文字列には、いつ引いたかが残っていない。現在時刻を
+   割り当てると、直前に引いたばかりの語より新しい扱いになって履歴の
+   順番が壊れるので、過去の固定点から1msずつ遡らせる。時刻の分かって
+   いる語より必ず古くなり、元の並び順は保たれ、どの端末で計算しても
+   同じ値になる（＝端末をまたいでも並びが食い違わない） */
+const RECENT_LEGACY_BASE = 1_000_000_000_000;   // 2001-09-09
+
+function normalizeRecent(list) {
+  return (Array.isArray(list) ? list : []).map((item, i) => {
+    const legacyAt = RECENT_LEGACY_BASE - i;
+    if (item && typeof item === "object") return { w: String(item.w || ""), at: Number(item.at) || legacyAt };
+    return { w: String(item || ""), at: legacyAt };
+  }).filter((r) => r.w);
+}
+
+/* 同じ語は新しい方の時刻を採り、時刻の降順に並べる。時刻が同じときは
+   綴りで決める。どの端末で走らせても同じ並びになる */
+function mergeRecent(a, b) {
+  const byWord = new Map();
+  for (const r of [...normalizeRecent(a), ...normalizeRecent(b)]) {
+    const key = r.w.toLowerCase();
+    const cur = byWord.get(key);
+    if (!cur || r.at > cur.at) byWord.set(key, r);
+  }
+  return [...byWord.values()]
+    .sort((x, y) => y.at - x.at || x.w.localeCompare(y.w))
+    .slice(0, RECENT_LIMIT);
+}
+
+const recentWordList = (list) => normalizeRecent(list).map((r) => r.w);
+
 async function renderRecentChips() {
   await demoWordDataReady;
-  const recent = await kvGet("recent_words", []);
+  const recent = recentWordList(await kvGet("recent_words", []));
   /* チップは.chip-row側のCSSで3行分の高さに収まるようにしているので、
      ここでは行数に関わらず十分な数を用意しておけばよい */
-  const limit = 20;
+  const limit = RECENT_LIMIT;
   const words = recent.length < limit ? [...recent, ...pickSampleWords(limit - recent.length, recent)] : recent.slice(0, limit);
   const wrap = document.getElementById("recent-chips");
   wrap.innerHTML = "";
@@ -3563,8 +3603,7 @@ async function renderRecentChips() {
 }
 
 async function pushRecentWord(word) {
-  let recent = await kvGet("recent_words", []);
-  recent = [word, ...recent.filter((w) => w.toLowerCase() !== word.toLowerCase())].slice(0, 20);
+  const recent = mergeRecent([{ w: word, at: Date.now() }], await kvGet("recent_words", []));
   await kvSet("recent_words", recent);
   await syncRecentWords(recent);
   renderRecentChips();
@@ -8988,11 +9027,26 @@ let activeProvider = "gemini";
    取れなかった場合は、今選んでいるものと既定だけを出して選択を殺さない */
 const CHAT_MODEL_CACHE_KEY = "gemini_model_list";
 
+/* 差し替えの効き目が及ぶ範囲を明示する。語呂合わせ・同じ接辞の単語検索・
+   音声入力・写真の読み取りは、軽いモデルにすると質が落ちたり
+   そもそも動かなかったりするため、常に既定のモデルで動かしている */
+const MODEL_NOTE_BASE = `接辞分解にだけ使うモデルです。語呂合わせ・同じ接辞の単語検索・音声入力・写真の読み取り・読み上げは、常に既定の ${GEMINI_CHAT_MODEL_DEFAULT} で動きます。`;
+
+/* このアプリが使うのは「日本語の文章をJSONで返す」用途だけ。画像や動画を
+   作るモデル（nano banana など）、読み上げ・埋め込み・音声対話の専用モデル、
+   実験用の小型モデルは、選んでも壊れるだけなので一覧に出さない。
+   supportedGenerationMethods は画像生成モデルでも generateContent を含むため、
+   それだけでは弾けない */
+const CHAT_MODEL_DENY = /embedding|tts|image|imagen|banana|veo|audio|live|dialog|speech|vision|aqa|guard|robotics|computer-use|gemma|learnlm|thinking-exp/i;
+
 function isChatCapableModel(m) {
   const id = String(m?.name || "").replace(/^models\//, "");
   if (!id) return false;
-  /* 埋め込み・読み上げ・画像生成はここでは選べない（用途が違う） */
-  if (/embedding|tts|image|imagen|veo|aqa/i.test(id)) return false;
+  /* 拒否の一覧だけに頼ると、知らない名前の新しいモデルが素通りする。
+     こちらが実際に使えると分かっている形（gemini-*-flash / -pro）に絞る */
+  if (!/^gemini-/i.test(id)) return false;
+  if (!/(flash|pro)/i.test(id)) return false;
+  if (CHAT_MODEL_DENY.test(id)) return false;
   const methods = m?.supportedGenerationMethods || m?.supportedActions || [];
   return !methods.length || methods.includes("generateContent");
 }
@@ -9020,7 +9074,7 @@ async function refreshChatModelList({ force = false } = {}) {
   const note = document.getElementById("chat-model-note");
   const cached = await kvGet(CHAT_MODEL_CACHE_KEY, []);
   renderChatModelOptions(cached);
-  if (note) note.textContent = "分解・語呂合わせ・写真の読み取り・音声入力に使うモデルです。読み上げと埋め込みは専用モデルのままです。";
+  if (note) note.textContent = MODEL_NOTE_BASE;
   if (!force && cached.length) return;
 
   const apiKey = await loadApiKey("gemini");
@@ -9033,7 +9087,7 @@ async function refreshChatModelList({ force = false } = {}) {
     if (!ids.length) throw new Error("使えるモデルが見つかりませんでした");
     await kvSet(CHAT_MODEL_CACHE_KEY, ids);
     renderChatModelOptions(ids);
-    if (note) note.textContent = `このキーで使えるモデル ${ids.length} 件から選べます。変更したら「保存して疎通確認」で試せます。`;
+    if (note) note.textContent = `${MODEL_NOTE_BASE} このキーで使える ${ids.length} 件から選べます。`;
   } catch (err) {
     if (note) note.textContent = `モデル一覧を取得できませんでした（${err.message}）。手元の候補から選べます。`;
     console.warn("モデル一覧の取得に失敗しました:", err);
@@ -9162,7 +9216,7 @@ document.getElementById("chat-model-select").addEventListener("change", async (e
      外したままだと、切り替えた先で思考を使えないので戻しておく */
   AI_ADAPTERS.gemini.thinkingSupported = true;
   const note = document.getElementById("chat-model-note");
-  if (note) note.textContent = `${geminiChatModel} を使います。「保存して疎通確認」で実際に動くか試せます。`;
+  if (note) note.textContent = `接辞分解に ${geminiChatModel} を使います。「保存して疎通確認」で実際に動くか試せます。`;
 });
 
 document.getElementById("chat-model-reload-btn").addEventListener("click", async () => {
@@ -9718,12 +9772,12 @@ async function runCloudMerge({ quiet = false } = {}) {
       });
       if (toUpload.length) await cloudWordsUpsert(toUpload);
 
-      const localRecent = await kvGet("recent_words", []);
-      const remoteRecentList = (remoteRecentRow && remoteRecentRow.words) || [];
-      const mergedRecent = [
-        ...localRecent,
-        ...remoteRecentList.filter((w) => !localRecent.some((lw) => lw.toLowerCase() === w.toLowerCase())),
-      ].slice(0, 20);
+      /* 引いた時刻で突き合わせるので、どちらの端末から走らせても
+         同じ並びに落ち着く。落ち着いた結果を双方が持つよう、
+         手元にも相手にも同じものを書き戻す */
+      const mergedRecent = mergeRecent(
+        await kvGet("recent_words", []),
+        (remoteRecentRow && remoteRecentRow.words) || []);
       if (mergedRecent.length) {
         await kvSet("recent_words", mergedRecent);
         const { error } = await sb.from("recent_words")
@@ -10935,7 +10989,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "211";
+const APP_BUILD = "212";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
