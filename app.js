@@ -6948,29 +6948,49 @@ function zipperEdgeRadius(hw, hh, r, th) {
 function zipperSpiral(w, h, radius, strip) {
   const hw = w / 2, hh = h / 2;
   const cx = w / 2, cy = h / 2;
-  const maxInset = Math.min(hw, hh);
+  /* 内側へ寄せた矩形は、短い方の半分まで詰めると高さを失って点に潰れる。
+     そこで潰れない深さで止め、その輪郭のままもう1周させる。
+     角度と一緒に深さも進めるだけだと、最後の1周ぶんの角度が
+     どこまでも浅いまま終わり、カードの中心に帯がカスとして残る */
+  const insetCap = Math.max(strip * 0.5, Math.min(hw, hh) - strip * 0.45);
   const th0 = Math.atan2(-hh, -hw);          // 左上の角から始める
-  const step = 0.05;
   const pts = [];
+  const ths = [];
   const arc = [0];
   let total = 0;
-  for (let k = 0; ; k++) {
-    const th = th0 + k * step;
+  let oneLoopArc = 0;
+  let th = th0;
+  let step = 0.05;
+  for (let guard = 0; guard < 40000; guard++) {
     const inset = strip * ((th - th0) / (Math.PI * 2));
-    if (inset > maxInset) break;
-    const p = {
-      x: cx + Math.cos(th) * zipperEdgeRadius(hw - inset, hh - inset, Math.max(0, radius - inset), th),
-      y: cy + Math.sin(th) * zipperEdgeRadius(hw - inset, hh - inset, Math.max(0, radius - inset), th),
-    };
-    if (k > 0) {
-      const d = Math.hypot(p.x - pts[k - 1].x, p.y - pts[k - 1].y);
+    /* 最内の輪郭に達したあと、ちょうど1周ぶんだけ余分に回して掃き終える */
+    if (inset > insetCap + strip * 1.05) break;
+    const geo = Math.min(inset, insetCap);
+    const rr = zipperEdgeRadius(hw - geo, hh - geo, Math.max(0, radius - geo), th);
+    const p = { x: cx + Math.cos(th) * rr, y: cy + Math.sin(th) * rr };
+    if (pts.length) {
+      const d = Math.hypot(p.x - pts[pts.length - 1].x, p.y - pts[pts.length - 1].y);
+      /* 角度を一定に刻むと、細長くなった内側の輪郭では1刻みで何十pxも
+         飛んでしまう。飛んだら刻みを細かくして取り直す。粗いままだと
+         経路が輪郭を横切ってしまい、削り残しとして中心に帯が残る */
+      if (d > 4 && step > 0.002) {
+        step *= 0.5;
+        th = ths[ths.length - 1] + step;
+        continue;
+      }
       total += d;
       arc.push(total);
+      if (d < 1.2) step = Math.min(0.05, step * 1.7);
     }
     pts.push(p);
-    if (k > 6000) break;                      // 念のための歯止め
+    ths.push(th);
+    if (th <= th0 + Math.PI * 2) oneLoopArc = total;   // 1周目の終わりの弧長
+    th += step;
   }
-  return { pts, arc, total };
+  return {
+    pts, arc, ths, total, oneLoopArc,
+    meta: { cx, cy, hw, hh, radius, th0 },
+  };
 }
 
 /* 弧長sの位置と、そこでの進行方向を返す */
@@ -7030,6 +7050,34 @@ function zipperCarve(buf, bctx, card, rect, spiral, from, to, strip, edgeColor) 
   bctx.lineWidth = strip * 1.08;              // 隣の周とわずかに重ねて削り残しを防ぐ
   trace();
   bctx.stroke();
+
+  /* 2周目より内側は、前の周の削りと重なるので線をなぞるだけで足りる。
+     ところが1周目だけは外側に相手がいない。渦は1周かけて帯1本ぶん内へ
+     入っていくので、外周と渦の間には帯が届かない三日月が残ってしまう
+     （カードの縁や角の弧が消えずに居座って見える）。そこは面で消す */
+  const lim = Math.min(to, spiral.oneLoopArc);
+  if (lim > 0) {
+    const { cx, cy, hw, hh, radius, th0 } = spiral.meta;
+    const cap = zipperAt(spiral, lim);
+    const thEnd = spiral.ths[cap.i] != null ? spiral.ths[cap.i] : th0;
+    const m = 3;                              // 外周のさらに外まで消して、縁に筋を残さない
+    const rimAt = (th) => {
+      const R = zipperEdgeRadius(hw + m, hh + m, radius + m, th);
+      return { x: cx + Math.cos(th) * R, y: cy + Math.sin(th) * R };
+    };
+    bctx.beginPath();
+    bctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i <= cap.i && i < pts.length; i++) bctx.lineTo(pts[i].x, pts[i].y);
+    bctx.lineTo(cap.x, cap.y);
+    for (let th = thEnd; th > th0; th -= 0.07) {
+      const q = rimAt(th);
+      bctx.lineTo(q.x, q.y);
+    }
+    const q0 = rimAt(th0);
+    bctx.lineTo(q0.x, q0.y);
+    bctx.closePath();
+    bctx.fill();
+  }
   bctx.globalCompositeOperation = "source-over";
 }
 
@@ -7174,15 +7222,27 @@ async function runZipperUnravel(placeholder, word, morphemes, rect) {
 
       const unzip = zipperEaseInOut(zipperClamp01((t - T_TEETH) / UNZIP_MS));
       const front = spiral.total * unzip;
+      /* 終わり際。まだ飛んでいる帯を切り落とさずに消す */
+      const outFade = zipperClamp01((TOTAL_MS - t) / 220);
+
+      /* 渦の終わりでは、残っているのは中心のごく細い芯だけになる。
+         そこまで削り切っても、切り口の色や務歯が糸くずのように残って
+         見えるので、最後のひと息でまとめて引き取らせる */
+      const endFade = 1 - zipperClamp01((unzip - 0.94) / 0.06);
 
       /* 1) 残っているカード。ほどけた区間だけ削り取られている */
-      zipperCarve(buf, bctx, cardCanvas, rect, spiral, 0, front, ZIPPER_STRIP, teethColor);
-      ctx.drawImage(buf, 0, 0, rect.width, rect.height);
+      if (endFade > 0.004) {
+        zipperCarve(buf, bctx, cardCanvas, rect, spiral, 0, front, ZIPPER_STRIP, teethColor);
+        ctx.save();
+        ctx.globalAlpha = endFade;
+        ctx.drawImage(buf, 0, 0, rect.width, rect.height);
+        ctx.restore();
+      }
 
       /* 2) まだ閉じている縁の務歯。引き手の先だけに並べる */
       const teethIn = zipperClamp01(t / T_TEETH);
       zipperTeeth(ctx, spiral, front, Math.min(spiral.total, front + 150), teethColor,
-        teethIn * (unzip < 1 ? 1 : 0));
+        teethIn * endFade);
 
       /* 3) ほどけた帯。切れ端が外へ流れて薄れる */
       for (const th of threads) {
@@ -7192,7 +7252,7 @@ async function runZipperUnravel(placeholder, word, morphemes, rect) {
         const tr = zipperTravel(ls);
         const x = th.x + th.vx * tr;
         const y = th.y + th.vy * tr + 300 * ls * ls;   // めくれた帯は垂れて落ちる
-        const a = Math.min(1, lt / 50) * Math.pow(1 - lt / th.life, 1.3);
+        const a = Math.min(1, lt / 50) * Math.pow(1 - lt / th.life, 1.3) * outFade;
         if (a <= 0.02) continue;
         ctx.save();
         ctx.globalAlpha = a;
@@ -7203,9 +7263,10 @@ async function runZipperUnravel(placeholder, word, morphemes, rect) {
       }
 
       /* 4) 引き手。開ききるまで先頭を走る */
-      if (unzip < 1) {
+      if (endFade > 0.004) {
         const p = zipperAt(spiral, front);
-        zipperSlider(ctx, p.x, p.y, p.ang, teethColor, faceColor, zipperClamp01(t / T_TEETH));
+        zipperSlider(ctx, p.x, p.y, p.ang, teethColor, faceColor,
+          zipperClamp01(t / T_TEETH) * endFade);
       }
 
       ctx.restore();
@@ -7292,13 +7353,19 @@ async function runZipperTileResolve(el, delayMs) {
       /* 引き手は中心から外周へ戻っていく。まだ通っていない外側だけが欠けている */
       const zip = zipperEaseInOut(zipperClamp01(t / ZIP_MS));
       const front = spiral.total * (1 - zip);
+      /* 閉じ始めは中心の芯しか残っていない。切り口の筋だけが線として
+         浮いて見えるので、ここも同じように馴染ませる */
+      const startFade = zipperClamp01(zip / 0.12);
       zipperCarve(buf, bctx, cardCanvas, rect, spiral, 0, front, ZIPPER_STRIP, teethColor);
+      ctx.save();
+      ctx.globalAlpha = startFade;
       ctx.drawImage(buf, 0, 0, rect.width, rect.height);
+      ctx.restore();
 
       if (zip < 1) {
-        zipperTeeth(ctx, spiral, Math.max(0, front - 130), front, teethColor, 1);
+        zipperTeeth(ctx, spiral, Math.max(0, front - 130), front, teethColor, startFade);
         const p = zipperAt(spiral, front);
-        zipperSlider(ctx, p.x, p.y, p.ang + Math.PI, teethColor, faceColor, 1);
+        zipperSlider(ctx, p.x, p.y, p.ang + Math.PI, teethColor, faceColor, startFade);
       }
 
       ctx.restore();
@@ -10390,7 +10457,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "202";
+const APP_BUILD = "203";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
