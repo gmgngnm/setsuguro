@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#213</span>
+        <span class="build-tag" id="build-tag">#214</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -238,11 +238,6 @@
       <button class="btn-ghost" id="google-signout-btn" type="button">サインアウト</button>
     </div>
     <div class="settings-status" id="google-status"></div>
-    <div class="sync-diag-actions">
-      <button class="btn-ghost sync-diag-btn" id="sync-diag-btn" type="button">同期の状態を確認</button>
-      <button class="btn-ghost sync-diag-btn" id="force-update-btn" type="button">最新版に更新</button>
-    </div>
-    <div class="sync-diag-result" id="sync-diag-result" hidden></div>
 
     <div class="section-label" style="margin-top:6px;">Gemini API キー</div>
     <div class="form-row">
@@ -259,7 +254,7 @@
       <div class="usage-row"><span>今日のトークン</span><b id="usage-tokens">0</b></div>
     </div>
 
-    <div class="lockrow">🔒 キーは端末内に暗号化して保存され、EnGoloydの機能にのみ使用されます。撮影した画像・録音した音声もGeminiに送信されます。</div>
+    <div class="lockrow">キーは端末内に暗号化して保存され、EnGoloydの機能にのみ使用されます。撮影した画像・録音した音声もGeminiに送信されます。</div>
 
     <button class="btn-solid" id="save-key-btn">保存して疎通確認</button>
     <div class="settings-status" id="settings-status"></div>
@@ -267,7 +262,6 @@
     <div class="section-label" style="margin-top:6px;">接辞分解のモデル</div>
     <div class="tts-voice-row">
       <select id="chat-model-select" aria-label="接辞分解に使うモデル"></select>
-      <button class="btn-ghost" id="chat-model-reload-btn" type="button">一覧を更新</button>
     </div>
     <div class="usage-note" id="chat-model-note"></div>
 
@@ -283,7 +277,7 @@
       <button class="mode-pill" data-rag-toggle="on">オン</button>
       <button class="mode-pill on" data-rag-toggle="off">オフ</button>
     </div>
-    <div class="usage-note">語呂合わせの例文検索・意味整合チェック・接辞表記の統一にembeddings（gemini-embedding-001）を使用します。呼び出し回数が増えるため、無料枠のレート制限に当たりやすくなります。</div>
+    <div class="usage-note">語呂合わせの精度が上がりますが、呼び出し回数が増えます。</div>
 
     <div class="section-label" style="margin-top:6px;">音声入力</div>
     <div class="provider-row" id="voice-engine-row">

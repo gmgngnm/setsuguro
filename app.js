@@ -2865,7 +2865,11 @@ const TTS_SPEAKERS = [
   { id: "Callirrhoe", label: "Callirrhoe（おだやか）" },
   { id: "Enceladus", label: "Enceladus（ささやき）" },
 ];
-const TTS_SPEAKER_DEFAULT = "Kore";
+/* 何も選んでいない端末はブラウザ内蔵の音声で読む。Geminiの声は
+   きれいだが呼び出しを使うので、使う人が選んだときだけにする */
+const TTS_SPEAKER_DEFAULT = "";
+/* 以前の既定。自動で書き込まれていた値なので、一度だけ""へ寄せ直す */
+const TTS_SPEAKER_LEGACY_DEFAULT = "Kore";
 
 /* VOICEVOXの話者ID(zundamonなど)が保存されたままだとGeminiでは鳴らず、
    毎回ブラウザ内蔵へフォールバックし続けることになる。Geminiに無いIDは
@@ -2884,8 +2888,16 @@ async function migrateToGeminiOnce() {
 
 async function migrateTtsSpeakerDefaultOnce() {
   const chosen = await kvGet("tts_speaker", null);
-  if (chosen === "" ) return;
-  if (chosen && TTS_SPEAKERS.some((s) => s.id === chosen)) return;
+  if (chosen === "") return;
+  if (chosen && TTS_SPEAKERS.some((s) => s.id === chosen)) {
+    /* 以前の既定はこちらが自動で書き込んだ値で、選んだ結果ではない。
+       既定がブラウザ標準に変わったので、その1つだけ一度だけ寄せ直す */
+    if (chosen === TTS_SPEAKER_LEGACY_DEFAULT && !(await kvGet("tts_browser_default_migrated", false))) {
+      await kvSet("tts_browser_default_migrated", true);
+      await kvSet("tts_speaker", TTS_SPEAKER_DEFAULT);
+    }
+    return;
+  }
   await kvSet("tts_speaker", TTS_SPEAKER_DEFAULT);
   /* さくら時代の「鳴った話者」の記録は意味を失うので捨てる */
   await idbDelete("kv", "tts_speakers_ok");
@@ -3100,10 +3112,20 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
          テキストボックスの自動フォーカスはPC版のみで行う */
       if (window.innerWidth >= 860) document.getElementById("word-input").focus();
     }
-    if (target === "book") { showScreen("screen-book"); renderBookList(); }
+    if (target === "book") { showScreen("screen-book"); renderBookList(); syncBookOnOpen(); }
     if (target === "settings") { showScreen("screen-settings"); refreshUsageDisplay(); }
   });
 });
+
+/* 単語帳を開くたびに、その場の表示はすぐ出しつつ裏で突き合わせる。
+   リアルタイムの購読が切れていた間の削除や保存を取りこぼさないため。
+   待たないので開くのが遅くなることはなく、結果が届いた時点で
+   pullAndMergeCloudData が一覧を描き直す。
+   走行中の突き合わせには相乗りするので、続けて開いても重ならない */
+function syncBookOnOpen() {
+  if (!supabaseClient || !cloudUserId) return;
+  pullAndMergeCloudData({ quiet: true });
+}
 
 /* ------------------------------------------------------------------ *
  * 7. トースト
@@ -9247,13 +9269,6 @@ document.getElementById("chat-model-select").addEventListener("change", async (e
   if (note) note.textContent = "";
 });
 
-document.getElementById("chat-model-reload-btn").addEventListener("click", async () => {
-  const btn = document.getElementById("chat-model-reload-btn");
-  btn.disabled = true;
-  await refreshChatModelList({ force: true });
-  btn.disabled = false;
-});
-
 document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
     await kvSet("goro_auto", pill.dataset.goroToggle === "on");
@@ -9567,7 +9582,6 @@ let SUPABASE_ANON_KEY = "sb_publishable_FXz2avQ5_H8i0c5YY1e3MQ_cc_BcBqN";
 /* 同期が動かない原因は、たいていアプリの外側にある（Supabase側のSQLが
    未実行、サインインが切れている、通信が届かない）。推測で直せないので、
    途中の状態をここに残して設定画面から確認できるようにする */
-const syncDiag = { libError: "", realtimeStatus: "", realtimeEvents: 0, lastError: "" };
 
 const SUPABASE_SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
 let supabaseLoadPromise = null;
@@ -9591,8 +9605,7 @@ function loadSupabaseLibrary() {
     script.onload = () => resolve();
     script.onerror = () => {
       supabaseLoadPromise = null;
-      syncDiag.libError = "Supabaseのライブラリ(CDN)を読み込めませんでした";
-      reject(new Error(syncDiag.libError));
+      reject(new Error("Supabaseのライブラリ(CDN)を読み込めませんでした"));
     };
     document.head.appendChild(script);
   });
@@ -9804,7 +9817,6 @@ async function runCloudMerge({ quiet = false } = {}) {
     renderRecentChips();
   } catch (err) {
     console.warn("Cloud sync (pull) failed:", err);
-    syncDiag.lastError = `突き合わせ: ${err?.message || err?.code || err}`;
     setSyncStatus("同期に失敗しました。", "error");
     setSyncRetryVisible(true, false);
   }
@@ -9846,7 +9858,6 @@ async function startRealtimeWordSync() {
       queueRemoteWordChange,
     )
     .subscribe((status) => {
-      syncDiag.realtimeStatus = status;
       if (status === "SUBSCRIBED") {
         /* 一度切れてから張り直せた場合、切れていた間の変更は届いていない。
            ここで全体を突き合わせて追いつく（初回はサインイン直後の
@@ -9865,7 +9876,6 @@ function stopRealtimeWordSync() {
   const channel = realtimeChannel;
   realtimeChannel = null;
   realtimeEverSubscribed = false;
-  syncDiag.realtimeStatus = "";
   if (channel === "pending") return;
   try { supabaseClient?.removeChannel(channel); } catch (err) { console.warn("Realtime unsubscribe failed:", err); }
 }
@@ -9911,9 +9921,6 @@ const pendingRemoteWordChanges = [];
 let remoteWordChangeTimer = null;
 
 function queueRemoteWordChange(payload) {
-  syncDiag.realtimeEvents++;
-  /* 疎通確認用の行は単語帳のものではないので、ここから先には流さない */
-  if ((payload.new?.id || payload.old?.id) === SYNC_PROBE_ID) return;
   pendingRemoteWordChanges.push(payload);
   if (remoteWordChangeTimer) return;
   remoteWordChangeTimer = setTimeout(() => {
@@ -9955,227 +9962,6 @@ async function applyRemoteWordChanges(payloads) {
   if (added) toast(`他の端末の単語を${added}件取り込みました`);
   else if (removed) toast("他の端末での削除を反映しました");
 }
-
-/* ---- 同期の状態を実際に試して確かめる ----
-   「同期がうまくいかない」の原因を推測で潰すのは効率が悪いので、設定画面
-   から実際にひと通り試し、どこで止まっているかとその直し方を出す */
-const SYNC_PROBE_ID = "__engoloyd_sync_probe__";
-
-/* 足りない列の追加SQL。列ごとに型が違うので、名前から引く */
-const CLOUD_WORD_COLUMN_TYPES = {
-  word_meaning: "text", word_phonetic: "text", word_memory_tip: "text",
-  morphemes: "jsonb", synonyms: "jsonb", antonyms: "jsonb",
-  goro_text: "text", goro_highlight: "jsonb", provider: "text",
-  memorized: "boolean default false", deleted: "boolean not null default false",
-  created_at: "bigint", updated_at: "bigint",
-};
-
-function sqlAddMissingColumns(names) {
-  const adds = names.map((n) => `  add column if not exists ${n} ${CLOUD_WORD_COLUMN_TYPES[n] || "text"}`);
-  return `alter table public.words\n${adds.join(",\n")};`;
-}
-/* 分解結果の共有表。行は誰の持ち物でもないのでuser_idを持たない。
-   追加だけ許し、更新・削除は許さない（他人の結果を書き換えられないように） */
-const SQL_CREATE_DECOMPOSITIONS = `create table if not exists public.decompositions (
-  word text not null,
-  version int not null,
-  payload jsonb not null,
-  created_at bigint,
-  primary key (word, version)
-);
-alter table public.decompositions enable row level security;
-drop policy if exists "signed in users read decompositions" on public.decompositions;
-create policy "signed in users read decompositions"
-  on public.decompositions for select
-  to authenticated using (true);
-drop policy if exists "signed in users add decompositions" on public.decompositions;
-create policy "signed in users add decompositions"
-  on public.decompositions for insert
-  to authenticated with check (true);`;
-
-/* 既にpublicationに入っているとalter publicationはエラーになる。
-   SQL Editorは全体を1つのトランザクションで流すので、1文でも転ぶと
-   前の行（列の追加など）まで巻き戻り、何も適用されないまま終わる */
-const SQL_ENABLE_REALTIME = `do $$
-begin
-  alter publication supabase_realtime add table public.words;
-exception when duplicate_object then null;
-end $$;
-alter table public.words replica identity full;`;
-
-/* 列や表を足しても、PostgRESTが持っている定義の控えが古いままだと
-   「schema cacheに見つからない」と言われ続ける。最後に必ず作り直させる */
-const SQL_RELOAD_SCHEMA = "notify pgrst, 'reload schema';";
-
-/* Realtimeの配信が本当に届くかを、往復させて確かめる。購読が
-   SUBSCRIBEDになっても、テーブルがpublicationに入っていなければ変更は
-   1件も届かない（エラーも出ない）ので、実際に書いて待つしかない */
-function probeRealtimeDelivery(sb) {
-  return new Promise((resolve) => {
-    let done = false;
-    let timer = null;
-    const channel = sb.channel(`sync-probe-${Date.now()}`);
-    const finish = (result) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      try { sb.removeChannel(channel); } catch (err) { /* 後片付けなので握りつぶす */ }
-      resolve(result);
-    };
-    channel
-      .on("postgres_changes",
-        { event: "*", schema: "public", table: "words", filter: `user_id=eq.${cloudUserId}` },
-        (payload) => { if ((payload.new?.id || payload.old?.id) === SYNC_PROBE_ID) finish({ ok: true }); })
-      .subscribe(async (status) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { finish({ ok: false, reason: `購読できませんでした(${status})` }); return; }
-        if (status !== "SUBSCRIBED") return;
-        /* 削除済みの目印として書くので、単語帳には出てこない。
-           deleted列が無いプロジェクトでは目印を立てられないので、
-           確認用の行は下の後片付けで消す */
-        const probeRow = {
-          id: SYNC_PROBE_ID, user_id: cloudUserId, word: "sync probe", morphemes: [], synonyms: [], antonyms: [],
-          goro_highlight: [], deleted: true, created_at: Date.now(), updated_at: Date.now(),
-        };
-        for (const name of cloudMissingColumns) delete probeRow[name];
-        const { error } = await sb.from("words").upsert(probeRow);
-        if (error) finish({ ok: false, reason: `書き込めませんでした: ${error.message}` });
-      });
-    timer = setTimeout(() => finish({ ok: false, reason: "変更の通知が届きませんでした" }), 8000);
-  });
-}
-
-async function runSyncDiagnostics() {
-  const lines = [];
-  const sql = [];
-  const add = (ok, text) => lines.push({ ok, text });
-
-  if (!cloudSyncConfigured()) {
-    add(false, "クラウド同期が設定されていません（SUPABASE_URL / anon key が空）");
-    return { lines, sql };
-  }
-
-  let sb = supabaseClient;
-  if (!sb) {
-    try { sb = await getSupabaseClient(); } catch (err) { syncDiag.libError = err.message; }
-  }
-  if (!sb) { add(false, syncDiag.libError || "Supabaseに接続できませんでした"); return { lines, sql }; }
-  add(true, "Supabaseに接続できました");
-
-  const { data: sess } = await sb.auth.getSession();
-  const user = sess?.session?.user;
-  if (!user) {
-    add(false, "サインインしていません。Googleでサインインし直してください");
-    return { lines, sql };
-  }
-  add(true, `サインイン済み（${user.email || user.id}）`);
-
-  const { error: readErr } = await sb.from("words").select("id").limit(1);
-  if (readErr) {
-    add(false, `単語テーブルを読めません: ${readErr.message}`);
-    return { lines, sql };
-  }
-  add(true, "単語テーブルを読めます");
-
-  /* 足りない列を1つずつ確かめる。以前はdeleted列しか見ておらず、
-     実際に保存を止めていた列（synonyms/antonymsなど）が診断に出ないまま
-     「読み書きができます」と表示されてしまっていた */
-  const missing = [];
-  for (const name of CLOUD_WORD_OPTIONAL_COLUMNS) {
-    const { error } = await sb.from("words").select(name).limit(1);
-    if (error) { missing.push(name); noteMissingColumn(name); }
-  }
-  if (missing.length) {
-    add(false, `列がありません: ${missing.join(", ")}。この項目は同期されません`
-      + (missing.includes("deleted") ? "（削除が別の端末で復活します）" : ""));
-    sql.push(sqlAddMissingColumns(missing));
-  } else {
-    add(true, "必要な列がそろっています");
-  }
-
-  const { error: sharedErr } = await sb.from(SHARED_DECOMPOSE_TABLE).select("word").limit(1);
-  if (sharedErr) {
-    add(false, "分解結果の共有表がありません。単語ごとに毎回AIに分解させます");
-    sql.push(SQL_CREATE_DECOMPOSITIONS);
-  } else {
-    add(true, "分解結果の共有が使えます");
-  }
-
-  {
-    const probe = await probeRealtimeDelivery(sb);
-    if (probe.ok) {
-      add(true, "リアルタイム配信が届いています");
-    } else {
-      add(false, `リアルタイム配信が届きません（${probe.reason}）。他の端末への即時反映が効きません`);
-      sql.push(SQL_ENABLE_REALTIME);
-    }
-    /* 確認用の行を残さない */
-    try { await sb.from("words").delete().eq("user_id", cloudUserId).eq("id", SYNC_PROBE_ID); } catch (err) { /* 残っても害は無い */ }
-  }
-
-  const pending = Object.keys(await outboxAll()).length;
-  add(pending === 0, pending === 0 ? "未送信の変更はありません" : `未送信の変更が${pending}件あります`);
-  if (syncDiag.lastError) add(false, `最後のエラー: ${syncDiag.lastError}`);
-  /* 端末ごとに違う結果が出たときに、まず疑うべきは読み込んでいるコードの
-     版ズレなので、必ず一緒に出す */
-  add(true, `このアプリの版: #${APP_BUILD}（購読:${syncDiag.realtimeStatus || "未接続"} / 受信:${syncDiag.realtimeEvents}件）`);
-
-  return { lines, sql };
-}
-
-function renderSyncDiagnostics({ lines, sql }) {
-  const box = document.getElementById("sync-diag-result");
-  if (!box) return;
-  const items = lines.map((l) =>
-    `<div class="sync-diag-line ${l.ok ? "ok" : "ng"}"><span>${l.ok ? "✓" : "✗"}</span><span>${escapeHtml(l.text)}</span></div>`).join("");
-  const fix = sql.length
-    ? `<div class="sync-diag-fix"><div class="sync-diag-fix-head">Supabaseの SQL Editor で以下をまとめて実行してください（何度実行しても安全です）</div>`
-      + `<pre>${escapeHtml([...sql, SQL_RELOAD_SCHEMA].join("\n\n"))}</pre></div>`
-    : "";
-  box.innerHTML = items + fix;
-  box.hidden = false;
-}
-
-/* 端末が古いバンドルを掴んだままになっている場合の逃げ道。Service Worker
-   はネットワーク優先なので普通は起きないが、電波が悪いときにキャッシュを
-   返したまま固定されることがある */
-document.getElementById("force-update-btn")?.addEventListener("click", async (e) => {
-  const btn = e.currentTarget;
-  btn.disabled = true;
-  btn.textContent = "更新中…";
-  try {
-    if ("caches" in window) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-    }
-    if (navigator.serviceWorker) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((r) => r.unregister()));
-    }
-  } catch (err) {
-    console.warn("キャッシュの削除に失敗しました:", err);
-  }
-  /* 単語帳(IndexedDB)には触っていないので、保存済みの単語は消えない */
-  location.reload();
-});
-
-document.getElementById("sync-diag-btn")?.addEventListener("click", async (e) => {
-  const btn = e.currentTarget;
-  if (btn.disabled) return;
-  btn.disabled = true;
-  const label = btn.textContent;
-  btn.textContent = "確認中…";
-  const box = document.getElementById("sync-diag-result");
-  if (box) { box.hidden = true; box.innerHTML = ""; }
-  try {
-    renderSyncDiagnostics(await runSyncDiagnostics());
-  } catch (err) {
-    console.warn("同期の確認に失敗しました:", err);
-    renderSyncDiagnostics({ lines: [{ ok: false, text: `確認そのものに失敗しました: ${err.message}` }], sql: [] });
-  } finally {
-    btn.disabled = false;
-    btn.textContent = label;
-  }
-});
 
 /* 端末をスリープさせている間などは購読が切れて変更が届かない。画面に
    戻ってきたタイミングで静かに突き合わせ、取りこぼしを埋める */
@@ -10287,7 +10073,6 @@ const SYNC_FAIL_TOAST_INTERVAL_MS = 30000;
 
 function reportSyncDeferred(err, what) {
   console.warn(`Cloud sync (${what}) deferred:`, err);
-  syncDiag.lastError = `${what}: ${err?.message || err?.code || err}`;
   if (cloudOffline()) return;   // オフラインは本人が分かっているので黙る
   const now = Date.now();
   if (now - lastSyncFailToastAt < SYNC_FAIL_TOAST_INTERVAL_MS) return;
@@ -11010,7 +10795,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "213";
+const APP_BUILD = "214";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
