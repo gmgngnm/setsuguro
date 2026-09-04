@@ -834,15 +834,3 @@ button{font-family:inherit;cursor:pointer;}
 
 /* 同期の状態の確認結果。原因ごとに直し方(SQL)まで出すので、
    コピーしやすいよう等幅で折り返さずに横スクロールさせる */
-.sync-diag-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
-.sync-diag-btn{font-size:12px;}
-.sync-diag-result{margin-top:8px;display:flex;flex-direction:column;gap:5px;font-size:12px;}
-.sync-diag-line{display:flex;gap:7px;align-items:flex-start;line-height:1.5;}
-.sync-diag-line span:first-child{flex:none;font-weight:700;}
-.sync-diag-line.ok{color:var(--ink-soft);}
-.sync-diag-line.ok span:first-child{color:var(--accent);}
-.sync-diag-line.ng{color:var(--ink);}
-.sync-diag-line.ng span:first-child{color:var(--danger);}
-.sync-diag-fix{margin-top:4px;padding:9px 10px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line);}
-.sync-diag-fix-head{font-size:11px;color:var(--ink-faint);margin-bottom:5px;}
-.sync-diag-fix pre{margin:0;overflow-x:auto;font-size:11px;line-height:1.6;white-space:pre;}
