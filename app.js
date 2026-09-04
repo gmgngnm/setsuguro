@@ -5266,6 +5266,7 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
   const cx = rect.width / 2, cy = rect.height / 2;
   const membraneColor = cs.borderTopColor || "#1F6F63";
   const plasmaColor = cs.backgroundColor || "#FFFFFF";
+  const membraneWidth = parseFloat(cs.borderTopWidth) || 1.5;
 
   /* ---- 接辞の境目 ----
      細胞は文字ごと分かれるので、境目は実際の字送りで測る。カードには左右の
@@ -5412,33 +5413,14 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
 
         ctx.restore();  // 膜のクリップを解除
 
-        /* 3) 膜。太く淡い線を下に敷いてから細い線を重ね、厚みのある縁にする */
+        /* 3) 膜。カードと同じ太さ・同じ色の線を1本引くだけにする */
         outline();
         ctx.save();
         ctx.strokeStyle = membraneColor;
-        ctx.globalAlpha = outFade * 0.28;
-        ctx.lineWidth = 4.5;
-        ctx.stroke();
         ctx.globalAlpha = outFade;
-        ctx.lineWidth = 1.6;
+        ctx.lineWidth = membraneWidth;
         ctx.stroke();
         ctx.restore();
-
-        /* 4) 収縮環。くびれている最中の境目だけ、膜を太く締め直す。
-              白い光ではなく膜そのものを濃くするので、明暗どちらのテーマでも見える */
-        furrows.forEach((f) => {
-          if (f.depth <= 0.02 || f.depth >= 1) return;
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(f.x - f.w * 1.1, cy - baseR * 1.3, f.w * 2.2, baseR * 2.6);
-          ctx.clip();
-          outline();
-          ctx.strokeStyle = membraneColor;
-          ctx.globalAlpha = outFade * Math.sin(f.depth * Math.PI) * 0.85;
-          ctx.lineWidth = 3.4;
-          ctx.stroke();
-          ctx.restore();
-        });
 
         ctx.restore();  // translate(dx)
       });
@@ -5493,6 +5475,7 @@ async function runMitosisTileResolve(el, delayMs) {
   const srcCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
   const membraneColor = cs.borderTopColor || "#1F6F63";
   const plasmaColor = cs.backgroundColor || "#FFFFFF";
+  const membraneWidth = parseFloat(cs.borderTopWidth) || 1.5;
 
   const cx = rect.width / 2, cy = rect.height / 2;
   const TOTAL_MS = 760;
@@ -5527,12 +5510,10 @@ async function runMitosisTileResolve(el, delayMs) {
       ctx.fillStyle = plasmaColor;
       ctx.fill();
 
+      /* 膜もカードと同じ太さ・同じ色の線1本にする */
       ctx.strokeStyle = membraneColor;
-      ctx.globalAlpha = 0.3;
-      ctx.lineWidth = 4;
-      ctx.stroke();
       ctx.globalAlpha = 1;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = membraneWidth;
       ctx.stroke();
       ctx.restore();
 
@@ -9604,7 +9585,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "198";
+const APP_BUILD = "199";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
