@@ -1035,7 +1035,15 @@ async function extractErrorDetail(res) {
    ブラウザからの直接呼び出しにも対応しているのがGeminiだけだったため。
    モデルIDはここだけを見ればよいようにまとめてある */
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_CHAT_MODEL = "gemini-3.7-flash";
+/* 文章を書かせるモデルだけは設定画面から差し替えられる。速さと賢さの
+   釣り合いは使う人の好み（と財布）によるため。埋め込みと読み上げは
+   代わりが無いので固定のまま */
+const GEMINI_CHAT_MODEL_DEFAULT = "gemini-3.7-flash";
+let geminiChatModel = GEMINI_CHAT_MODEL_DEFAULT;
+async function loadGeminiChatModelSetting() {
+  const saved = await kvGet("gemini_chat_model", "");
+  if (saved) geminiChatModel = saved;
+}
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
@@ -1079,7 +1087,7 @@ const AI_ADAPTERS = {
       if (thinkingLevel && this.thinkingSupported) {
         generationConfig.thinkingConfig = { thinkingLevel };
       }
-      const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL}:generateContent`, {
+      const res = await fetch(`${GEMINI_API_BASE}/models/${geminiChatModel}:generateContent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
@@ -1124,9 +1132,8 @@ async function getActiveProvider() {
  *    ここだけ generateContent を直接叩く。APIキーは分解・語呂合わせと
  *    共通のものを使う。
  * ------------------------------------------------------------------ */
-/* 画像認識も同じモデルで賄う。以前はここだけ gemini-2.5-flash を
-   別に持っていたが、モデルIDの管理箇所を1つにまとめた */
-const GEMINI_MODEL = GEMINI_CHAT_MODEL;
+/* 画像認識も文章と同じモデルで賄う。設定で差し替えたら一緒に切り替わる
+   よう、定数に写し取らず呼ぶ時点の値を見る */
 
 /* 画像(dataURL)を渡すと、写っている英単語をJSON配列で返す。
    手書き・活字どちらのノートでも読める前提のプロンプトにしてある */
@@ -1144,7 +1151,7 @@ async function recognizeWordsFromImage(dataUrl, apiKey) {
     '{"words":["abandon","bereavement"]}',
   ].join("\n");
 
-  const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent`, {
+  const res = await fetch(`${GEMINI_API_BASE}/models/${geminiChatModel}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
@@ -1217,9 +1224,9 @@ async function verifyApiKey(provider, apiKey) {
     extractJson(probe.text);
   } catch (err) {
     const ids = (listed?.models || []).map((m) => String(m?.name || "").replace(/^models\//, ""));
-    if (ids.length && !ids.includes(GEMINI_CHAT_MODEL)) {
+    if (ids.length && !ids.includes(geminiChatModel)) {
       const flash = ids.filter((id) => id.includes("flash")).slice(0, 6);
-      throw new Error(`このキーでは ${GEMINI_CHAT_MODEL} を使えないようです`
+      throw new Error(`このキーでは ${geminiChatModel} を使えないようです`
         + (flash.length ? `（使えそうなモデル: ${flash.join(", ")}）` : "")
         + `。元のエラー: ${err.message}`);
     }
@@ -2437,8 +2444,10 @@ function captureRateLimitHeaders(res) {
 /* 1リクエストにまとめる単語数。増やすほど課金は減るが、1回の応答で
    書かせる量が増えるぶん品質は落ちやすくなる。落ちた分は機械チェックが
    捕まえて作り直しに回してくれるものの、作り直しが増えれば結局
-   リクエストも増えるので、割に合う範囲としてこの値にしている */
-const BATCH_CHUNK_SIZE = 5;
+   リクエストも増えるので、割に合う範囲としてこの値にしている。
+   出力が長くなりすぎてMAX_TOKENSで切れた場合も、チャンクごと1語ずつの
+   経路へ退避するので、増やして駄目でも単語が失われることはない */
+const BATCH_CHUNK_SIZE = 10;
 
 function chunkArray(list, size) {
   const out = [];
@@ -3122,7 +3131,9 @@ const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押し
    対応プロバイダを増やす場合はここに足せば、選択可否の判定も
    フォールバックもこのマップの有無だけで動く */
 const STT_ENDPOINTS = {
-  gemini: { url: `${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL}:generateContent` },
+  /* 設定でモデルを差し替えたら追従するよう、URLは都度組み立てる
+     （リテラルに埋めると読み込み時の値で固まってしまう） */
+  gemini: { get url() { return `${GEMINI_API_BASE}/models/${geminiChatModel}:generateContent`; } },
 };
 
 /* ほぼ無音の録音を渡すと、学習データ由来の定型句をでっち上げて
@@ -3901,6 +3912,7 @@ async function loadAnimationsEnabledSetting() {
   animationsEnabled = await kvGet("anim_enabled", true);
 }
 loadAnimationsEnabledSetting();
+loadGeminiChatModelSetting();
 
 function reducedMotion() {
   return !animationsEnabled || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -8971,10 +8983,68 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
    「写真読み取り専用の別キー」も無くなり、キーは1つだけになった */
 let activeProvider = "gemini";
 
+/* 使えるモデルはAPIキーごとに違い、増減もする。こちらで一覧を決め打ちすると
+   すぐ古くなるので、Gemini自身に訊いた一覧をそのまま並べる。
+   取れなかった場合は、今選んでいるものと既定だけを出して選択を殺さない */
+const CHAT_MODEL_CACHE_KEY = "gemini_model_list";
+
+function isChatCapableModel(m) {
+  const id = String(m?.name || "").replace(/^models\//, "");
+  if (!id) return false;
+  /* 埋め込み・読み上げ・画像生成はここでは選べない（用途が違う） */
+  if (/embedding|tts|image|imagen|veo|aqa/i.test(id)) return false;
+  const methods = m?.supportedGenerationMethods || m?.supportedActions || [];
+  return !methods.length || methods.includes("generateContent");
+}
+
+async function fetchChatModelIds(apiKey) {
+  const res = await fetch(AI_ADAPTERS.gemini.modelsUrl, { headers: { "x-goog-api-key": apiKey } });
+  if (!res.ok) throw new Error(`一覧を取得できませんでした (${res.status})`);
+  const json = await res.json();
+  const ids = (json?.models || []).filter(isChatCapableModel)
+    .map((m) => String(m.name).replace(/^models\//, ""));
+  /* 新しいものほど上に来るよう、名前で降順に並べる */
+  return [...new Set(ids)].sort().reverse();
+}
+
+function renderChatModelOptions(ids) {
+  const sel = document.getElementById("chat-model-select");
+  if (!sel) return;
+  const list = [...new Set([geminiChatModel, GEMINI_CHAT_MODEL_DEFAULT, ...ids])];
+  sel.innerHTML = list.map((id) =>
+    `<option value="${escapeHtml(id)}"${id === geminiChatModel ? " selected" : ""}>${escapeHtml(id)}`
+    + `${id === GEMINI_CHAT_MODEL_DEFAULT ? "（既定）" : ""}</option>`).join("");
+}
+
+async function refreshChatModelList({ force = false } = {}) {
+  const note = document.getElementById("chat-model-note");
+  const cached = await kvGet(CHAT_MODEL_CACHE_KEY, []);
+  renderChatModelOptions(cached);
+  if (note) note.textContent = "分解・語呂合わせ・写真の読み取り・音声入力に使うモデルです。読み上げと埋め込みは専用モデルのままです。";
+  if (!force && cached.length) return;
+
+  const apiKey = await loadApiKey("gemini");
+  if (!apiKey) {
+    if (note) note.textContent = "APIキーを保存すると、このキーで使えるモデルの一覧を出せます。";
+    return;
+  }
+  try {
+    const ids = await fetchChatModelIds(apiKey);
+    if (!ids.length) throw new Error("使えるモデルが見つかりませんでした");
+    await kvSet(CHAT_MODEL_CACHE_KEY, ids);
+    renderChatModelOptions(ids);
+    if (note) note.textContent = `このキーで使えるモデル ${ids.length} 件から選べます。変更したら「保存して疎通確認」で試せます。`;
+  } catch (err) {
+    if (note) note.textContent = `モデル一覧を取得できませんでした（${err.message}）。手元の候補から選べます。`;
+    console.warn("モデル一覧の取得に失敗しました:", err);
+  }
+}
+
 async function initSettingsScreen() {
   activeProvider = await getActiveProvider();
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
   await refreshUsageDisplay();
+  await refreshChatModelList();
 
   document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.animToggle === (animationsEnabled ? "on" : "off"));
@@ -9083,6 +9153,23 @@ document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((pill) => {
     await kvSet("anim_enabled", animationsEnabled);
     document.querySelectorAll("#anim-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
   });
+});
+
+document.getElementById("chat-model-select").addEventListener("change", async (e) => {
+  geminiChatModel = e.target.value || GEMINI_CHAT_MODEL_DEFAULT;
+  await kvSet("gemini_chat_model", geminiChatModel);
+  /* モデルによって思考レベルの指定を受け付けるかが違う。前のモデルで
+     外したままだと、切り替えた先で思考を使えないので戻しておく */
+  AI_ADAPTERS.gemini.thinkingSupported = true;
+  const note = document.getElementById("chat-model-note");
+  if (note) note.textContent = `${geminiChatModel} を使います。「保存して疎通確認」で実際に動くか試せます。`;
+});
+
+document.getElementById("chat-model-reload-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("chat-model-reload-btn");
+  btn.disabled = true;
+  await refreshChatModelList({ force: true });
+  btn.disabled = false;
 });
 
 document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((pill) => {
@@ -10848,7 +10935,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "210";
+const APP_BUILD = "211";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
