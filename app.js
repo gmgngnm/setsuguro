@@ -5199,30 +5199,6 @@ const mitosisEaseOut = (p) => 1 - Math.pow(1 - p, 3);
 const mitosisEaseInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 const mitosisClamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/* 細胞内の顆粒。粒ごとにグラデーションを作ると数十個描いた時点で破綻するため、
-   プリズムと同じく一度だけ描いてキャッシュした画像を貼る。
-   白い光ではなく膜と同じ色で作る。明るいテーマでは細胞質が白なので、
-   白い粒だと地に沈んで見えなくなるため */
-const mitosisBlobCache = new Map();
-
-function mitosisBlobSprite(color) {
-  const hit = mitosisBlobCache.get(color);
-  if (hit) return hit;
-  const size = 48;
-  const c = document.createElement("canvas");
-  c.width = c.height = size;
-  const g = c.getContext("2d");
-  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, color);
-  grad.addColorStop(0.42, color);
-  grad.addColorStop(1, "transparent");
-  g.globalAlpha = 0.75;
-  g.fillStyle = grad;
-  g.fillRect(0, 0, size, size);
-  mitosisBlobCache.set(color, c);
-  return c;
-}
-
 /* 膜の高さ関数。両端は丸め、境目ごとにガウス状のくびれを掛ける */
 function mitosisHalfHeight(x, x0, x1, baseR, furrows) {
   const mid = (x0 + x1) / 2;
@@ -5290,7 +5266,6 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
   const cx = rect.width / 2, cy = rect.height / 2;
   const membraneColor = cs.borderTopColor || "#1F6F63";
   const plasmaColor = cs.backgroundColor || "#FFFFFF";
-  const granuleSprite = mitosisBlobSprite(membraneColor);
 
   /* ---- 接辞の境目 ----
      細胞は文字ごと分かれるので、境目は実際の字送りで測る。カードには左右の
@@ -5313,7 +5288,6 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
 
   /* ---- 各期の時刻 ---- */
   const T_PROPHASE = 220;                              // 核が凝縮し、細胞がふくらむ
-  const T_METAPHASE = 520;                             // 紡錘糸が両極から伸びきる
   const T_ANAPHASE = 700;                              // 染色体が両極へ引かれはじめる
   const T_FURROW = 820;                                // 最初の収縮環ができる
   const FURROW_MS = 460;                               // くびれ切るまで
@@ -5363,22 +5337,6 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
     return (x, side) => 1 + amp * Math.sin(s * 26 + x * 0.045 + (side > 0 ? Math.PI * 0.62 : 0));
   }
 
-  /* ---- 細胞内の顆粒。どのセグメントに属するかで、一緒に動く細胞が決まる ---- */
-  const granules = [];
-  for (let i = 0; i < 46; i++) {
-    const gx = Math.random() * rect.width;
-    let segIndex = segments.findIndex((s) => gx >= s.xStart && gx < s.xEnd);
-    if (segIndex === -1) segIndex = gx < 0 ? 0 : segments.length - 1;
-    granules.push({
-      x: gx,
-      y: cy + (Math.random() - 0.5) * rect.height * 0.9,
-      r: 1.4 + Math.random() * 3.4,
-      seg: segIndex,
-      phase: Math.random() * Math.PI * 2,
-      drift: 6 + Math.random() * 16,
-    });
-  }
-
   const start = performance.now();
 
   return new Promise((resolve) => {
@@ -5417,18 +5375,12 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
         ctx.translate(dx, 0);
         ctx.globalAlpha = outFade;
 
-        /* 1) 細胞質。中心が明るく縁が沈む球状の塗り */
+        /* 1) 細胞質。カードの地の色をそのまま塗る。
+              内側に模様を持たせると、カードの中だけ色が反転したように見えてしまう */
         outline();
-        const plasma = ctx.createRadialGradient(
-          (x0 + x1) / 2, cy - baseR * 0.35, baseR * 0.1,
-          (x0 + x1) / 2, cy, Math.max(baseR, (x1 - x0) * 0.55)
-        );
-        plasma.addColorStop(0, plasmaColor);
-        plasma.addColorStop(0.62, plasmaColor);
-        plasma.addColorStop(1, membraneColor);
         ctx.save();
-        ctx.globalAlpha = outFade * 0.92;
-        ctx.fillStyle = plasma;
+        ctx.globalAlpha = outFade;
+        ctx.fillStyle = plasmaColor;
         ctx.fill();
         ctx.restore();
 
@@ -5437,39 +5389,7 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
         outline();
         ctx.clip();
 
-        /* 2a) 顆粒。ゆっくり漂う */
-        for (const g of granules) {
-          if (g.seg < gi0 || g.seg > gi1) continue;
-          const gy = g.y + Math.sin(t / 900 + g.phase) * g.drift * 0.35;
-          const gx = g.x + Math.cos(t / 1100 + g.phase) * g.drift * 0.3;
-          ctx.globalAlpha = outFade * 0.34;
-          ctx.drawImage(granuleSprite, gx - g.r * 2, gy - g.r * 2, g.r * 4, g.r * 4);
-        }
-
-        /* 2b) 紡錘糸。中期に両極から伸び、くびれはじめると引っ込む */
-        const spindle = mitosisClamp01((t - T_PROPHASE) / (T_METAPHASE - T_PROPHASE))
-          * (1 - mitosisClamp01((t - T_FURROW) / FURROW_MS));
-        if (spindle > 0.02 && gi1 > gi0) {
-          ctx.save();
-          ctx.globalAlpha = outFade * spindle * 0.3;
-          ctx.strokeStyle = membraneColor;
-          ctx.lineWidth = 1;
-          for (let b = gi0; b < gi1; b++) {
-            const bx = boundaries[b];
-            for (const side of [-1, 1]) {
-              const poleX = side < 0 ? x0 + baseR * 0.4 : x1 - baseR * 0.4;
-              for (let k = -2; k <= 2; k++) {
-                ctx.beginPath();
-                ctx.moveTo(poleX, cy);
-                ctx.quadraticCurveTo((poleX + bx) / 2, cy + k * baseR * 0.24, bx, cy + k * baseR * 0.12);
-                ctx.stroke();
-              }
-            }
-          }
-          ctx.restore();
-        }
-
-        /* 2c) 文字。後期に入ると、それぞれの極（＝自分の細胞の側）へ引かれる。
+        /* 2a) 文字。後期に入ると、それぞれの極（＝自分の細胞の側）へ引かれる。
                セグメントのx範囲でクリップしてから動かすので、接辞ごとに
                まとまって離れていくように見える */
         const gather = mitosisEaseInOut(mitosisClamp01((t - T_ANAPHASE) / 520));
@@ -5519,18 +5439,6 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
           ctx.stroke();
           ctx.restore();
         });
-
-        /* 5) 鏡面ハイライト。上側だけを短く光らせて、濡れた球に見せる */
-        ctx.save();
-        outline();
-        ctx.clip();
-        const spec = ctx.createLinearGradient(0, cy - baseR, 0, cy);
-        spec.addColorStop(0, "rgba(255,255,255,.5)");
-        spec.addColorStop(1, "rgba(255,255,255,0)");
-        ctx.globalAlpha = outFade * 0.8;
-        ctx.fillStyle = spec;
-        ctx.fillRect(x0, cy - baseR, x1 - x0, baseR);
-        ctx.restore();
 
         ctx.restore();  // translate(dx)
       });
@@ -5585,19 +5493,8 @@ async function runMitosisTileResolve(el, delayMs) {
   const srcCanvas = renderCardOffscreen(cs, partText, partCs, rect, partCenterY, dpr);
   const membraneColor = cs.borderTopColor || "#1F6F63";
   const plasmaColor = cs.backgroundColor || "#FFFFFF";
-  const granuleSprite = mitosisBlobSprite(membraneColor);
 
   const cx = rect.width / 2, cy = rect.height / 2;
-  const granules = [];
-  for (let i = 0; i < 14; i++) {
-    granules.push({
-      x: cx + (Math.random() - 0.5) * rect.width * 0.7,
-      y: cy + (Math.random() - 0.5) * rect.height * 0.7,
-      r: 1.2 + Math.random() * 2.6,
-      phase: Math.random() * Math.PI * 2,
-    });
-  }
-
   const TOTAL_MS = 760;
   const T_FIRM = 360;          // 膜がカードの形へ硬化しはじめる
   const start = performance.now();
@@ -5624,22 +5521,11 @@ async function runMitosisTileResolve(el, delayMs) {
       ctx.save();
       roundRectPath(ctx, cx - rx, cy - ry, rx * 2, ry * 2, Math.max(radius, corner));
 
-      const plasma = ctx.createRadialGradient(cx, cy - ry * 0.4, 0, cx, cy, Math.max(rx, ry));
-      plasma.addColorStop(0, plasmaColor);
-      plasma.addColorStop(0.6, plasmaColor);
-      plasma.addColorStop(1, membraneColor);
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = plasma;
+      /* カードの地の色をそのまま塗る。内側に模様を持たせると、
+         カードの中だけ色が反転したように見えてしまう */
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = plasmaColor;
       ctx.fill();
-
-      ctx.save();
-      ctx.clip();
-      for (const g of granules) {
-        ctx.globalAlpha = 0.34 * (1 - firm);
-        ctx.drawImage(granuleSprite,
-          g.x - g.r * 2, g.y + Math.sin(t / 700 + g.phase) * 5 - g.r * 2, g.r * 4, g.r * 4);
-      }
-      ctx.restore();
 
       ctx.strokeStyle = membraneColor;
       ctx.globalAlpha = 0.3;
@@ -9718,7 +9604,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "197";
+const APP_BUILD = "198";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
