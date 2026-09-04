@@ -9401,16 +9401,42 @@ async function withCloudRetry(fn, attempts = 3) {
    deleted列がまだ無いプロジェクト（SUPABASE_SETUP.mdの移行SQLを流す前）
    では、列が無いと言われた時点でこのフラグを倒し、従来通りの物理削除に
    戻す（同期そのものが止まってしまわないようにするため） */
-let cloudTombstonesSupported = true;
+/* 同期に欠かせないのは id / user_id / word の3つだけ。それ以外は、
+   テーブルにその列が無くてもその項目を諦めれば同期は続けられる。
+   アプリの列が増えるたびに古いプロジェクトのテーブルとズレるので、
+   特定の列を名指しで手当てするのではなく、足りないと言われた列を
+   落として送り直す形にしてある */
+const CLOUD_WORD_OPTIONAL_COLUMNS = [
+  "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
+  "synonyms", "antonyms", "goro_text", "goro_highlight", "provider",
+  "memorized", "deleted", "created_at", "updated_at",
+];
 
-function isMissingDeletedColumn(error) {
-  const msg = `${error?.message || ""} ${error?.details || ""}`;
-  return /deleted/.test(msg) && (error?.code === "PGRST204" || error?.code === "42703" || /column/i.test(msg));
+/* 送っても弾かれると分かった列。1回の応答では1列しか分からないので、
+   見つけるたびにここへ足していく */
+const cloudMissingColumns = new Set();
+
+const cloudTombstonesSupported = () => !cloudMissingColumns.has("deleted");
+
+/* PostgRESTは PGRST204 で「Could not find the 'antonyms' column of 'words'
+   in the schema cache」、Postgres本体は 42703 で「column "antonyms" of
+   relation "words" does not exist」を返す。どちらもテーブル名まで引用符で
+   囲って出てくるので、こちらが送っている列名の中から拾って取り違えを防ぐ */
+function missingColumnName(error) {
+  if (!error) return "";
+  if (error.code !== "PGRST204" && error.code !== "42703") return "";
+  const msg = `${error.message || ""} ${error.details || ""}`;
+  const quoted = [...msg.matchAll(/['"]([A-Za-z_][A-Za-z0-9_]*)['"]/g)].map((m) => m[1]);
+  return quoted.find((name) => CLOUD_WORD_OPTIONAL_COLUMNS.includes(name)) || "";
 }
 
-function warnTombstonesUnsupported() {
-  console.warn("Supabaseのwordsテーブルにdeleted列が無いため、削除の同期は簡易版で動きます"
+/* 新しく分かった列なら true。同じ列を何度も報告しないための番人でもある */
+function noteMissingColumn(name) {
+  if (!name || cloudMissingColumns.has(name)) return false;
+  cloudMissingColumns.add(name);
+  console.warn(`Supabaseのwordsテーブルに ${name} 列が無いため、この項目は同期しません`
     + "（SUPABASE_SETUP.mdの移行SQLを実行してください）");
+  return true;
 }
 
 function localWordToCloudRow(w, deleted = false) {
@@ -9419,24 +9445,22 @@ function localWordToCloudRow(w, deleted = false) {
     word_phonetic: w.word_phonetic || "", word_memory_tip: w.word_memory_tip || "",
     morphemes: w.morphemes || [], synonyms: w.synonyms || [], antonyms: w.antonyms || [],
     goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
-    provider: w.provider || "", memorized: !!w.memorized, created_at: w.created_at || Date.now(),
-    updated_at: w.updated_at || Date.now(),
+    provider: w.provider || "", memorized: !!w.memorized, deleted,
+    created_at: w.created_at || Date.now(), updated_at: w.updated_at || Date.now(),
   };
-  if (cloudTombstonesSupported) row.deleted = deleted;
+  for (const name of cloudMissingColumns) delete row[name];
   return row;
 }
 
-/* 通常の保存用のupsert。deleted列が無いプロジェクトでも保存が止まらない
-   よう、列が無いと言われた場合だけ一度検出してdeleted抜きでやり直す */
+/* 通常の保存用のupsert。列が足りないプロジェクトでも保存が止まらないよう、
+   新しい列名を言われるあいだは、その列を落として送り直す。列の数で
+   頭打ちになるので回り続けることはない */
 async function cloudWordsUpsert(records) {
-  const send = () => supabaseClient.from("words").upsert(records.map((r) => localWordToCloudRow(r, false)));
-  let { error } = await send();
-  if (error && isMissingDeletedColumn(error)) {
-    cloudTombstonesSupported = false;
-    warnTombstonesUnsupported();
-    ({ error } = await send());
+  for (let attempt = 0; attempt <= CLOUD_WORD_OPTIONAL_COLUMNS.length; attempt++) {
+    const { error } = await supabaseClient.from("words").upsert(records.map((r) => localWordToCloudRow(r, false)));
+    if (!error) return;
+    if (!noteMissingColumn(missingColumnName(error))) throw error;
   }
-  if (error) throw error;
 }
 function cloudRowToLocalWord(r) {
   return {
@@ -9687,7 +9711,19 @@ async function applyRemoteWordChanges(payloads) {
    から実際にひと通り試し、どこで止まっているかとその直し方を出す */
 const SYNC_PROBE_ID = "__engoloyd_sync_probe__";
 
-const SQL_ADD_DELETED = "alter table public.words\n  add column if not exists deleted boolean not null default false;";
+/* 足りない列の追加SQL。列ごとに型が違うので、名前から引く */
+const CLOUD_WORD_COLUMN_TYPES = {
+  word_meaning: "text", word_phonetic: "text", word_memory_tip: "text",
+  morphemes: "jsonb", synonyms: "jsonb", antonyms: "jsonb",
+  goro_text: "text", goro_highlight: "jsonb", provider: "text",
+  memorized: "boolean default false", deleted: "boolean not null default false",
+  created_at: "bigint", updated_at: "bigint",
+};
+
+function sqlAddMissingColumns(names) {
+  const adds = names.map((n) => `  add column if not exists ${n} ${CLOUD_WORD_COLUMN_TYPES[n] || "text"}`);
+  return `alter table public.words\n${adds.join(",\n")};`;
+}
 const SQL_ENABLE_REALTIME = "alter publication supabase_realtime add table public.words;\nalter table public.words replica identity full;";
 
 /* Realtimeの配信が本当に届くかを、往復させて確かめる。購読が
@@ -9712,11 +9748,15 @@ function probeRealtimeDelivery(sb) {
       .subscribe(async (status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { finish({ ok: false, reason: `購読できませんでした(${status})` }); return; }
         if (status !== "SUBSCRIBED") return;
-        /* 削除済みの目印として書くので、単語帳には出てこない */
-        const { error } = await sb.from("words").upsert({
+        /* 削除済みの目印として書くので、単語帳には出てこない。
+           deleted列が無いプロジェクトでは目印を立てられないので、
+           確認用の行は下の後片付けで消す */
+        const probeRow = {
           id: SYNC_PROBE_ID, user_id: cloudUserId, word: "sync probe", morphemes: [], synonyms: [], antonyms: [],
           goro_highlight: [], deleted: true, created_at: Date.now(), updated_at: Date.now(),
-        });
+        };
+        for (const name of cloudMissingColumns) delete probeRow[name];
+        const { error } = await sb.from("words").upsert(probeRow);
         if (error) finish({ ok: false, reason: `書き込めませんでした: ${error.message}` });
       });
     timer = setTimeout(() => finish({ ok: false, reason: "変更の通知が届きませんでした" }), 8000);
@@ -9753,17 +9793,25 @@ async function runSyncDiagnostics() {
     add(false, `単語テーブルを読めません: ${readErr.message}`);
     return { lines, sql };
   }
-  add(true, "単語テーブルの読み書きができます");
+  add(true, "単語テーブルを読めます");
 
-  const { error: delErr } = await sb.from("words").select("deleted").limit(1);
-  if (delErr) {
-    add(false, "deleted列がありません。削除が別の端末で復活します");
-    sql.push(SQL_ADD_DELETED);
+  /* 足りない列を1つずつ確かめる。以前はdeleted列しか見ておらず、
+     実際に保存を止めていた列（synonyms/antonymsなど）が診断に出ないまま
+     「読み書きができます」と表示されてしまっていた */
+  const missing = [];
+  for (const name of CLOUD_WORD_OPTIONAL_COLUMNS) {
+    const { error } = await sb.from("words").select(name).limit(1);
+    if (error) { missing.push(name); noteMissingColumn(name); }
+  }
+  if (missing.length) {
+    add(false, `列がありません: ${missing.join(", ")}。この項目は同期されません`
+      + (missing.includes("deleted") ? "（削除が別の端末で復活します）" : ""));
+    sql.push(sqlAddMissingColumns(missing));
   } else {
-    add(true, "削除の同期(deleted列)が使えます");
+    add(true, "必要な列がそろっています");
   }
 
-  if (!delErr) {
+  {
     const probe = await probeRealtimeDelivery(sb);
     if (probe.ok) {
       add(true, "リアルタイム配信が届いています");
@@ -10007,14 +10055,22 @@ async function flushCloudOutbox() {
 /* 削除の実送信。tombstoneを立てるのが基本で、deleted列が無いプロジェクト
    でだけ物理削除に落ちる */
 async function pushWordDelete(id, tombstoneRow) {
-  if (cloudTombstonesSupported && tombstoneRow) {
+  if (cloudTombstonesSupported() && tombstoneRow) {
     const { error } = await supabaseClient.from("words").upsert(tombstoneRow);
     if (!error) return;
-    if (!isMissingDeletedColumn(error)) throw error;
+    /* deleted以外の列が足りない場合は、それを落としてもう一度目印を試す */
+    const missing = missingColumnName(error);
+    if (!missing) throw error;
+    noteMissingColumn(missing);
+    if (missing !== "deleted") {
+      const retry = { ...tombstoneRow };
+      for (const name of cloudMissingColumns) delete retry[name];
+      const { error: err2 } = await supabaseClient.from("words").upsert(retry);
+      if (!err2) return;
+      if (!noteMissingColumn(missingColumnName(err2))) throw err2;
+    }
     /* deleted列が無いプロジェクト。目印を残せないので物理削除に落とす
        （この場合だけ、削除を知らない端末での復活は防げない） */
-    cloudTombstonesSupported = false;
-    warnTombstonesUnsupported();
   }
   const { error } = await supabaseClient.from("words").delete().eq("user_id", cloudUserId).eq("id", id);
   if (error) throw error;
@@ -10657,7 +10713,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "207";
+const APP_BUILD = "208";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
