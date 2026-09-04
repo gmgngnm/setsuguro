@@ -1603,9 +1603,102 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
   };
 }
 
-async function decomposeWord(word, provider, apiKey) {
+/* ------------------------------------------------------------------ *
+ * 4.2 分割を先に、詳細を後に
+ *   分解アニメーションが要るのは接辞の区切りだけで、意味・発音記号・
+ *   類義語はカードが出てから間に合う。区切りだけの短い応答で先に動き出し、
+ *   残りはアニメーションの裏で受け取る。
+ *   DECOMPOSE_SPLIT_FIRST を false にすれば、分割と詳細をまとめて1回で
+ *   訊く従来の流れにそのまま戻る。
+ * ------------------------------------------------------------------ */
+const DECOMPOSE_SPLIT_FIRST = true;
+
+/* 分割の決め方の規則は、まとめて訊くときとまったく同じものを使う
+   （規則が違えば分割も変わってしまう）。違うのは出力の形だけ。
+   memory_tipだけは一緒に訊く。分割の細かさをAI自身に検算させる
+   仕掛け（memory_tipとmorphemesの一致）が、ここで効かなくなるため */
+const DECOMPOSE_SPLIT_SYS_TEMPLATE = (knownAffixes) => [
+  ...DECOMPOSE_ROLE_RULES,
+  DECOMPOSE_AFFIX_HINT(knownAffixes),
+  ...DECOMPOSE_SPLIT_RULES,
+  "この応答では分割だけを決めます。規則の中でmorphemesと呼んでいるものは、ここではpartsと読み替えてください。読み・意味・由来・発音記号は後で別に尋ねるので、ここには書かないでください。",
+  "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。partsには分割した綴りを順に並べ、連結するとcorrected_wordに一致させてください。",
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","parts":["in","vestig","ation"]}',
+  ...DECOMPOSE_EXAMPLES,
+].join("\n");
+
+/* 分割だけを先に取り、取れたら onSplit で知らせてから詳細を埋める。
+   使える分割が得られなかった場合はnullを返し、呼び出し元は
+   まとめて訊く従来の流れへ落ちる */
+async function decomposeSplitFirst(word, provider, apiKey, onSplit) {
+  const head = await callAI(provider, apiKey, DECOMPOSE_SPLIT_SYS_TEMPLATE(knownAffixesFor(word)),
+    `単語: ${word}`, 0.2, THINKING_MINIMAL);
+
+  const validCorrection = typeof head.corrected_word === "string" && /^[A-Za-z][A-Za-z'-]*$/.test(head.corrected_word);
+  const correctedWord = validCorrection ? head.corrected_word : word;
+  const wasCorrected = validCorrection && !!head.was_corrected && correctedWord.toLowerCase() !== word.toLowerCase();
+
+  if (head.word_exists === false) {
+    const missing = { correctedWord: word, wasCorrected: false, wordExists: false, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: [] };
+    onSplit?.({ wordExists: false, correctedWord: word, wasCorrected: false, parts: [] });
+    return missing;
+  }
+
+  const parts = (Array.isArray(head.parts) ? head.parts : [])
+    .map((p) => String(p || "").trim())
+    .filter(Boolean);
+  /* 連結して単語に戻らない分割は、綴りが欠けるか増えている。使えない */
+  if (!parts.length || parts.join("").toLowerCase() !== correctedWord.toLowerCase()) {
+    console.warn(`分割だけの応答が単語に一致しませんでした（まとめて訊く流れに戻します）: ${parts.join("/")}`);
+    return null;
+  }
+
+  onSplit?.({ wordExists: true, correctedWord, wasCorrected, parts });
+
+  const memoryTipFromSplit = (head.memory_tip || "").slice(0, 100);
+  const filled = await fillDecomposeGaps(correctedWord, parts.map((part) => ({ part })), {
+    wordMeaning: true, wordPhonetic: true, memoryTip: !memoryTipFromSplit, parts, related: true,
+  }, provider, apiKey);
+
+  const memoryTip = memoryTipFromSplit || filled.memoryTip;
+  const source = filled.morphemes.length ? filled.morphemes : parts.map((part) => ({ part }));
+  /* 詳細の応答が分割を勝手に変えていた場合は、確定した分割の側を優先する */
+  const byPart = new Map(source.map((m) => [String(m.part || "").toLowerCase(), m]));
+  const ordered = parts.map((part) => byPart.get(part.toLowerCase()) || { part });
+  let morphemes = await reconcileWithLocalDict(ordered, provider, apiKey);
+  if (!morphemes.length) return null;
+
+  const synonyms = sanitizeWordList(filled.synonyms, correctedWord);
+  const antonyms = sanitizeWordList(filled.antonyms, correctedWord).filter((w) => !synonyms.some((sy) => sy.toLowerCase() === w.toLowerCase()));
+
+  morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey, memoryTip);
+
+  const result = { correctedWord, wasCorrected, wordExists: true, meaning: filled.wordMeaning, phonetic: filled.wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
+  await writeDecomposeCache(word, result);
+  if (wasCorrected) await writeDecomposeCache(correctedWord, result);
+  return result;
+}
+
+async function decomposeWord(word, provider, apiKey, onSplit) {
   const cached = await readDecomposeCache(word);
-  if (cached) return cached;
+  if (cached) {
+    onSplit?.({
+      wordExists: cached.wordExists !== false,
+      correctedWord: cached.correctedWord,
+      wasCorrected: cached.wasCorrected,
+      parts: (cached.morphemes || []).map((m) => m.part),
+      full: cached,
+    });
+    return cached;
+  }
+  if (DECOMPOSE_SPLIT_FIRST) {
+    try {
+      const fast = await decomposeSplitFirst(word, provider, apiKey, onSplit);
+      if (fast) return fast;
+    } catch (err) {
+      console.warn("分割だけの問い合わせに失敗しました（まとめて訊く流れに戻します）:", err);
+    }
+  }
   try {
     const sys = decomposeSystemPrompt(word);
     const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2, THINKING_MINIMAL);
@@ -3543,6 +3636,16 @@ async function startDecompose(rawWord) {
   const decomposeLoadingSeq = startDecomposeLoadingSequence("decompose-spinner");
 
   let morphemes;
+  /* 分割だけ先に届いた場合に、詳細（意味・読み・類義語）を受け取る約束 */
+  let pendingDetails = null;
+  const applyDecomposed = (d) => {
+    morphemes = d.morphemes;
+    currentWordMeaning = d.meaning;
+    currentWordPhonetic = d.phonetic;
+    currentMemoryTip = d.memoryTip;
+    currentSynonyms = d.synonyms || [];
+    currentAntonyms = d.antonyms || [];
+  };
   if (demo) {
     /* 本来はAI分解の応答待ちが入る箇所。デモ単語は即座にデータが揃ってしまい
        不自然にノータイムで進んでしまうため、ダミーの待ち時間を入れる */
@@ -3555,22 +3658,36 @@ async function startDecompose(rawWord) {
     currentAntonyms = [];
   } else {
     try {
-      const decomposed = await decomposeWord(word, provider, apiKey);
-      if (decomposed.wordExists === false) {
+      /* 分割だけが先に届く経路（DECOMPOSE_SPLIT_FIRST）では、詳細が揃うのを
+         待たずにアニメーションへ進む。まとめて訊く経路では、全部揃った時点で
+         同じ通知が飛ぶので、この先の流れは1本で書ける */
+      let resolveHead, rejectHead;
+      const headPromise = new Promise((res, rej) => { resolveHead = res; rejectHead = rej; });
+      const detailsPromise = decomposeWord(word, provider, apiKey, (head) => resolveHead(head));
+      detailsPromise
+        .then((d) => resolveHead({
+          wordExists: d.wordExists !== false, correctedWord: d.correctedWord,
+          wasCorrected: d.wasCorrected, parts: (d.morphemes || []).map((m) => m.part), full: d,
+        }))
+        .catch((err) => rejectHead(err));
+
+      const head = await headPromise;
+      if (head.wordExists === false) {
         stopLoadingRotation("decompose-spinner");
         spinnerRow.style.visibility = "hidden";
         await playNotFoundError(placeholder, word);
         return;
       }
-      morphemes = decomposed.morphemes;
-      currentWordMeaning = decomposed.meaning;
-      currentWordPhonetic = decomposed.phonetic;
-      currentMemoryTip = decomposed.memoryTip;
-      currentSynonyms = decomposed.synonyms || [];
-      currentAntonyms = decomposed.antonyms || [];
-      if (decomposed.wasCorrected) {
-        await playSpellingFix(placeholder, word, decomposed.correctedWord);
-        currentWord = decomposed.correctedWord.toLowerCase();
+      if (head.full) {
+        applyDecomposed(head.full);
+      } else {
+        /* 区切りだけで演出は始められる。意味はアニメーションの裏で受け取る */
+        morphemes = head.parts.map((part) => ({ part }));
+        pendingDetails = detailsPromise;
+      }
+      if (head.wasCorrected) {
+        await playSpellingFix(placeholder, word, head.correctedWord);
+        currentWord = head.correctedWord.toLowerCase();
         /* 修正後の綴りを確認する間を置いてから、亀裂などの分割アニメーションに入る */
         await sleep(1500);
       }
@@ -3597,23 +3714,41 @@ async function startDecompose(rawWord) {
      ずれて見えてしまう。中身の長さは単語ごとに違い固定値では読めないため、
      ずれを完全には避けられないが、growToFitContentでスナップではなく
      滑らかな伸びに変えることで、突然ずれたようには見えなくする */
-  if (currentWordMeaning) {
-    const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
-    growToFitContent(decomposeWordMeaningEl, () => {
-      decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
-    });
-  }
-  if (currentMemoryTip) {
-    growToFitContent(decomposeMemoryTipEl, () => {
-      decomposeMemoryTipEl.textContent = currentMemoryTip;
-    });
-  }
+  const fillMeaningBoxes = () => {
+    if (currentWordMeaning) {
+      const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
+      growToFitContent(decomposeWordMeaningEl, () => {
+        decomposeWordMeaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+      });
+    }
+    if (currentMemoryTip) {
+      growToFitContent(decomposeMemoryTipEl, () => {
+        decomposeMemoryTipEl.textContent = currentMemoryTip;
+      });
+    }
+  };
 
-  /* 実際の分解はもう終わっているので、まだ見せていない工程があれば
+  /* 区切りは分かっているので、まだ見せていない工程があれば
      早送りで消化してから次へ進む（一応、全工程を出し切ってから遷移する） */
   decomposeLoadingSeq.markWorkDone();
   await decomposeLoadingSeq.donePromise;
   spinnerRow.style.visibility = "hidden";
+
+  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
+  /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
+     分割演出そのものが意味を持たないため省略する */
+  const runIntro = () => (morphemes.length > 1
+    ? animStyle.intro(placeholder, currentWord, morphemes)
+    : Promise.resolve());
+  /* 区切りだけ先に届いている場合は、詳細を待たずに動かし始める。
+     まとめて訊いた場合は従来どおり、意味の流し込みと語呂の先行開始を
+     済ませてから始める（DECOMPOSE_SPLIT_FIRSTを落とせばこちらに戻る） */
+  const animPromise = pendingDetails ? runIntro() : null;
+
+  if (pendingDetails) {
+    applyDecomposed(await pendingDetails);
+  }
+  fillMeaningBoxes();
   currentMorphemes = morphemes;
 
   /* Stage2(語呂合わせ生成)は接辞が確定した時点で先行開始し、分解アニメーションの
@@ -3633,12 +3768,7 @@ async function startDecompose(rawWord) {
     loadGoroCandidates(provider, apiKey);
   }
 
-  const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
-  /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
-     分割演出そのものが意味を持たないため省略する */
-  if (morphemes.length > 1) {
-    await animStyle.intro(placeholder, currentWord, morphemes);
-  }
+  await (animPromise || runIntro());
   placeholder.remove();
 
   if (currentWordMeaning) {
@@ -10601,7 +10731,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "204";
+const APP_BUILD = "205";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
