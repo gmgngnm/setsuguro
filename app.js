@@ -1371,8 +1371,29 @@ const MEANING_UNAVAILABLE = "（意味を取得できませんでした）";
    処理は止めない） */
 const AFFIX_NOTE_SIM_THRESHOLD = 0.88;
 
-async function reconcileUnknownAffix(part, aiEntry, apiKey) {
-  const [meaningVec] = await embedTexts([aiEntry.meaning], apiKey, "passage");
+/* 同じ接辞の意味を何度も測り直さないための控え。1語の分解のあいだ
+   reconcileWithLocalDictは「初回」「やり直し」「校閲」で繰り返し呼ばれるので、
+   ここが無いと同じ接辞を周回ぶん測り直すことになる */
+const affixVectorCache = new Map();
+const AFFIX_VECTOR_CACHE_MAX = 200;
+
+const affixVectorKey = (part, meaning) => `${part}\u0000${meaning}`;
+function affixVectorFor(part, meaning) {
+  return affixVectorCache.get(affixVectorKey(part, meaning));
+}
+function rememberAffixVector(part, meaning, vector) {
+  /* 入れた順に捨てる。同じ語の分解中に使い回せれば足りるので、
+     厳密な使用頻度順まで持つ必要はない */
+  if (affixVectorCache.size >= AFFIX_VECTOR_CACHE_MAX) {
+    affixVectorCache.delete(affixVectorCache.keys().next().value);
+  }
+  affixVectorCache.set(affixVectorKey(part, meaning), vector);
+}
+
+/* 未知の接辞を、意味のembeddingで既存の記録と突き合わせる。
+   ベクトルは呼び出し側がまとめて取ってから渡す（1件ずつ測ると、
+   接辞の数だけ往復が直列に積み上がる） */
+async function reconcileUnknownAffix(part, aiEntry, meaningVec) {
   const existing = await idbGet("affixes", part);
   if (existing && Array.isArray(existing.vector) && cosineSim(meaningVec, existing.vector) >= AFFIX_NOTE_SIM_THRESHOLD) {
     return { part: aiEntry.part, reading: existing.reading, meaning: existing.meaning, origin: existing.origin, phonetic: existing.phonetic || aiEntry.phonetic };
@@ -1386,13 +1407,13 @@ async function reconcileUnknownAffix(part, aiEntry, apiKey) {
 
 async function reconcileWithLocalDict(morphemes, provider, apiKey) {
   const ragOn = (EMBEDDING_ENDPOINTS[provider] && apiKey) ? await isRagEnabled() : false;
-  const out = [];
-  for (const m of (morphemes || [])) {
+
+  /* まず辞書で片付くものを片付け、embeddingが要るものだけ集める */
+  const entries = (morphemes || []).map((m) => {
     const key = (m.part || "").toLowerCase();
     const local = LOCAL_AFFIX_DICT[key];
     if (local) {
-      out.push({ part: m.part, reading: local.reading, meaning: local.meaning, origin: local.origin, phonetic: local.phonetic || "" });
-      continue;
+      return { done: { part: m.part, reading: local.reading, meaning: local.meaning, origin: local.origin, phonetic: local.phonetic || "" } };
     }
     const aiEntry = {
       part: m.part,
@@ -1401,15 +1422,38 @@ async function reconcileWithLocalDict(morphemes, provider, apiKey) {
       origin: m.origin || "—",
       phonetic: m.phonetic || "",
     };
-    if (ragOn && key && aiEntry.meaning !== MEANING_UNAVAILABLE) {
+    return { key, aiEntry, needsVector: ragOn && !!key && aiEntry.meaning !== MEANING_UNAVAILABLE };
+  });
+
+  /* まだ測っていないものだけ、1回の往復でまとめて測る。
+     embedTextsは最初から配列を受け取れるので、接辞ごとに呼ぶ理由はない */
+  const pending = entries.filter((e) => e.needsVector && !affixVectorFor(e.key, e.aiEntry.meaning));
+  if (pending.length) {
+    try {
+      const vectors = await embedTexts(pending.map((e) => e.aiEntry.meaning), apiKey, "passage");
+      pending.forEach((e, i) => rememberAffixVector(e.key, e.aiEntry.meaning, vectors[i]));
+    } catch (err) {
+      /* 測れなくても分解は続けられる。表記統合を諦めてAIの回答をそのまま使う */
+      console.warn("未知接辞の表記統合に必要なembeddingsを取得できませんでした（統合をスキップします）:", err);
+    }
+  }
+
+  const out = [];
+  for (const e of entries) {
+    if (e.done) {
+      out.push(e.done);
+      continue;
+    }
+    const vector = e.needsVector ? affixVectorFor(e.key, e.aiEntry.meaning) : null;
+    if (vector) {
       try {
-        out.push(await reconcileUnknownAffix(key, aiEntry, apiKey));
+        out.push(await reconcileUnknownAffix(e.key, e.aiEntry, vector));
         continue;
       } catch (err) {
-        console.warn(`未知接辞 "${key}" の表記統合に失敗しました（スキップします）:`, err);
+        console.warn(`未知接辞 "${e.key}" の表記統合に失敗しました（スキップします）:`, err);
       }
     }
-    out.push(aiEntry);
+    out.push(e.aiEntry);
   }
   return out;
 }
@@ -1474,7 +1518,94 @@ function notifyDecomposeFallback(err) {
     : `AIの接辞分解に失敗したため簡易分解を使います: ${err.message}`);
 }
 
+/* 分解結果の控え。同じ語を引き直すのは学習の基本動作なので当たりやすい。
+   プロンプトや接辞辞書を変えたときに古い結果を引かないよう、版を鍵に混ぜる
+   （中身を変えたら DECOMPOSE_CACHE_VERSION を上げる） */
+const DECOMPOSE_CACHE_VERSION = 1;
+const DECOMPOSE_CACHE_MAX = 200;
+const DECOMPOSE_CACHE_TTL_MS = 60 * 24 * 60 * 60 * 1000;   // 60日
+const DECOMPOSE_CACHE_INDEX_KEY = "decompose_cache_index";
+
+const decomposeCacheKey = (word) => `decompose:${DECOMPOSE_CACHE_VERSION}:${String(word || "").toLowerCase()}`;
+
+async function readDecomposeCache(word) {
+  try {
+    const row = await kvGet(decomposeCacheKey(word), null);
+    if (!row || !row.at || !row.data) return null;
+    if (Date.now() - row.at > DECOMPOSE_CACHE_TTL_MS) return null;
+    if (!Array.isArray(row.data.morphemes) || !row.data.morphemes.length) return null;
+    return row.data;
+  } catch (err) {
+    console.warn("分解の控えを読めませんでした:", err);
+    return null;
+  }
+}
+
+async function writeDecomposeCache(word, data) {
+  try {
+    const key = decomposeCacheKey(word);
+    await kvSet(key, { at: Date.now(), data });
+    /* 際限なく貯めない。入れた順に古いものから捨てる */
+    const index = (await kvGet(DECOMPOSE_CACHE_INDEX_KEY, [])).filter((k) => k !== key);
+    index.push(key);
+    while (index.length > DECOMPOSE_CACHE_MAX) {
+      await idbDelete("kv", index.shift());
+    }
+    await kvSet(DECOMPOSE_CACHE_INDEX_KEY, index);
+  } catch (err) {
+    console.warn("分解の控えを書けませんでした:", err);
+  }
+}
+
+/* 空いた項目だけを埋め直す短い問い合わせ。分割はすでに確定しているので、
+   同じプロンプトを丸ごと投げ直す必要はない（出力が短いぶん応答も速い） */
+async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
+  const asks = [];
+  const shape = {};
+  if (gaps.wordMeaning) {
+    asks.push("word_meaning: この単語の日本語での意味（簡潔に）");
+    shape.word_meaning = "大学院の";
+  }
+  if (gaps.wordPhonetic) {
+    asks.push("word_phonetic: 単語全体の発音記号（IPA表記、スラッシュや括弧は付けない）");
+    shape.word_phonetic = "poʊstˈɡrædʒuət";
+  }
+  if (gaps.memoryTip) {
+    asks.push("memory_tip: 各接辞の意味をつないだ100字以内の覚え方");
+    shape.memory_tip = "post(後)+gradu(段階)+ate(にする)で、卒業の後の学び。";
+  }
+  if (gaps.parts.length) {
+    asks.push(`morphemes: ${gaps.parts.join(" / ")} の各要素の reading・meaning・origin・phonetic`);
+    shape.morphemes = [{ part: gaps.parts[0], reading: "ポスト", meaning: "後の", origin: "ラテン語 post", phonetic: "poʊst" }];
+  }
+  if (gaps.related) {
+    asks.push("synonyms: 同義語を最大3つ / antonyms: 対義語を最大2つ（いずれも英単語のみ、無ければ空配列）");
+    shape.synonyms = ["inquiry", "probe"];
+    shape.antonyms = ["neglect"];
+  }
+  const sys = [
+    "あなたは英語の語源・形態素解析の専門家です。",
+    `英単語 "${word}" は ${morphemes.map((m) => m.part).join(" / ")} に分割することが既に確定しています。`,
+    "分割そのものは変更しないでください。次の項目だけを埋めてください。",
+    ...asks.map((a) => `・${a}`),
+    "空欄や「不明」で返さず、最も可能性の高い内容を必ず記入してください。",
+    "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
+    JSON.stringify(shape),
+  ].join("\n");
+  const json = await callAI(provider, apiKey, sys, "指定された項目だけをJSON形式で出力してください。", 0.2, THINKING_MINIMAL);
+  return {
+    wordMeaning: json.word_meaning || "",
+    wordPhonetic: json.word_phonetic || "",
+    memoryTip: (json.memory_tip || "").slice(0, 100),
+    morphemes: Array.isArray(json.morphemes) ? json.morphemes : [],
+    synonyms: Array.isArray(json.synonyms) ? json.synonyms : [],
+    antonyms: Array.isArray(json.antonyms) ? json.antonyms : [],
+  };
+}
+
 async function decomposeWord(word, provider, apiKey) {
+  const cached = await readDecomposeCache(word);
+  if (cached) return cached;
   try {
     const sys = decomposeSystemPrompt(word);
     const json = await callAI(provider, apiKey, sys, `単語: ${word}`, 0.2, THINKING_MINIMAL);
@@ -1487,15 +1618,24 @@ async function decomposeWord(word, provider, apiKey) {
     let wordPhonetic = json.word_phonetic || "";
     let memoryTip = (json.memory_tip || "").slice(0, 100);
 
-    if (!wordMeaning || !wordPhonetic || !memoryTip || morphemes.some((m) => m.meaning === MEANING_UNAVAILABLE)) {
+    /* 空いた項目だけを埋め直す。以前は同じプロンプトを丸ごと投げ直していたので、
+       1項目欠けているだけで往復がまるまる1回増えていた */
+    const gaps = {
+      wordMeaning: !wordMeaning,
+      wordPhonetic: !wordPhonetic,
+      memoryTip: !memoryTip,
+      parts: morphemes.filter((m) => m.meaning === MEANING_UNAVAILABLE).map((m) => m.part),
+    };
+    if (gaps.wordMeaning || gaps.wordPhonetic || gaps.memoryTip || gaps.parts.length) {
       try {
-        const retryPrompt = `単語: ${word}\n前回の応答ではword_meaning/word_phonetic/memory_tipや一部の接辞のreading/meaning/originが空でした。今回はすべての項目を必ず埋めてください。`;
-        const retryJson = await callAI(provider, apiKey, sys, retryPrompt, 0.2, THINKING_MINIMAL);
-        const retryMorphemes = await reconcileWithLocalDict(retryJson.morphemes, provider, apiKey);
-        if (retryMorphemes.length) morphemes = mergeMissingMeanings(morphemes, retryMorphemes);
-        if (!wordMeaning) wordMeaning = retryJson.word_meaning || "";
-        if (!wordPhonetic) wordPhonetic = retryJson.word_phonetic || "";
-        if (!memoryTip) memoryTip = (retryJson.memory_tip || "").slice(0, 100);
+        const filled = await fillDecomposeGaps(word, morphemes, gaps, provider, apiKey);
+        if (filled.morphemes.length) {
+          const better = await reconcileWithLocalDict(filled.morphemes, provider, apiKey);
+          if (better.length) morphemes = mergeMissingMeanings(morphemes, better);
+        }
+        if (!wordMeaning) wordMeaning = filled.wordMeaning;
+        if (!wordPhonetic) wordPhonetic = filled.wordPhonetic;
+        if (!memoryTip) memoryTip = filled.memoryTip;
       } catch (retryErr) {
         console.warn("Stage1 retry for missing meanings failed:", retryErr);
       }
@@ -1509,7 +1649,11 @@ async function decomposeWord(word, provider, apiKey) {
 
     morphemes = await validateDecomposition(correctedWord, morphemes, provider, apiKey, memoryTip);
 
-    return { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
+    const result = { correctedWord, wasCorrected, wordExists: true, meaning: wordMeaning, phonetic: wordPhonetic, memoryTip, synonyms, antonyms, morphemes };
+    /* 綴りを直した場合は、打った綴りと直った綴りのどちらで引いても当たるようにする */
+    await writeDecomposeCache(word, result);
+    if (wasCorrected) await writeDecomposeCache(correctedWord, result);
+    return result;
   } catch (err) {
     notifyDecomposeFallback(err);
     return { correctedWord: word, wasCorrected: false, wordExists: true, meaning: "", phonetic: "", memoryTip: "", synonyms: [], antonyms: [], morphemes: await fallbackDecompose(word) };
@@ -10457,7 +10601,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "203";
+const APP_BUILD = "204";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
