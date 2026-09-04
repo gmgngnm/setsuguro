@@ -18,7 +18,10 @@ function goroLoadingHtml(label, suffix = "") {
 
 /* ごく低確率で紛れ込ませるネタの一文。接辞分解の固定シーケンス・
    語呂合わせの実況表示のどちらからも同じ確率で抽選する */
-const LOADING_EASTER_EGGS = ["少女祈祷中", "少女瞑想中"];
+const LOADING_EASTER_EGGS = [
+  "少女祈祷中", "少女瞑想中", "少女困惑中", "少女作業中",
+  "少女迷走中", "少女説明中", "少女準備中", "少女分割中",
+];
 const LOADING_EASTER_EGG_CHANCE = 0.02;
 /* 引いたときに読める程度は残す時間 */
 const EASTER_EGG_LINGER_MS = 700;
@@ -37,9 +40,16 @@ const DECOMPOSE_LOADING_STEPS = [
 /* 早送り時（分解自体は先に終わっている場合）の1工程あたりの表示時間 */
 const DECOMPOSE_LOADING_FAST_MS = [40, 110];
 
+/* 1工程あたりの表示時間。分解そのものが速くなって工程を見せ切って
+   しまうことが増えたので、1.5倍に伸ばしてある */
+const DECOMPOSE_STEP_DWELL_SCALE = 1.5;
+
 function decomposeStepDwellRange(index, total) {
   const t = total > 1 ? index / (total - 1) : 0;
-  return { min: 90 + t * 260, max: 320 + t * 620 };
+  return {
+    min: (90 + t * 260) * DECOMPOSE_STEP_DWELL_SCALE,
+    max: (320 + t * 620) * DECOMPOSE_STEP_DWELL_SCALE,
+  };
 }
 
 /* コンテナIDごとに動いているタイマーを管理する。実際のコンテンツに
@@ -114,11 +124,13 @@ function startDecomposeLoadingSequence(containerId, writePhrase) {
   const showStep = () => {
     /* イースターエッグは最後の工程だけに出す。途中に混ぜると、本物の工程が
        1つ飛ばされたように見えてしまうため。
-       最後の工程まで来てもまだ実処理が終わっていない＝待ちが長引いている
-       ときは、確定で出す（ここから先はこの表示のまま待つことになるので、
-       ただ固まって見えるより、待った甲斐がある方がいい） */
+       以前は「最後まで来てもまだ処理中」なら確定で出していたが、分解が
+       速くなって工程を見せ切る方が普通になったため、毎回出るようになって
+       いた。ネタは低確率で紛れ込むから面白いので、待ちの長さに関わらず
+       抽選にする（外れた場合は最後の工程名のまま待つ。点の動きは続くので
+       固まって見えることはない） */
     const isLastStep = stepIndex === total - 1;
-    const isEasterEgg = isLastStep && (!workDone || Math.random() < LOADING_EASTER_EGG_CHANCE);
+    const isEasterEgg = isLastStep && Math.random() < LOADING_EASTER_EGG_CHANCE;
     const phrase = isEasterEgg
       ? LOADING_EASTER_EGGS[Math.floor(Math.random() * LOADING_EASTER_EGGS.length)]
       : DECOMPOSE_LOADING_STEPS[stepIndex % total];
@@ -8598,27 +8610,43 @@ function buildBookRow(title, phonetic, sub, createdAt, onTap, onDelete) {
 
   let startX = 0, dx = 0, dragging = false, moved = false;
   const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
-  body.addEventListener("pointerdown", (e) => { dragging = true; moved = false; startX = clientX(e); body.style.transition = "none"; });
+
+  /* ずらしたまま指やマウスを離すと、行が横にずれて下の赤い「削除」が
+     見えたまま residue として残ってしまう。要素の外で離した場合でも
+     必ず後始末が走るよう、位置を戻す処理は1箇所にまとめて呼ぶ */
+  const resetPosition = () => {
+    dragging = false;
+    dx = 0;
+    body.style.transition = "transform .18s ease";
+    body.style.transform = "translateX(0)";
+  };
+
+  body.addEventListener("pointerdown", (e) => {
+    dragging = true; moved = false; startX = clientX(e);
+    body.style.transition = "none";
+    /* 捕まえておかないと、要素の外で離したときに pointerup が飛んでこず、
+       ずれたままの見た目で固まる */
+    try { body.setPointerCapture(e.pointerId); } catch { /* 未対応でも動く */ }
+  });
   body.addEventListener("pointermove", (e) => {
     if (!dragging) return;
     dx = Math.min(0, clientX(e) - startX);
     if (Math.abs(dx) > 4) moved = true;
     body.style.transform = `translateX(${dx}px)`;
   });
-  body.addEventListener("pointerup", () => {
+  body.addEventListener("pointerup", (e) => {
     if (!dragging) return;
-    dragging = false;
-    body.style.transition = "transform .18s ease";
-    if (dx < -80) { onDelete(); return; }
-    body.style.transform = "translateX(0)";
-    if (!moved) onTap();
+    const shouldDelete = dx < -80;
+    const wasTap = !moved;
+    try { body.releasePointerCapture(e.pointerId); } catch { /* 未対応でも動く */ }
+    /* 削除でも位置は戻しておく。一覧を描き直せば消えるが、描き直しが
+       失敗したり間に合わなかったときに、ずれた行が残らないようにする */
+    resetPosition();
+    if (shouldDelete) { onDelete(); return; }
+    if (wasTap) onTap();
   });
-  body.addEventListener("pointerleave", () => {
-    if (!dragging) return;
-    dragging = false;
-    body.style.transition = "transform .18s ease";
-    body.style.transform = "translateX(0)";
-  });
+  /* スクロールに持っていかれた・別のジェスチャに切り替わった場合 */
+  body.addEventListener("pointercancel", resetPosition);
   return wrap;
 }
 
@@ -9027,10 +9055,8 @@ let activeProvider = "gemini";
    取れなかった場合は、今選んでいるものと既定だけを出して選択を殺さない */
 const CHAT_MODEL_CACHE_KEY = "gemini_model_list";
 
-/* 差し替えの効き目が及ぶ範囲を明示する。語呂合わせ・同じ接辞の単語検索・
-   音声入力・写真の読み取りは、軽いモデルにすると質が落ちたり
-   そもそも動かなかったりするため、常に既定のモデルで動かしている */
-const MODEL_NOTE_BASE = `接辞分解にだけ使うモデルです。語呂合わせ・同じ接辞の単語検索・音声入力・写真の読み取り・読み上げは、常に既定の ${GEMINI_CHAT_MODEL_DEFAULT} で動きます。`;
+/* 常時出す説明は畳んだ（設定画面の文章を減らす方針）。この欄には
+   一覧を取れなかったなどの、そのとき伝えるべきことだけを出す */
 
 /* このアプリが使うのは「日本語の文章をJSONで返す」用途だけ。画像や動画を
    作るモデル（nano banana など）、読み上げ・埋め込み・音声対話の専用モデル、
@@ -9074,7 +9100,7 @@ async function refreshChatModelList({ force = false } = {}) {
   const note = document.getElementById("chat-model-note");
   const cached = await kvGet(CHAT_MODEL_CACHE_KEY, []);
   renderChatModelOptions(cached);
-  if (note) note.textContent = MODEL_NOTE_BASE;
+  if (note) note.textContent = "";
   if (!force && cached.length) return;
 
   const apiKey = await loadApiKey("gemini");
@@ -9087,7 +9113,7 @@ async function refreshChatModelList({ force = false } = {}) {
     if (!ids.length) throw new Error("使えるモデルが見つかりませんでした");
     await kvSet(CHAT_MODEL_CACHE_KEY, ids);
     renderChatModelOptions(ids);
-    if (note) note.textContent = `${MODEL_NOTE_BASE} このキーで使える ${ids.length} 件から選べます。`;
+    if (note) note.textContent = "";
   } catch (err) {
     if (note) note.textContent = `モデル一覧を取得できませんでした（${err.message}）。手元の候補から選べます。`;
     console.warn("モデル一覧の取得に失敗しました:", err);
@@ -9165,7 +9191,9 @@ async function refreshTtsSpeakerUI() {
   select.value = chosen === "" ? "" : (chosen && available.has(chosen) ? chosen : TTS_SPEAKER_DEFAULT);
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
 
-  note.textContent = "語呂合わせ・意味の日本語も、単語の英語も、選んだ声で読み上げます。";
+  /* 常時出す説明は畳んだ（設定画面の文章を減らす方針）。この欄には
+     試聴の結果や、声を選べない理由だけを出す */
+  note.textContent = "";
 }
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
@@ -9216,7 +9244,7 @@ document.getElementById("chat-model-select").addEventListener("change", async (e
      外したままだと、切り替えた先で思考を使えないので戻しておく */
   AI_ADAPTERS.gemini.thinkingSupported = true;
   const note = document.getElementById("chat-model-note");
-  if (note) note.textContent = `接辞分解に ${geminiChatModel} を使います。「保存して疎通確認」で実際に動くか試せます。`;
+  if (note) note.textContent = "";
 });
 
 document.getElementById("chat-model-reload-btn").addEventListener("click", async () => {
@@ -9300,30 +9328,13 @@ async function refreshUsageDisplay() {
 
   const callsEl = document.getElementById("usage-calls");
   const tokensEl = document.getElementById("usage-tokens");
-  const remainEl = document.getElementById("usage-remaining");
-  const noteEl = document.getElementById("usage-note");
   if (!callsEl) return;
 
+  /* 「残り呼び出し」の行は、Geminiが残量を教えてくれることがまず無く
+     「API非公開」と出たままだったので畳んだ。正確な使用状況は
+     Google AI Studio の Usage 画面で見る */
   callsEl.textContent = `${stats.calls} 回（直近1分 ${perMinute} 回）`;
   tokensEl.textContent = stats.tokens.toLocaleString();
-
-  /* 残量はサーバが教えてくれたときだけ実数を出す。教えてくれない場合に
-     推測値を出すと、当たっているように見えて外れるので出さない */
-  if (rateLimitSnapshot && rateLimitSnapshot.remainingRequests !== null) {
-    remainEl.textContent = `あと ${rateLimitSnapshot.remainingRequests} 回`;
-  } else if (stats.quotaHitAt) {
-    const at = new Date(stats.quotaHitAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    remainEl.textContent = `${at} に上限到達`;
-  } else {
-    remainEl.textContent = "API非公開";
-  }
-
-  const reset = nextQuotaResetText();
-  noteEl.textContent = [
-    "回数はこの端末から投げた分だけの集計です（他の端末やAI Studioからの利用は含みません）。",
-    reset ? `1日あたりの上限は ${reset} ごろにリセットされます。` : "",
-    "残り回数はGeminiが応答で教えてくれたときだけ表示されます。正確な使用状況は Google AI Studio の Usage 画面でご確認ください。",
-  ].filter(Boolean).join("");
 }
 
 /* ------------------------------------------------------------------ *
@@ -9358,7 +9369,9 @@ async function refreshVoiceEngineUI() {
   } else if (!hasKey) {
     note.textContent = "APIキーが未設定のため、当面はブラウザ内蔵の音声認識を使います。";
   } else {
-    note.textContent = "押している間の音声をGeminiで認識します。1回の発話をまとめて送るため、長い単語でも途中で切れません。";
+    /* 普通に使えるときの説明は畳んだ。選べない・別の手段に落ちている
+       ときだけ、その理由を出す */
+    note.textContent = "";
   }
 }
 
@@ -10844,14 +10857,22 @@ const batchPhotoInput = document.getElementById("batch-photo-input");
 /* awaitを挟むとiOS Safariでファイル選択が開かなくなるため、
    このハンドラは同期のまま保つこと（キーの有無は事前に読んだ
    geminiKeyAvailableで判定する） */
-document.getElementById("batch-photo-btn").addEventListener("click", () => {
+/* 写真からの読み取りは、まとめて登録の画面と同じ入口をホームからも開く。
+   撮ってから登録画面へ移るので、先にそちらを出しておく */
+function openPhotoRegister({ fromHome = false } = {}) {
   if (!geminiKeyAvailable) {
     toast("設定画面でGemini APIキーを登録してください");
     showScreen("screen-settings");
     return;
   }
+  /* 画面の初期化（キーの再確認・進捗の復元・積み残しの処理）が要るので、
+     showScreenを直に呼ばず、まとめて登録の入口をそのまま通す */
+  if (fromHome) openBatchScreen();
   batchPhotoInput.click();
-});
+}
+
+document.getElementById("batch-photo-btn").addEventListener("click", () => openPhotoRegister());
+document.getElementById("home-photo-btn").addEventListener("click", () => openPhotoRegister({ fromHome: true }));
 batchPhotoInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
@@ -10989,7 +11010,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "212";
+const APP_BUILD = "213";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
