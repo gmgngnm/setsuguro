@@ -159,9 +159,12 @@ button{font-family:inherit;cursor:pointer;}
   overflow-wrap:break-word; word-break:break-word;
   font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--ink);
 }
-/* テーマ色＝品詞を変えるだけで、それ自体は意味を持たない接辞（-ation など）。
-   覚えなくてよい部品だと一目で分かるようにする。意味を運ぶ語根・接辞は
-   枠も文字も無彩色のまま置いて、色が付いている方を目立たせる */
+/* すべての接辞をどちらかの色で囲う。
+   青（テーマ色）＝語幹に働きかけるだけの接辞（否定・再び・強調・数量と、
+   品詞を変える接尾辞）。オレンジ＝その語の意味の根幹を担う接辞（語根と、
+   場所・時・分野を持ち込む接頭辞） */
+.morph{border-color:var(--accent-2);}
+.morph .morph-part{color:var(--accent-2);}
 .morph.morph-fn{border-color:var(--accent);}
 .morph.morph-fn .morph-part{color:var(--accent-ink);}
 /* 分解を待っている間のプレースホルダーは、まだ接辞に分かれていないので
@@ -385,7 +388,7 @@ button{font-family:inherit;cursor:pointer;}
 .related-word-btn .rw-word{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;}
 .related-word-btn .rw-word .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;color:var(--ink-faint);font-size:11px;margin-left:6px;}
 .related-word-btn .rw-mean{font-size:12px;color:var(--ink-soft);margin-top:3px;}
-.affix-card .m{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink);font-size:15px;}
+.affix-card .m{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-2);font-size:15px;}
 .affix-card .m.m-fn{color:var(--accent-ink);}
 .affix-card .m .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;color:var(--ink-faint);font-size:12px;margin-left:6px;}
 .affix-card .mean{font-size:13px;color:var(--ink-soft);margin-top:3px;}
