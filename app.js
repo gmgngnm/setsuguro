@@ -180,13 +180,44 @@ function reportGoroStatus(containerId, phrase) {
   else container.innerHTML = goroLoadingHtml(phrase);
 }
 
-/* 接辞タイルの枠色の出し分けに使う。ローカル辞書に収録済みの定番の接辞か、
-   辞書に無くAIがその場で調べたものかで色を変える */
-function isKnownAffix(part) {
-  return !!LOCAL_AFFIX_DICT[String(part || "").toLowerCase()];
+/* 品詞を変えるだけで、それ自体は意味を持たない接辞。-ation のように
+   「名詞化」の役目しか無いものが該当し、名詞化に限らず動詞化・形容詞化・
+   副詞化も同じ扱いにする。覚える必要のない部品だと一目で分かるよう、
+   これだけを青で見せる。
+   -er（〜する人）や -ful（〜に満ちた）のように、それ自体が意味を運ぶ
+   ものは含めない。品詞は変えても中身があるため。
+
+   綴りの一覧と、意味の書かれ方の両方で見る。一覧はAIが意味を違う言い方で
+   返しても取りこぼさないため、意味の側は一覧に無い接辞まで拾うため */
+const FUNCTIONAL_AFFIXES = new Set([
+  /* 名詞化 */
+  "ion", "tion", "ation", "ition", "sion", "ization", "ment", "ness",
+  "ity", "ty", "ance", "ence", "age", "ure", "ture",
+  "cy", "acy", "ancy", "ency", "itude", "tude", "ry", "mony", "ary",
+  /* 動詞化 */
+  "ate", "ize", "ise", "ify",
+  /* 形容詞化 */
+  "al", "ial", "ic", "ical",
+  /* 副詞化 */
+  "ly",
+  /* 動名詞・分詞 */
+  "ing",
+]);
+
+/* 「名詞化」「動詞化（〜にする）」「副詞化」のように、品詞を変える働き
+   だけを述べている意味。一覧に無い接辞はここで拾う */
+const FUNCTIONAL_MEANING_RE = /(名詞|動詞|形容詞|副詞)化|動名詞|品詞を変え/;
+
+function isFunctionalAffix(part, meaning) {
+  const key = String(part || "").toLowerCase().replace(/^-+|-+$/g, "");
+  if (!key) return false;
+  if (FUNCTIONAL_AFFIXES.has(key)) return true;
+  const text = meaning || LOCAL_AFFIX_DICT[key]?.meaning || "";
+  return FUNCTIONAL_MEANING_RE.test(text);
 }
-function morphTileClass(part) {
-  return isKnownAffix(part) ? "" : " morph-new";
+
+function morphTileClass(part, meaning) {
+  return isFunctionalAffix(part, meaning) ? " morph-fn" : "";
 }
 
 const ICON_PENCIL = '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>';
@@ -590,8 +621,8 @@ const LOCAL_AFFIX_DICT = { ...AFFIX_PREFIXES, ...AFFIX_ROOTS, ...AFFIX_SUFFIXES 
 /* demo_words.csv の語呂合わせ本文にだけ登場する接辞（LOCAL_AFFIX_DICTに
    収録の無いもの）の読み・意味・語源・発音記号。DEMO_WORD_DATAをCSVから
    組み立てる際、goroText中の(part)注釈をここと LOCAL_AFFIX_DICT で解決する。
-   isKnownAffix()の判定には使わない（＝これらは常に「新しく調べた接辞」の
-   オレンジ色で表示される。実際、辞書未収録の語根として扱うのが正しい） */
+   色の出し分け（isFunctionalAffix）は辞書の収録有無を見ないので、
+   ここに書いてあるかどうかは表示色に影響しない */
 const DEMO_CUSTOM_MORPHEMES = {
   "ation":  { reading: "エーション", meaning: "名詞化（〜すること）", origin: "ラテン語 -atio", phonetic: "eɪʃən" },
   "or":     { reading: "オア", meaning: "〜する人・もの", origin: "ラテン語 -or", phonetic: "ɔːr" },
@@ -3837,7 +3868,7 @@ async function startDecompose(rawWord) {
   const mid = (morphemes.length - 1) / 2;
   morphemes.forEach((m, i) => {
     const el = document.createElement("div");
-    el.className = `morph ${animStyle.tileClass}${morphTileClass(m.part)}`;
+    el.className = `morph ${animStyle.tileClass}${morphTileClass(m.part, m.meaning)}`;
     Object.entries(animStyle.tileVars(i, mid)).forEach(([prop, val]) => el.style.setProperty(prop, val));
     el.style.animationDelay = `${i * 0.08}s`;
 
@@ -7935,7 +7966,8 @@ function resolveAnimStyle(key) {
 }
 
 function affixCardHtml(m) {
-  return `<div class="m">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
+  const fn = isFunctionalAffix(m.part, m.meaning) ? " m-fn" : "";
+  return `<div class="m${fn}">${escapeHtml(m.part)}${m.phonetic ? `<span class="phonetic">[${escapeHtml(m.phonetic)}]</span>` : ""}</div>
       <div class="mean">${escapeHtml(m.meaning)}（${escapeHtml(m.origin)}）</div>`;
 }
 
@@ -8935,7 +8967,7 @@ function revealMemorizeDetail() {
   splitEl.className = "word-split";
   (record.morphemes || []).forEach((m, i) => {
     const tile = document.createElement("div");
-    tile.className = `morph shatter-in${morphTileClass(m.part)}`;
+    tile.className = `morph shatter-in${morphTileClass(m.part, m.meaning)}`;
     tile.style.animationDelay = `${i * 0.08}s`;
     tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml(m.meaning || "")}</div>`;
     splitEl.appendChild(tile);
@@ -10795,7 +10827,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "214";
+const APP_BUILD = "215";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
