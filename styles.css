@@ -153,17 +153,21 @@ button{font-family:inherit;cursor:pointer;}
 }
 .word-split{display:flex;justify-content:center;align-items:flex-start;gap:8px;flex-wrap:wrap;max-width:100%;}
 .morph{
-  background:var(--surface);border:1.5px solid var(--accent);border-radius:12px;padding:12px 14px;
+  background:var(--surface);border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;
   box-shadow:var(--shadow); animation:pop .5s ease both;
   display:flex; flex-direction:column; align-items:center; gap:4px; max-width:150px;
   overflow-wrap:break-word; word-break:break-word;
-  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--ink);
 }
-/* 枠の色は位置ではなく、その接辞をローカル辞書に持っているかで決める。
-   青＝収録済みの定番の接辞、オレンジ＝辞書に無くAIがその場で調べたもの */
-.morph.morph-new{border-color:var(--accent-2);}
-.morph.morph-new .morph-part{color:var(--accent-2);}
-.morph-part{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--accent-ink);}
+/* テーマ色＝品詞を変えるだけで、それ自体は意味を持たない接辞（-ation など）。
+   覚えなくてよい部品だと一目で分かるようにする。意味を運ぶ語根・接辞は
+   枠も文字も無彩色のまま置いて、色が付いている方を目立たせる */
+.morph.morph-fn{border-color:var(--accent);}
+.morph.morph-fn .morph-part{color:var(--accent-ink);}
+/* 分解を待っている間のプレースホルダーは、まだ接辞に分かれていないので
+   この色分けの外。これまで通りテーマ色の枠のままにする */
+.morph.word-pulse{border-color:var(--accent);}
+.morph-part{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:var(--ink);}
 .morph-meaning{
   font-size:11px;color:var(--ink-soft);line-height:1.4;
   opacity:0;transform:translateY(4px);transition:opacity .35s ease, transform .35s ease;
@@ -381,7 +385,8 @@ button{font-family:inherit;cursor:pointer;}
 .related-word-btn .rw-word{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;}
 .related-word-btn .rw-word .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;color:var(--ink-faint);font-size:11px;margin-left:6px;}
 .related-word-btn .rw-mean{font-size:12px;color:var(--ink-soft);margin-top:3px;}
-.affix-card .m{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:15px;}
+.affix-card .m{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink);font-size:15px;}
+.affix-card .m.m-fn{color:var(--accent-ink);}
 .affix-card .m .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;color:var(--ink-faint);font-size:12px;margin-left:6px;}
 .affix-card .mean{font-size:13px;color:var(--ink-soft);margin-top:3px;}
 
