@@ -180,12 +180,14 @@ function reportGoroStatus(containerId, phrase) {
   else container.innerHTML = goroLoadingHtml(phrase);
 }
 
-/* 品詞を変えるだけで、それ自体は意味を持たない接辞。-ation のように
-   「名詞化」の役目しか無いものが該当し、名詞化に限らず動詞化・形容詞化・
-   副詞化も同じ扱いにする。覚える必要のない部品だと一目で分かるよう、
-   これだけを青で見せる。
-   -er（〜する人）や -ful（〜に満ちた）のように、それ自体が意味を運ぶ
-   ものは含めない。品詞は変えても中身があるため。
+/* 接尾辞としての定型の役目しか無く、それ自体を覚える必要のない接辞。
+   -ation のような名詞化に限らず、動詞化・形容詞化・副詞化・動名詞と、
+   -er / -ist のような「〜する人・もの」を作るものも同じ扱いにする。
+   覚えなくてよい部品だと一目で分かるよう、これだけを色で見せる。
+
+   -ful（〜に満ちた）・-less（〜がない）・-able（〜できる）や、
+   -ology（〜学）・-ism（主義）・-phobia（〜恐怖症）のように、
+   それ自体が中身を運ぶものは含めない。語根・接頭辞も同じ。
 
    綴りの一覧と、意味の書かれ方の両方で見る。一覧はAIが意味を違う言い方で
    返しても取りこぼさないため、意味の側は一覧に無い接辞まで拾うため */
@@ -197,20 +199,33 @@ const FUNCTIONAL_AFFIXES = new Set([
   /* 動詞化 */
   "ate", "ize", "ise", "ify",
   /* 形容詞化 */
-  "al", "ial", "ic", "ical",
+  "al", "ial", "ic", "ical", "ive",
   /* 副詞化 */
   "ly",
   /* 動名詞・分詞 */
   "ing",
+  /* 〜する人・〜されるもの（行為者・被行為者） */
+  "er", "or", "ist", "ee", "eer", "ier", "ster", "ard",
+  "ian", "ant", "ent", "arian", "ician", "ess",
 ]);
 
-/* 「名詞化」「動詞化（〜にする）」「副詞化」のように、品詞を変える働き
-   だけを述べている意味。一覧に無い接辞はここで拾う */
-const FUNCTIONAL_MEANING_RE = /(名詞|動詞|形容詞|副詞)化|動名詞|品詞を変え/;
+/* 「名詞化」「動詞化（〜にする）」「副詞化」のように品詞を変える働きだけを
+   述べている意味と、「〜する人」「〜される人」「〜の専門家」のように
+   行為者を作るだけの意味。一覧に無い接辞はここで拾う。
+   人を表す語根（zoo=動物 など）を巻き込まないよう、「〜」で始まる
+   言い回しに限っている */
+const FUNCTIONAL_MEANING_RE =
+  /(名詞|動詞|形容詞|副詞)化|動名詞|品詞を変え|[〜～][^、。]*(人|者|専門家)/;
+
+/* 「〜する人」の形をしていても、その語自体に覚えるべき中身があるもの。
+   -phile なら「好む」、-crat なら「支配」を知らないと語の意味が取れない
+   ので、行為者を作るだけの接尾辞とは区別する */
+const MEANINGFUL_AGENT_AFFIXES = new Set(["phile", "crat", "phobe", "naut"]);
 
 function isFunctionalAffix(part, meaning) {
   const key = String(part || "").toLowerCase().replace(/^-+|-+$/g, "");
   if (!key) return false;
+  if (MEANINGFUL_AGENT_AFFIXES.has(key)) return false;
   if (FUNCTIONAL_AFFIXES.has(key)) return true;
   const text = meaning || LOCAL_AFFIX_DICT[key]?.meaning || "";
   return FUNCTIONAL_MEANING_RE.test(text);
@@ -10827,7 +10842,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "215";
+const APP_BUILD = "216";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
