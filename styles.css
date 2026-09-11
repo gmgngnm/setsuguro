@@ -735,13 +735,20 @@ button{font-family:inherit;cursor:pointer;}
 .sync-retry-btn.spinning svg{animation:spin 1s linear infinite;}
 
 /* Toast */
+/* 画面下から出る丸いポップアップをやめた。幅の制限も折り返しも無い形
+   だったので、APIのエラーのような長文が画面の外へはみ出して読めなかった。
+   上から降りる横長の帯にして、必ず折り返し、長ければ枠の中で送れるようにする。
+   触れば消せる */
 #toast{
-  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
-  background:var(--accent-ink);color:#fff;padding:10px 18px;border-radius:999px;font-size:13px;
+  position:fixed;left:50%;top:10px;transform:translateX(-50%) translateY(-10px);
+  width:min(92vw, 560px);box-sizing:border-box;
+  background:var(--surface);color:var(--ink);border:1px solid var(--line);
+  border-radius:12px;box-shadow:var(--shadow);padding:11px 14px;
+  font-size:13px;line-height:1.6;text-align:left;
+  white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow-y:auto;
   opacity:0;pointer-events:none;transition:opacity .2s ease, transform .2s ease;z-index:100;
-  font-family:'JetBrains Mono',monospace;
 }
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto;cursor:pointer;}
 
 /* ---------- Desktop layout ----------
    スマホ幅(max-width:480px)に最適化された#appを、PCブラウザ等の広い

@@ -3205,13 +3205,27 @@ function syncBookOnOpen() {
  * 7. トースト
  * ------------------------------------------------------------------ */
 let toastTimer = null;
+/* 長い文ほど読むのに時間がかかるので、表示時間を中身の長さで決める。
+   短い通知はこれまで通りすぐ引っ込み、APIのエラーのような長文は
+   読み切れるまで残る */
+function toastDwellMs(msg) {
+  return Math.min(12000, 1800 + String(msg || "").length * 90);
+}
+
 function toast(msg) {
   const el = document.getElementById("toast");
   el.textContent = msg;
+  el.scrollTop = 0;
   el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+  toastTimer = setTimeout(() => el.classList.remove("show"), toastDwellMs(msg));
 }
+
+/* 読み終わったら待たずに消せるようにする（長文ほど邪魔になるため） */
+document.getElementById("toast").addEventListener("click", (e) => {
+  clearTimeout(toastTimer);
+  e.currentTarget.classList.remove("show");
+});
 
 /* ------------------------------------------------------------------ *
  * 8. ホーム画面
@@ -3336,6 +3350,59 @@ function mimeToFilename(mime) {
 
 const canRecord = !!(navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined" && pickRecorderMime());
 
+/* マイクの許可は押すたびに取り直していた（録音が終わるとトラックを止め、
+   次に押すとまた getUserMedia を呼んでいた）。許可を覚えないブラウザでは
+   これが押すたびの確認ダイアログになる。一度取れた音声トラックは
+   しばらく使い回して、訊き直す回数そのものを減らす。
+   ただし掴んだままだとブラウザの録音インジケータが点きっぱなしになるので、
+   使い終わって少し経ったら手放し、画面を離れたらすぐ手放す */
+const MIC_STREAM_IDLE_MS = 30000;
+let sharedMicStream = null;
+let micReleaseTimer = null;
+
+function releaseMicStream() {
+  clearTimeout(micReleaseTimer);
+  micReleaseTimer = null;
+  if (!sharedMicStream) return;
+  sharedMicStream.getTracks().forEach((t) => t.stop());
+  sharedMicStream = null;
+}
+
+function scheduleMicRelease() {
+  clearTimeout(micReleaseTimer);
+  micReleaseTimer = setTimeout(releaseMicStream, MIC_STREAM_IDLE_MS);
+}
+
+/* 生きているトラックが残っていればそれを返し、無ければ取り直す */
+async function acquireMicStream() {
+  clearTimeout(micReleaseTimer);
+  micReleaseTimer = null;
+  if (sharedMicStream && sharedMicStream.getAudioTracks().some((t) => t.readyState === "live")) {
+    return sharedMicStream;
+  }
+  releaseMicStream();
+  sharedMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  return sharedMicStream;
+}
+
+/* アプリを見ていない間まで録音インジケータを点けておかない */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") releaseMicStream();
+});
+window.addEventListener("pagehide", releaseMicStream);
+
+/* 一度「ブロック」を選ぶと、getUserMediaを呼んでも確認ダイアログは出ず
+   その場で失敗する。何が起きたのか分かるよう、呼ぶ前に見ておく。
+   permissions.query に未対応のブラウザでは空を返し、従来どおり呼ぶ */
+async function micPermissionState() {
+  try {
+    const status = await navigator.permissions?.query({ name: "microphone" });
+    return status?.state || "";
+  } catch {
+    return "";
+  }
+}
+
 if (!SpeechRecognitionCtor && !canRecord) {
   micSection.style.display = "none";
 } else {
@@ -3437,9 +3504,10 @@ if (!SpeechRecognitionCtor && !canRecord) {
     start(provider, apiKey) {
       const mime = pickRecorderMime();
       setMicState(true, "準備中…");
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-        /* マイク許可を待つ間に指が離れていたら、録音せず後始末だけする */
-        if (released) { stream.getTracks().forEach((t) => t.stop()); resetMic(); return; }
+      acquireMicStream().then((stream) => {
+        /* マイク許可を待つ間に指が離れていたら、録音せず後始末だけする。
+           トラックは手放さずに寝かせて、次に押したときに使い回す */
+        if (released) { scheduleMicRelease(); resetMic(); return; }
         this.stream = stream;
         const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
         this.recorder = recorder;
@@ -3448,7 +3516,8 @@ if (!SpeechRecognitionCtor && !canRecord) {
 
         recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
         recorder.onstop = async () => {
-          stream.getTracks().forEach((t) => t.stop());
+          /* トラックは止めない。止めると次に押したときに許可を訊き直される */
+          scheduleMicRelease();
           this.recorder = null;
           this.stream = null;
           const elapsed = Date.now() - startedAt;
@@ -3484,9 +3553,9 @@ if (!SpeechRecognitionCtor && !canRecord) {
     stop() {
       if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
       else if (this.stream) {
-        /* 録音開始前に離された場合 */
-        this.stream.getTracks().forEach((t) => t.stop());
+        /* 録音開始前に離された場合。ここでもトラックは寝かせるだけ */
         this.stream = null;
+        scheduleMicRelease();
       }
     },
   };
@@ -3511,6 +3580,15 @@ if (!SpeechRecognitionCtor && !canRecord) {
     if (released) { resetMic(); return; }
 
     if (useApiStt) {
+      /* ブロック済みだと getUserMedia は黙って失敗する。
+         「マイクを使用できませんでした」とだけ出しても直しようが無いので、
+         どこを直せばよいかが分かる文言にする */
+      if ((await micPermissionState()) === "denied") {
+        resetMic();
+        toast("マイクがブロックされています。ブラウザのサイト設定で許可してください");
+        return;
+      }
+      if (released) { resetMic(); return; }
       engineInUse = apiSttEngine;
       apiSttEngine.start(provider, apiKey);
     } else if (SpeechRecognitionCtor) {
@@ -3750,7 +3828,24 @@ let currentAntonyms = [];
 let currentMorphemes = [];
 let currentCandidates = [];
 
+/* 分解は1件ずつ。前の分解のアニメーションが終わらないうちに次を始めると、
+   同じ #word-split を2つの処理が奪い合い、片方が消した要素をもう片方が
+   測って幅0のcanvasを描こうとして落ちる。前が終わるまで受け付けない。
+   （マイクの許可を使い回すようにして起動が速くなり、アニメーションの最中に
+   ホームへ戻って続けて話す操作が現実に通るようになったため） */
+let decomposeRunning = false;
+
 async function startDecompose(rawWord) {
+  if (decomposeRunning) return;
+  decomposeRunning = true;
+  try {
+    await runDecompose(rawWord);
+  } finally {
+    decomposeRunning = false;
+  }
+}
+
+async function runDecompose(rawWord) {
   const word = (rawWord || "").trim().toLowerCase();
   if (!word) return;
   if (!/^[A-Za-z][A-Za-z'-]*$/.test(word)) {
@@ -3897,8 +3992,11 @@ async function startDecompose(rawWord) {
 
   const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
   /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
-     分割演出そのものが意味を持たないため省略する */
-  if (morphemes.length > 1) {
+     分割演出そのものが意味を持たないため省略する。
+     画面を離れた直後などでカードがまだ／もう置かれていない場合も飛ばす。
+     どの演出もカードの大きさを測って描くので、幅0のまま始めると落ちる */
+  const laidOut = placeholder.offsetWidth > 0 && placeholder.offsetHeight > 0;
+  if (morphemes.length > 1 && laidOut) {
     await animStyle.intro(placeholder, currentWord, morphemes);
   }
   placeholder.remove();
@@ -5395,8 +5493,10 @@ function prismFlashSprite() {
    塗りごと7枚を加算合成すると中が真っ白に飛んでしまうため、そちらを使う */
 function renderCardOffscreen(cs, text, textCs, rect, textCenterY, dpr, filled = true, stroked = true) {
   const c = document.createElement("canvas");
-  c.width = Math.round(rect.width * dpr);
-  c.height = Math.round(rect.height * dpr);
+  /* 描いている最中に画面を離れると、測り直した大きさが0になることがある。
+     幅0のcanvasはdrawImageの引数にできず例外になるので、最低1pxは持たせる */
+  c.width = Math.max(1, Math.round(rect.width * dpr));
+  c.height = Math.max(1, Math.round(rect.height * dpr));
   const g = c.getContext("2d");
   g.scale(dpr, dpr);
   const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
@@ -10870,7 +10970,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "217";
+const APP_BUILD = "218";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
