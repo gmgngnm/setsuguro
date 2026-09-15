@@ -9058,6 +9058,10 @@ let affixWordsRequestId = 0;
 
 /* 押すと何かが起きるもの。指で触った場合は、少し押さえたときだけ働く */
 const WORD_DETAIL_CONTROLS = "button, a, input, textarea, select, .affix-card";
+/* ただし、押しても画面が移らないものは短く触れただけで働かせる。
+   押さえを求めているのは、送るつもりの一押しで別の画面へ飛ばされるのが
+   煩わしいからであって、読み上げやつまみはそれに当たらない */
+const WORD_DETAIL_INSTANT = ".word-speak-btn, .word-progress, #word-detail-back-btn";
 /* 押さえたと認めるまでの時間。長すぎると押しっぱなしが要るように感じ、
    短すぎると取り違えが残る */
 const WORD_DETAIL_HOLD_MS = 350;
@@ -9109,7 +9113,15 @@ let wordDetailHadSelection = false;
     wordDetailHadSelection = !!(selection && !selection.isCollapsed && String(selection).trim());
     wordDetailPressAt = Date.now();
     wordDetailPressByTouch = e.pointerType === "touch";
+    /* 押さえを求めるものの上でだけ沈ませる。すぐ働くものを沈ませると、
+       待たされるように見えて紛らわしい */
+    if (!wordDetailPressByTouch) return;
+    const control = e.target.closest && e.target.closest(WORD_DETAIL_CONTROLS);
+    const instant = e.target.closest && e.target.closest(WORD_DETAIL_INSTANT);
+    if (control && !instant) startPressSink(control, WORD_DETAIL_HOLD_MS);
   }, { passive: true, capture: true });
+  screen.addEventListener("pointerup", endPressSink, { passive: true, capture: true });
+  screen.addEventListener("pointercancel", endPressSink, { passive: true, capture: true });
 
   /* ボタンや接辞カードの働きより先に受け取る。ページを送るつもりで指が
      当たっただけなのに別の画面へ飛ばされる、という報告への対応で、
@@ -9118,8 +9130,8 @@ let wordDetailHadSelection = false;
   screen.addEventListener("click", (e) => {
     if (Date.now() - wordDetailSwipedAt < 400) return;
     if (wordDetailHadSelection) { wordDetailHadSelection = false; return; }
-    /* つまみは引いて使うもの。ここでは触らない */
-    if (e.target.closest && e.target.closest(".word-progress")) return;
+    /* 画面が移らないものは、そのまま本来の働きへ通す */
+    if (e.target.closest && e.target.closest(WORD_DETAIL_INSTANT)) return;
 
     const control = e.target.closest && e.target.closest(WORD_DETAIL_CONTROLS);
     if (control) {
@@ -9207,6 +9219,23 @@ document.getElementById("affix-words-back-btn").addEventListener("click", () => 
   showScreen(affixWordsReturnScreen);
 });
 
+/* 長押しの間、少しずつ沈み込ませる。押し始めてから働くまでの間があること
+   が指先で分かるよう、沈みきる時間を待ち時間に合わせてある */
+let pressSinkEl = null;
+function startPressSink(el, ms) {
+  endPressSink();
+  if (!el) return;
+  pressSinkEl = el;
+  el.style.setProperty("--sink-ms", `${ms}ms`);
+  el.classList.add("press-sink");
+}
+function endPressSink() {
+  if (!pressSinkEl) return;
+  pressSinkEl.classList.remove("press-sink");
+  pressSinkEl.style.removeProperty("--sink-ms");
+  pressSinkEl = null;
+}
+
 /* 長押しで選ぶ状態に入る。押しっぱなしと判断するまでの時間と、
    ここまで動いたらスクロールとみなす距離 */
 const BOOK_LONGPRESS_MS = 500;
@@ -9229,12 +9258,14 @@ function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress) {
   const body = wrap.querySelector(".row-body");
 
   let timer = null, startX = 0, startY = 0, fired = false;
-  const clear = () => { clearTimeout(timer); timer = null; };
+  const clear = () => { clearTimeout(timer); timer = null; endPressSink(); };
 
   body.addEventListener("pointerdown", (e) => {
     fired = false;
     startX = e.clientX; startY = e.clientY;
+    startPressSink(body, BOOK_LONGPRESS_MS);
     timer = setTimeout(() => {
+      endPressSink();
       fired = true;
       /* 押し続けて入ったことが指先で分かるように、震わせられる端末では震わせる */
       if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* 拒否されても困らない */ } }
@@ -11438,7 +11469,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "238";
+const APP_BUILD = "240";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
