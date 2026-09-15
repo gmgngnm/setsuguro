@@ -10735,6 +10735,12 @@ async function runBatchGeneration() {
   const queue = (await loadBatchQueue()).filter((r) => r.status === "pending");
   if (!queue.length) { toast("生成待ちの単語がありません"); return; }
 
+  /* 設定で語呂合わせをオフにしているなら、まとめて登録でも作らない。
+     ここで設定を無視すると、オフにしたのにトークンも待ち時間も
+     いちばん掛かる工程が動いてしまう。語呂は保存したあとで、
+     単語ページの「語呂合わせを作る」から1語ずつ作れる */
+  const goroAuto = await isGoroAutoEnabled();
+
   batchRunning = true;
   await renderBatchQueue();
   let saved = 0;
@@ -10760,13 +10766,18 @@ async function runBatchGeneration() {
           items.push({ row, decomposed: d, word: d.correctedWord, wordMeaning: d.meaning, morphemes: d.morphemes });
         }
         if (items.length) {
-          setBatchProgress("お手本を準備中");
-          const rag = await prepareBatchGoroRag(items, provider, apiKey);
-          const goro = await batchGenerateGoro(items, provider, apiKey, rag, setBatchProgress);
+          let goro = new Map();
+          if (goroAuto) {
+            setBatchProgress("お手本を準備中");
+            const rag = await prepareBatchGoroRag(items, provider, apiKey);
+            goro = await batchGenerateGoro(items, provider, apiKey, rag, setBatchProgress);
+          }
           setBatchProgress("単語帳に保存中");
           for (const it of items) {
             const cand = goro.get(it.word);
-            if (!cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
+            /* 語呂合わせを作る設定のときだけ、作れなかった語を失敗にする。
+               オフのときは語呂が無いのが正しい状態なので、そのまま保存する */
+            if (goroAuto && !cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
             it.row.status = "ready";
             it.row.error = "";
             it.row.result = {
@@ -10777,8 +10788,8 @@ async function runBatchGeneration() {
               morphemes: it.decomposed.morphemes,
               synonyms: it.decomposed.synonyms,
               antonyms: it.decomposed.antonyms,
-              goro_text: cand.text,
-              goro_highlight: cand.highlight,
+              goro_text: cand ? cand.text : "",
+              goro_highlight: cand ? cand.highlight : [],
               provider,
             };
             /* 生成できた語はその場で単語帳へ入れ、キューからは外す。
@@ -11059,7 +11070,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "220";
+const APP_BUILD = "221";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
