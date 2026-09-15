@@ -96,6 +96,8 @@ button{font-family:inherit;cursor:pointer;}
 }
 .logo-img{display:block;width:240px;max-width:78vw;height:auto;}
 .nav-icons{display:flex;gap:8px;}
+/* 戻るボタンを左端に置く画面で、見出しをその隣に並べるための組 */
+.appbar-lead{display:flex;align-items:center;gap:12px;min-width:0;}
 .icon-btn{
   width:34px;height:34px;border-radius:9px;background:var(--surface-2);border:1px solid var(--line);
   display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--ink-soft);
@@ -893,12 +895,6 @@ button{font-family:inherit;cursor:pointer;}
   overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
 }
 /* 入力欄の見出し行。左に説明、右にCSV・カメラのアイコンボタンを置く */
-.batch-input-head{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-.batch-input-label{
-  font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;min-width:0;
-}
-.batch-input-tools{display:flex;gap:8px;flex-shrink:0;}
-
 .batch-stats{
   font-size:11.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;
   text-transform:none;letter-spacing:normal;

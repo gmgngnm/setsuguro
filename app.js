@@ -3335,7 +3335,7 @@ function showScreen(id) {
     /* CSV出力/読み込みの選択シートや学習モードの選択シートを開いたままホームに
        戻った場合、次に単語帳を開いた時などに開きっぱなしで残ってしまうため、
        ホームに戻るタイミングで内部的に必ず閉じておく */
-    const csvSheet = document.getElementById("csv-choice-sheet");
+    const csvSheet = document.getElementById("batch-csv-sheet");
     if (csvSheet) csvSheet.style.display = "none";
     const memorizeSheet = document.getElementById("memorize-mode-sheet");
     if (memorizeSheet) memorizeSheet.style.display = "none";
@@ -8734,16 +8734,11 @@ function csvToWords(text) {
   return out;
 }
 
-const csvChoiceSheet = document.getElementById("csv-choice-sheet");
-document.getElementById("csv-menu-btn").addEventListener("click", () => {
-  csvChoiceSheet.style.display = "flex";
-});
-document.getElementById("csv-choice-close").addEventListener("click", () => {
-  csvChoiceSheet.style.display = "none";
-});
-
+/* 単語帳まるごとの書き出し・復元は、まとめて登録の画面のCSVの選択に移した
+   （単語帳の画面からCSVのボタンを外したため）。押したら選択を閉じる相手が
+   そちらのシートになる */
 document.getElementById("csv-choice-export").addEventListener("click", async () => {
-  csvChoiceSheet.style.display = "none";
+  batchCsvSheet.style.display = "none";
   const rows = await idbGetAll("words");
   if (!rows.length) { toast("保存された単語がありません"); return; }
   downloadCSV(wordsToCSV(rows), "engolo-wordbook");
@@ -8752,7 +8747,7 @@ document.getElementById("csv-choice-export").addEventListener("click", async () 
 
 const csvImportInput = document.getElementById("csv-import-input");
 document.getElementById("csv-choice-import").addEventListener("click", () => {
-  csvChoiceSheet.style.display = "none";
+  batchCsvSheet.style.display = "none";
   csvImportInput.click();
 });
 csvImportInput.addEventListener("change", async (e) => {
@@ -11360,7 +11355,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "233";
+const APP_BUILD = "235";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
