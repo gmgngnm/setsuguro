@@ -10652,16 +10652,29 @@ function batchWordsFromCsv(text) {
    進捗行を元の工程名のまま復元するために覚えておく */
 let batchProgressPhrase = "";
 
+/* まとめ生成は単語をいくつかに分けて順に処理するが、工程名だけでは
+   全体のどこまで来たのかが分からない。「2/4」を工程名の前に添える。
+   分ける必要がなかった（＝1回で終わる）ときは出さない */
+let batchChunkLabel = "";
+
+function setBatchChunk(index, total) {
+  batchChunkLabel = total > 1 ? `${index}/${total}` : "";
+}
+
 function setBatchProgress(label) {
   batchProgressPhrase = label || "";
   const row = document.getElementById("batch-progress");
   const text = document.getElementById("batch-progress-label");
   if (!row || !text) return;
   row.style.display = label ? "flex" : "none";
+  /* 工程名は長さが変わるので、数えは前に置いて位置を動かさない */
+  const counter = label && batchChunkLabel
+    ? `<span class="batch-chunk-count">${escapeHtml(batchChunkLabel)}</span>`
+    : "";
   /* 回転リングではなく、他の待ち表示（AIで検索中…など）と同じく
      文字の後ろに1つずつ増える点で表す */
   text.innerHTML = label
-    ? `${escapeHtml(label)}<span class="goro-loading-dots" aria-hidden="true"></span>`
+    ? `${counter}${escapeHtml(label)}<span class="goro-loading-dots" aria-hidden="true"></span>`
     : "";
 }
 
@@ -10744,10 +10757,13 @@ async function runBatchGeneration() {
   batchRunning = true;
   await renderBatchQueue();
   let saved = 0;
+  const chunks = chunkArray(queue, BATCH_CHUNK_SIZE);
+  setBatchChunk(1, chunks.length);
   setBatchProgress("接辞に分解中");
 
   try {
-    for (const chunk of chunkArray(queue, BATCH_CHUNK_SIZE)) {
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      setBatchChunk(chunkIndex + 1, chunks.length);
       try {
         /* 分解はAIへの単発の問い合わせで内部の工程を観測できないため、
            1語ずつの経路と同じく「それらしい」工程名を回して見せる。
@@ -10813,6 +10829,7 @@ async function runBatchGeneration() {
   } finally {
     batchRunning = false;
     stopLoadingRotation("batch-progress");
+    setBatchChunk(0, 0);
     setBatchProgress("");
     await renderBatchQueue();
     renderBookList();
@@ -11070,7 +11087,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "221";
+const APP_BUILD = "222";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
