@@ -947,6 +947,10 @@ const DECOMPOSE_ROLE_RULES = [
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
 ];
 
+/* 覚え方の一文に、由来や他の単語とのつながりをもう一文足せるようにしたぶん、
+   長さの上限を広げてある（以前は覚え方だけで100字） */
+const MEMORY_TIP_MAX = 200;
+
 const DECOMPOSE_AFFIX_HINT = (knownAffixes) => `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${knownAffixes}`;
 
 const DECOMPOSE_SPLIT_RULES = [
@@ -957,8 +961,11 @@ const DECOMPOSE_SPLIT_RULES = [
   "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
-  "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
-  "memory_tipで言及する分割は、morphemesの分割と必ず一致させてください。memory_tipにmorphemesより細かい分割を書いてしまう場合（例: morphemesはbereave/mentなのにmemory_tipには「be-(強調)+reave(奪う)+ment(結果)」と書く）は、memory_tipの方が正しく、morphemesの分割が不足しています。その場合はmemory_tipに合わせてmorphemesを分割し直してから出力してください。",
+  "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で必ず記入してください。",
+  "memory_tipには、その覚え方の一文に続けて、その単語にまつわる面白い由来・逸話や、同じ語根を持つ意外な英単語とのつながりがある場合に限り、もう一文だけ足してください。例:「同じ語根 aster(星) は disaster(災害) にもあり、星が離れる＝凶事という発想が共通している。」",
+  "この二文目は、事実として確信が持てるものだけにしてください。もっともらしい作り話は書かないでください。特に面白い話が無い単語や、確信が持てない場合は、覚え方の一文だけで終えてください（無理に埋めない）。",
+  "memory_tipは全体で日本語200文字以内に収めてください。",
+  "memory_tipの一文目で言及する分割は、morphemesの分割と必ず一致させてください。memory_tipにmorphemesより細かい分割を書いてしまう場合（例: morphemesはbereave/mentなのにmemory_tipには「be-(強調)+reave(奪う)+ment(結果)」と書く）は、memory_tipの方が正しく、morphemesの分割が不足しています。その場合はmemory_tipに合わせてmorphemesを分割し直してから出力してください。",
   "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、対義語（antonyms、意味が反対・対照的な実在する一般的な英単語）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
 ];
 
@@ -972,7 +979,7 @@ const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
   DECOMPOSE_AFFIX_HINT(knownAffixes),
   ...DECOMPOSE_SPLIT_RULES,
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。vestigは元は獣の足跡のことで、vestige(名残・痕跡)も同じ語根。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   ...DECOMPOSE_EXAMPLES,
 ].join("\n");
 
@@ -1835,8 +1842,8 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
     shape.word_phonetic = "poʊstˈɡrædʒuət";
   }
   if (gaps.memoryTip) {
-    asks.push("memory_tip: 各接辞の意味をつないだ100字以内の覚え方");
-    shape.memory_tip = "post(後)+gradu(段階)+ate(にする)で、卒業の後の学び。";
+    asks.push("memory_tip: 各接辞の意味をつないだ200字以内の覚え方（面白い由来や他の単語とのつながりが確かにあれば、続けて一文だけ添える）");
+    shape.memory_tip = "post(後)+gradu(段階)+ate(にする)で、卒業の後の学び。graduは「段階・目盛り」で、gradual(段階的な)やgrade(等級)も同じ語根。";
   }
   if (gaps.parts.length) {
     asks.push(`morphemes: ${gaps.parts.join(" / ")} の各要素の reading・meaning・origin・phonetic`);
@@ -1860,7 +1867,7 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
   return {
     wordMeaning: json.word_meaning || "",
     wordPhonetic: json.word_phonetic || "",
-    memoryTip: (json.memory_tip || "").slice(0, 100),
+    memoryTip: (json.memory_tip || "").slice(0, MEMORY_TIP_MAX),
     morphemes: Array.isArray(json.morphemes) ? json.morphemes : [],
     synonyms: Array.isArray(json.synonyms) ? json.synonyms : [],
     antonyms: Array.isArray(json.antonyms) ? json.antonyms : [],
@@ -1881,7 +1888,7 @@ async function decomposeWord(word, provider, apiKey) {
     if (!morphemes.length) throw new Error("empty");
     let wordMeaning = json.word_meaning || "";
     let wordPhonetic = json.word_phonetic || "";
-    let memoryTip = (json.memory_tip || "").slice(0, 100);
+    let memoryTip = (json.memory_tip || "").slice(0, MEMORY_TIP_MAX);
 
     /* 空いた項目だけを埋め直す。以前は同じプロンプトを丸ごと投げ直していたので、
        1項目欠けているだけで往復がまるまる1回増えていた */
@@ -1954,9 +1961,13 @@ function findLeftoverAffixes(morphemes) {
 /* memory_tipは「in(中へ)+vestig(足跡を)+ation(たどること)で、…」の形で返る。
    ここから分割を取り出す。連結して対象単語に一致する場合に限り、
    AI自身が語った信頼できる分割として扱う（一致しなければ、単語の一部だけを
-   説明しているか別語に言及しているので採用しない） */
+   説明しているか別語に言及しているので採用しない）。
+   二文目には由来や他の単語（vestige(名残) など）が書かれることがあるので、
+   分割を読むのは一文目だけにする。二文目まで混ぜると連結が単語と一致せず、
+   この分割不足の検出そのものが黙って効かなくなってしまう */
 function memoryTipSegments(word, memoryTip) {
-  const segments = [...String(memoryTip || "").matchAll(/([A-Za-z]+)\s*-?\s*[(（]/g)].map((m) => m[1].toLowerCase());
+  const firstSentence = String(memoryTip || "").split(/[。\n]/)[0];
+  const segments = [...firstSentence.matchAll(/([A-Za-z]+)\s*-?\s*[(（]/g)].map((m) => m[1].toLowerCase());
   if (segments.length < 2) return null;
   if (segments.join("") !== String(word || "").toLowerCase()) return null;
   return segments;
@@ -2652,7 +2663,7 @@ const BATCH_DECOMPOSE_SYS = [
   ...DECOMPOSE_SPLIT_RULES,
   "複数の英単語をまとめて渡します。単語ごとに独立して判定・分割・分析し、渡された順序のまま、渡された単語すべてについて結果を返してください。単語を飛ばしたり、複数の単語をまとめたりしてはいけません。まとめて処理するからといって、1語ずつ扱う場合より内容を簡略化しないでください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。resultsの各要素のwordには、渡された単語（修正前の綴り）をそのまま入れてください。",
-  '{"results":[{"word":"investigation","word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}]}',
+  '{"results":[{"word":"investigation","word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。vestigは元は獣の足跡のことで、vestige(名残・痕跡)も同じ語根。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}]}',
   ...DECOMPOSE_EXAMPLES,
 ].join("\n");
 
@@ -2675,7 +2686,7 @@ async function buildDecomposeResult(word, json, provider, apiKey) {
     correctedWord, wasCorrected, wordExists: true,
     meaning: json.word_meaning || "",
     phonetic: json.word_phonetic || "",
-    memoryTip: (json.memory_tip || "").slice(0, 100),
+    memoryTip: (json.memory_tip || "").slice(0, MEMORY_TIP_MAX),
     synonyms, antonyms, morphemes,
   };
 }
@@ -11077,7 +11088,14 @@ document.querySelectorAll('[data-nav="settings"]').forEach((el) => {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => console.warn("SW registration failed:", err));
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      /* ホーム画面から開きっぱなしのPWAは、読み込み時の1回しか更新を
+         見に行かない。前面に戻るたびに確かめておくと、次に開き直した
+         ときには新しい版になっている（右上のビルド番号もそこで変わる） */
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reg.update().catch(() => {});
+      });
+    }).catch((err) => console.warn("SW registration failed:", err));
   });
 }
 
@@ -11087,7 +11105,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "222";
+const APP_BUILD = "223";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
