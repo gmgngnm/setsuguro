@@ -8831,6 +8831,10 @@ function stepWordDetail(delta) {
   const next = wordDetailIndex + delta;
   if (next < 0 || next >= wordDetailList.length) return false;
   const list = wordDetailList;
+  /* 中身を入れ替える前に上へ戻す。読んでいた途中で送ると、背の高い中身を
+     描いてからスクロール位置を直すことになり、滑らせている最中に縦へ
+     跳ねて見える。先に戻しておけば、並べ直しは一度で済む */
+  window.scrollTo(0, 0);
   openWordDetail(list[next], list);
   /* 送った向きに合わせて滑り込ませる。どちらへ動いたのかが分かる */
   const screen = document.getElementById("screen-word-detail");
@@ -11356,7 +11360,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "232";
+const APP_BUILD = "233";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

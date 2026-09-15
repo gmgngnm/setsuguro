@@ -41,7 +41,17 @@ html,body{margin:0;padding:0;height:100%;}
 /* 画面遷移でページの縦幅が変わるたびに縦スクロールバーの有無が切り替わり、
    その分だけ横幅がズレてガタつくのを防ぐため、スクロールバー用の余白を
    常に確保しておく */
-html{overflow-y:scroll;scrollbar-gutter:stable;}
+html{scrollbar-gutter:stable;}
+/* 以前は overflow-y:scroll で場所を取っていたが、それだと中身が収まって
+   いてもスクロールできる状態になる。スクロールバーを中身の上に重ねて出す
+   iOSではガタつきがそもそも起きず、常時スクロール可能になる害だけが残る。
+   場所取りが要るのは、場所を食うスクロールバーを持つ環境（＝マウスの
+   ある画面）で、なおかつ scrollbar-gutter を解さない場合だけ */
+@supports not (scrollbar-gutter: stable) {
+  @media (hover: hover) and (pointer: fine) {
+    html{overflow-y:scroll;}
+  }
+}
 body{
   background:var(--bg); color:var(--ink);
   font-family:'Zen Kaku Gothic New','Hiragino Sans','Noto Sans JP',sans-serif;
@@ -52,7 +62,15 @@ h1,h2,h3{font-family:'Shippori Mincho',serif;font-weight:700;margin:0;text-wrap:
 .mono{font-family:'JetBrains Mono',ui-monospace,monospace;}
 button{font-family:inherit;cursor:pointer;}
 
-#app{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;background:var(--bg);}
+/* iOSの 100vh は「ツールバーが隠れているとき」の高さなので、ツールバーが
+   出ている間はこの箱が見えている範囲より高くなり、中身が収まっていても
+   ツールバーの分だけ必ずスクロールできてしまう。dvh は実際に見えている
+   高さに追従するのでそれが起きない。解さないブラウザ向けに vh を先に置く */
+#app{
+  max-width:480px;margin:0 auto;display:flex;flex-direction:column;background:var(--bg);
+  min-height:100vh;
+  min-height:100dvh;
+}
 
 /* ---------- App bar ---------- */
 .appbar{
@@ -402,6 +420,10 @@ button{font-family:inherit;cursor:pointer;}
    ほかの画面と同じ右端に寄せておく理由がない */
 /* 単語ページだけは戻るボタンを左に置き、その右へ読んでいる位置を並べる */
 #screen-word-detail .appbar{justify-content:flex-start;gap:14px;padding-bottom:18px;}
+/* 単語を送ると中身の高さが変わる。ブラウザが「読んでいた位置」を保とうと
+   して中身を上下に押すので、横に滑らせている最中に縦へずれて見える。
+   この画面では位置合わせをブラウザに任せない */
+#screen-word-detail{overflow-anchor:none;}
 
 /* 単語帳の何語目を読んでいるか。読書アプリと同じように、つまんで
    目当てのあたりまで一息で飛べるようにしてある。
