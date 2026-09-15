@@ -1291,24 +1291,32 @@ async function verifyApiKey(provider, apiKey) {
   const adapter = AI_ADAPTERS[provider];
   if (!adapter) throw new Error("未対応のプロバイダです");
 
-  const res = await fetch(adapter.modelsUrl, { headers: { "x-goog-api-key": apiKey } });
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
-    throw new Error("APIキーが受け付けられませんでした");
-  }
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new Error(`${adapter.label} API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const listed = await res.json().catch(() => null);
+  /* 混み合っているだけなら引き直せば通る。ここはcallAIを通らないので、
+     再試行を自分で回す（これが無いと、一度の503でキーが駄目だと
+     受け取られてしまう） */
+  const listed = await withAiRetry(async () => {
+    const res = await fetch(adapter.modelsUrl, { headers: { "x-goog-api-key": apiKey } });
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      throw new Error("APIキーが受け付けられませんでした");
+    }
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`${adapter.label} API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+    }
+    return res.json().catch(() => null);
+  });
 
   /* 分解と同じ形（systemInstruction + user、JSON強制）で1回だけ実際に
      生成させる。モデルが使えるかどうかを一覧だけで判断はしない——一覧が
      省略される可能性があり、使えるのに使えないと言う方が困るため。
      実際に叩いて駄目だったときに初めて、一覧を材料に理由を説明する */
   try {
-    const probe = await adapter.chat(apiKey, "JSONだけを返してください。", '{"ok":true} とだけ返してください。', 0, null, geminiChatModel);
+    const probe = await withAiRetry(() =>
+      adapter.chat(apiKey, "JSONだけを返してください。", '{"ok":true} とだけ返してください。', 0, null, geminiChatModel));
     extractJson(probe.text);
   } catch (err) {
+    /* 混み合っているだけの場合、モデルの選び方の話に読み替えない */
+    if (isTransientAiError(err)) throw err;
     const ids = (listed?.models || []).map((m) => String(m?.name || "").replace(/^models\//, ""));
     if (ids.length && !ids.includes(geminiChatModel)) {
       const flash = ids.filter((id) => id.includes("flash")).slice(0, 6);
@@ -1420,6 +1428,34 @@ function statusFromError(err) {
   return match ? Number(match[1]) : null;
 }
 
+/* 混雑・一時的な不調で、こちらの設定とは関係なく失敗したもの。
+   キーの問題と混ぜて「疎通確認に失敗」と言うと、直しようのない案内に
+   なってしまうので分けて扱う */
+function isTransientAiError(err) {
+  const status = statusFromError(err);
+  if (RETRYABLE_STATUS.includes(status)) return true;
+  return /high demand|overloaded|try again later|UNAVAILABLE|temporar/i.test(String(err?.message || ""));
+}
+
+const BUSY_ERROR_MESSAGE = "Gemini側が一時的に混み合っていて、今は確認できませんでした。キーはそのまま保存してあるので、しばらくしてからもう一度お試しください。";
+
+/* 一時的な失敗なら間を置いて引き直す。callAIと同じ方針を、
+   callAIを通らない処理（疎通確認など）からも使えるようにしたもの */
+async function withAiRetry(run) {
+  let lastErr;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      lastErr = err;
+      const retryable = isTransientAiError(err) || isJsonValidationFailure(err);
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw err;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastErr;
+}
+
 /* JSONモードでは、モデルがJSONとして壊れた出力をした回だけ400が返る。
    恒久的な不正リクエストではなく引き直せば直ることが多いので、
    400でも例外的に再試行の対象にする */
@@ -1449,8 +1485,7 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
       return extractJson(text);
     } catch (err) {
       lastErr = err;
-      const status = statusFromError(err);
-      const retryable = RETRYABLE_STATUS.includes(status) || isJsonValidationFailure(err);
+      const retryable = isTransientAiError(err) || isJsonValidationFailure(err);
       const canRetry = retryable && attempt < RETRY_DELAYS_MS.length;
       if (!canRetry) throw err;
       await sleep(RETRY_DELAYS_MS[attempt]);
@@ -9480,7 +9515,10 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
     await verifyApiKey(activeProvider, key);
     status.textContent = "✓ 保存しました。接続を確認できました。";
   } catch (err) {
-    status.textContent = `保存しましたが、疎通確認に失敗しました（${aiErrorMessage(err)}）。`;
+    /* 混み合っているだけなら、キーに問題があるかのように見せない */
+    status.textContent = isTransientAiError(err)
+      ? BUSY_ERROR_MESSAGE
+      : `保存しましたが、疎通確認に失敗しました（${aiErrorMessage(err)}）。`;
   }
   btn.disabled = false;
   await refreshUsageDisplay();
@@ -10970,7 +11008,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "218";
+const APP_BUILD = "219";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
