@@ -3105,13 +3105,83 @@ function spokenTextOf(text) {
   return raw.replace(/[（(][^）)]*[）)]/g, "").replace(/\s{2,}/g, " ").trim() || raw.trim();
 }
 
+/* iOS Safariは、利用者が押した流れの中で同期的に呼ばないと読み上げを
+   始めてくれない。awaitを1つでも挟むとその流れが切れ、エラーも出さずに
+   黙って終わる。読み上げの設定（話者・APIキー）はIndexedDBにあるので、
+   押されてから読みに行くと必ず手遅れになる。写真のボタンで
+   geminiKeyAvailable を先読みしているのと同じ理由で、ここも先に読んでおく */
+let ttsSpeakerAvailable = false;
+async function refreshTtsAvailability() {
+  const provider = await getActiveProvider();
+  const endpoint = TTS_ENDPOINTS[provider];
+  const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
+  ttsSpeakerAvailable = !!(speaker && await loadApiKey(provider));
+}
+
+/* 言語だけ指定しても、その言語の声が選ばれないまま無音で終わる端末がある。
+   手元にある声から合うものを選んで渡す */
+function pickBrowserVoice(lang) {
+  if (!("speechSynthesis" in window)) return null;
+  const voices = window.speechSynthesis.getVoices() || [];
+  if (!voices.length) return null;
+  const want = String(lang || "").toLowerCase().replace("_", "-");
+  const base = want.slice(0, 2);
+  return voices.find((v) => String(v.lang || "").toLowerCase().replace("_", "-") === want)
+    || voices.find((v) => String(v.lang || "").slice(0, 2).toLowerCase() === base)
+    || null;
+}
+
+/* 端末の音声が使えないことは伝えるが、押すたびに言われても困るので一度だけ */
+let ttsBrowserFailNotified = false;
+function notifyTtsBrowserFailed() {
+  if (ttsBrowserFailNotified) return;
+  ttsBrowserFailNotified = true;
+  toast("この端末の音声では読み上げられませんでした。設定の「読み上げ音声」でGeminiの声を選ぶと読めます");
+}
+
+/* 声の一覧は遅れて届く端末がある。先に呼んで用意させておくと、
+   最初の一押しでも合う声を選べる */
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
+}
+
 function speakWithBrowser(spoken, onEnd, lang) {
   if (!("speechSynthesis" in window)) { if (onEnd) onEnd(); return; }
+  const synth = window.speechSynthesis;
   const u = new SpeechSynthesisUtterance(spoken);
   u.lang = lang;
   u.rate = 1.0;
-  if (onEnd) u.onend = onEnd;
-  window.speechSynthesis.speak(u);
+  const voice = pickBrowserVoice(lang);
+  if (voice) u.voice = voice;
+
+  /* 読み終わりでも失敗でも、必ず一度だけ呼び返す。以前は読み終わりしか
+     見ていなかったため、読み上げに失敗した端末ではボタンが読み上げ中の
+     見た目のまま止まらず、音も出ないのに終わったことも分からなかった */
+  let finished = false;
+  let startGuard = null;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(startGuard);
+    if (onEnd) onEnd();
+  };
+  u.onend = finish;
+  u.onerror = (e) => {
+    console.warn("端末の音声で読み上げられませんでした:", e && e.error);
+    notifyTtsBrowserFailed();
+    finish();
+  };
+  /* 失敗の知らせすら来ず、始まりもしないまま黙って終わる端末がある。
+     鳴り始めた気配が無ければ、こちらから切り上げる */
+  u.onstart = () => { clearTimeout(startGuard); };
+  startGuard = setTimeout(() => {
+    if (!synth.speaking && !synth.pending) { notifyTtsBrowserFailed(); finish(); }
+  }, 1500);
+
+  /* 読み上げが止められたまま戻らないことがある。始める前に起こしておく */
+  if (synth.paused) synth.resume();
+  synth.speak(u);
 }
 
 function requestTtsAudio(endpoint, apiKey, voiceName, spoken) {
@@ -3209,6 +3279,11 @@ async function speak(text, onEnd, lang = "ja-JP") {
   const gen = ttsGeneration;
   const spoken = spokenTextOf(text);
   if (!spoken) { if (onEnd) onEnd(); return; }
+
+  /* 端末の音声で読むと分かっているなら、ここで始める。この行までawaitが
+     無いので、押した流れが続いたまま呼べる（既定は端末の音声なので、
+     ふだん通るのはこちら） */
+  if (!ttsSpeakerAvailable) { speakWithBrowser(spoken, onEnd, lang); return; }
 
   /* GeminiのTTSは多言語なので、英単語も日本語も同じ経路で読む
      （VOICEVOX時代は日本語専用だったため英語をブラウザ内蔵に固定していた） */
@@ -9631,6 +9706,7 @@ async function refreshTtsSpeakerUI() {
   const available = new Set(TTS_SPEAKERS.map((s) => s.id));
   select.value = chosen === "" ? "" : (chosen && available.has(chosen) ? chosen : TTS_SPEAKER_DEFAULT);
   if (select.value !== chosen) await kvSet("tts_speaker", select.value);
+  await refreshTtsAvailability();
 
   /* 常時出す説明は畳んだ（設定画面の文章を減らす方針）。この欄には
      試聴の結果や、声を選べない理由だけを出す */
@@ -9639,6 +9715,7 @@ async function refreshTtsSpeakerUI() {
 
 document.getElementById("tts-speaker-select").addEventListener("change", async (e) => {
   await kvSet("tts_speaker", e.target.value);
+  await refreshTtsAvailability();
 });
 
 document.getElementById("tts-preview-btn").addEventListener("click", async () => {
@@ -9736,6 +9813,7 @@ document.getElementById("save-key-btn").addEventListener("click", async () => {
   await refreshVoiceEngineUI();
   await refreshTtsSpeakerUI();
   await refreshGeminiKeyAvailability();
+  await refreshTtsAvailability();
 });
 
 /* 次に1日あたりの上限がリセットされる時刻（太平洋時間の深夜）を、
@@ -11253,7 +11331,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "228";
+const APP_BUILD = "230";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -11267,6 +11345,7 @@ migrateToGeminiOnce().then(() => migrateTtsSpeakerDefaultOnce());
 restoreCloudSession();
 refreshBuildTag();
 refreshGeminiKeyAvailability();
+refreshTtsAvailability();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
