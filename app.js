@@ -8262,23 +8262,31 @@ function renderWordRelatedCard(synonyms, antonyms, idPrefix = "word") {
   fitRowChips(antonymsChips);
 }
 
+/* 単語の見出し（綴り・発音記号・読み上げボタン・意味）。分解の結果画面と
+   単語帳から開く単語ページで同じものを出したいので、組み立てと読み上げの
+   割り当てをここにまとめる。以前は結果画面にしか読み上げボタンが無く、
+   あとから単語ページを開くと発音を確かめられなかった */
+function renderWordHeading(el, word, phonetic, meaning) {
+  const phoneticHtml = phonetic ? `<span class="phonetic">[${escapeHtml(phonetic)}]</span>` : "";
+  const meaningHtml = meaning ? `<div class="word-meaning-text">${escapeHtml(meaning)}</div>` : "";
+  el.innerHTML = `
+    <div class="word-meaning-word-row">
+      <span class="word-meaning-word">${escapeHtml(word)}${phoneticHtml}</span>
+      <button class="word-speak-btn" type="button" aria-label="英単語を読み上げ">${speakerIconHtml()}</button>
+    </div>${meaningHtml}`;
+  const speakBtn = el.querySelector(".word-speak-btn");
+  speakBtn.addEventListener("click", () => {
+    speakBtn.classList.add("speaking");
+    speak(word, () => speakBtn.classList.remove("speaking"), "en-US");
+  });
+}
+
 /* ---- 接辞カード（タップで同じ接辞を含む単語一覧へ） ---- */
 async function renderResultScreen() {
   const wordMeaningEl = document.getElementById("word-meaning");
   if (currentWordMeaning) {
-    const phoneticHtml = currentWordPhonetic ? `<span class="phonetic">[${escapeHtml(currentWordPhonetic)}]</span>` : "";
-    wordMeaningEl.innerHTML = `
-      <div class="word-meaning-word-row">
-        <span class="word-meaning-word">${escapeHtml(currentWord)}${phoneticHtml}</span>
-        <button class="word-speak-btn" type="button" aria-label="英単語を読み上げ">${speakerIconHtml()}</button>
-      </div>
-      <div class="word-meaning-text">${escapeHtml(currentWordMeaning)}</div>`;
+    renderWordHeading(wordMeaningEl, currentWord, currentWordPhonetic, currentWordMeaning);
     wordMeaningEl.style.display = "block";
-    const speakBtn = wordMeaningEl.querySelector(".word-speak-btn");
-    speakBtn.addEventListener("click", () => {
-      speakBtn.classList.add("speaking");
-      speak(currentWord, () => speakBtn.classList.remove("speaking"), "en-US");
-    });
   } else {
     wordMeaningEl.innerHTML = "";
     wordMeaningEl.style.display = "none";
@@ -8700,9 +8708,7 @@ function openWordDetail(record) {
   currentWordDetailRecord = record;
 
   const meaningEl = document.getElementById("word-detail-meaning");
-  const phoneticHtml = record.word_phonetic ? `<span class="phonetic">[${escapeHtml(record.word_phonetic)}]</span>` : "";
-  const meaningTextHtml = record.word_meaning ? `<div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>` : "";
-  meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div>${meaningTextHtml}`;
+  renderWordHeading(meaningEl, record.word, record.word_phonetic, record.word_meaning);
   meaningEl.style.display = "block";
 
   renderWordRelatedCard(record.synonyms, record.antonyms, "word-detail");
@@ -10659,8 +10665,13 @@ function batchWordsFromCsv(text) {
   return parseBatchWordInput(cells.join("\n"));
 }
 
+/* まとめ生成で出す文言は、この2つだけ。工程を細かく言い換えても、
+   待っている側には何が違うのか分からない */
+const BATCH_PHASE_BUILD = "単語ページ作成中";
+const BATCH_PHASE_SAVE = "保存中";
+
 /* いま表示している工程名。生成中に画面を離れて戻ってきたとき、
-   進捗行を元の工程名のまま復元するために覚えておく */
+   進捗行を元の文言のまま復元するために覚えておく */
 let batchProgressPhrase = "";
 
 /* まとめ生成は単語をいくつかに分けて順に処理するが、工程名だけでは
@@ -10770,19 +10781,17 @@ async function runBatchGeneration() {
   let saved = 0;
   const chunks = chunkArray(queue, BATCH_CHUNK_SIZE);
   setBatchChunk(1, chunks.length);
-  setBatchProgress("接辞に分解中");
+  /* 1語ずつの経路では、待っている間に工程名を移り変わらせて見せている。
+     まとめ生成では何度も同じ移り変わりを繰り返すことになって落ち着かない
+     ので、ここは「作っている」「保存している」の2つだけにする */
+  setBatchProgress(BATCH_PHASE_BUILD);
 
   try {
     for (const [chunkIndex, chunk] of chunks.entries()) {
       setBatchChunk(chunkIndex + 1, chunks.length);
       try {
-        /* 分解はAIへの単発の問い合わせで内部の工程を観測できないため、
-           1語ずつの経路と同じく「それらしい」工程名を回して見せる。
-           語呂合わせ側は実際の処理をそのまま報告できるので、
-           そちらはonStatusで受け取った文言を出す */
-        startDecomposeLoadingSequence("batch-progress", setBatchProgress);
+        setBatchProgress(BATCH_PHASE_BUILD);
         const decomposed = await batchDecomposeWords(chunk.map((r) => r.word), provider, apiKey);
-        stopLoadingRotation("batch-progress");
 
         const items = [];
         for (const row of chunk) {
@@ -10795,11 +10804,12 @@ async function runBatchGeneration() {
         if (items.length) {
           let goro = new Map();
           if (goroAuto) {
-            setBatchProgress("お手本を準備中");
             const rag = await prepareBatchGoroRag(items, provider, apiKey);
-            goro = await batchGenerateGoro(items, provider, apiKey, rag, setBatchProgress);
+            /* 語呂合わせ側は今なにをしているかを報告してくるが、ここでは
+               受け取らない。表示は2つだけに保つ */
+            goro = await batchGenerateGoro(items, provider, apiKey, rag, null);
           }
-          setBatchProgress("単語帳に保存中");
+          setBatchProgress(BATCH_PHASE_SAVE);
           for (const it of items) {
             const cand = goro.get(it.word);
             /* 語呂合わせを作る設定のときだけ、作れなかった語を失敗にする。
@@ -10828,8 +10838,6 @@ async function runBatchGeneration() {
         }
       } catch (err) {
         console.error("まとめ生成に失敗しました:", err);
-        /* 分解の途中で落ちた場合、工程名を回すタイマーが残ってしまう */
-        stopLoadingRotation("batch-progress");
         for (const row of chunk) {
           if (row.status === "pending") await markBatchFailed(row, aiErrorMessage(err));
         }
@@ -10839,7 +10847,6 @@ async function runBatchGeneration() {
     toast(saved ? `${saved}語を単語帳に保存しました` : "まとめ生成が終わりました");
   } finally {
     batchRunning = false;
-    stopLoadingRotation("batch-progress");
     setBatchChunk(0, 0);
     setBatchProgress("");
     await renderBatchQueue();
@@ -10886,7 +10893,7 @@ async function openBatchScreen() {
   refreshGeminiKeyAvailability();
   /* 画面を離れている間も生成は続いている。戻ってきたときに、
      進行中なら進捗表示をそのまま復元する */
-  if (batchRunning) setBatchProgress(batchProgressPhrase || "生成中…");
+  if (batchRunning) setBatchProgress(batchProgressPhrase || BATCH_PHASE_BUILD);
   await flushPendingReviewRows();
   await renderBatchQueue();
 }
@@ -11105,7 +11112,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "223";
+const APP_BUILD = "225";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
