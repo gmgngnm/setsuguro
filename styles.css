@@ -598,6 +598,19 @@ button{font-family:inherit;cursor:pointer;}
   touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
 .book-row .row-text{min-width:0;flex:1;}
+/* 長押しの間の沈み込み。押している時間が伝わるだけの、控えめな沈み方 */
+.press-sink{transform:scale(.965);filter:brightness(.98);}
+.book-row .row-body, #screen-word-detail .affix-card, #screen-word-detail button{
+  transition:transform .16s ease, filter .16s ease;
+}
+.book-row .row-body.press-sink, #screen-word-detail .press-sink{
+  transition:transform var(--sink-ms, 400ms) ease-out, filter var(--sink-ms, 400ms) ease-out;
+}
+@media (prefers-reduced-motion: reduce){
+  .press-sink{transform:none;}
+  .book-row .row-body, #screen-word-detail .affix-card, #screen-word-detail button,
+  .book-row .row-body.press-sink, #screen-word-detail .press-sink{transition:none;}
+}
 /* 選んでいる間だけ左に出る丸。ふだんは場所も取らない */
 .book-row .row-check{display:none;}
 .book-list.selecting .book-row .row-check{
