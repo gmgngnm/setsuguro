@@ -388,6 +388,8 @@ button{font-family:inherit;cursor:pointer;}
   font-family:'JetBrains Mono',monospace;display:flex;justify-content:space-between;align-items:baseline;
   margin-top:4px;
 }
+/* display を指定しているぶん、hidden だけでは消えない */
+.section-label[hidden]{display:none;}
 .hint-text{color:var(--accent-2);font-size:11px;}
 .affix-list{display:flex;flex-direction:column;gap:10px;}
 .affix-card{
@@ -399,13 +401,13 @@ button{font-family:inherit;cursor:pointer;}
 /* 単語ページだけは戻るボタンを左に置く。ここで押すボタンはこれだけなので、
    ほかの画面と同じ右端に寄せておく理由がない */
 /* 単語ページだけは戻るボタンを左に置き、その右へ読んでいる位置を並べる */
-#screen-word-detail .appbar{justify-content:flex-start;gap:14px;}
+#screen-word-detail .appbar{justify-content:flex-start;gap:14px;padding-bottom:18px;}
 
 /* 単語帳の何語目を読んでいるか。読書アプリと同じように、つまんで
    目当てのあたりまで一息で飛べるようにしてある。
    戻るボタンの右の余りをそのまま使う（min-widthを0にしないと、
    つまみの分だけ横に張り出して画面から溢れる） */
-.word-progress{flex:1;min-width:0;}
+.word-progress{flex:1;min-width:0;position:relative;}
 .word-progress-range{
   -webkit-appearance:none;appearance:none;
   width:100%;height:18px;background:none;margin:0;display:block;cursor:pointer;
@@ -426,8 +428,12 @@ button{font-family:inherit;cursor:pointer;}
   background:var(--surface);border:2px solid var(--accent);
 }
 .word-progress-range:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px;}
+/* 数えを縦の並びから外す。並びに入れたままだと、つまみと数えを合わせた
+   高さの真ん中が戻るボタンの中心に合わされ、肝心のつまみが矢印の線より
+   上へずれてしまう。外に出すと、つまみそのものが矢印の線と揃う */
 .word-progress-label{
-  margin-top:-3px;text-align:center;font-size:11px;color:var(--ink-soft);
+  position:absolute;top:100%;left:0;right:0;margin-top:-3px;
+  text-align:center;font-size:11px;color:var(--ink-soft);
   font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .related-word-btn{

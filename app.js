@@ -1434,6 +1434,13 @@ async function isGoroAutoEnabled() {
   return !!(await kvGet("goro_auto", true));
 }
 
+/* 単語ページに「語呂合わせを作る」を出すか。単語ページは同期で描くので、
+   その場で設定を読みに行けない。先に読んで持っておく */
+let goroButtonVisible = true;
+async function refreshGoroButtonSetting() {
+  goroButtonVisible = !!(await kvGet("goro_button", true));
+}
+
 function cosineSim(a, b) {
   let dot = 0, na = 0, nb = 0;
   const len = Math.min(a.length, b.length);
@@ -8773,8 +8780,11 @@ function renderWordDetailGoro(record) {
   }
   /* 語呂合わせ無しで保存した単語（自動生成をオフにしている場合）は、
      ここから作れるようにする。作り直すアイコンは、直すものがある時だけ */
+  const showGenerate = !has && goroButtonVisible;
   document.getElementById("word-detail-regen-btn").hidden = !has;
-  document.getElementById("word-detail-goro-generate-btn").hidden = has;
+  document.getElementById("word-detail-goro-generate-btn").hidden = !showGenerate;
+  /* 語呂も作るボタンも出ないなら、見出しだけ残しても場所を取るだけ */
+  document.getElementById("word-detail-goro-section").hidden = !has && !showGenerate;
 }
 
 let currentWordDetailRecord = null;
@@ -9651,6 +9661,11 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.goroToggle === (goroAuto ? "on" : "off"));
   });
 
+  await refreshGoroButtonSetting();
+  document.querySelectorAll("#goro-button-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.goroButton === (goroButtonVisible ? "on" : "off"));
+  });
+
   const ragOn = await isRagEnabled();
   document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
@@ -9769,6 +9784,16 @@ document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
     await kvSet("goro_auto", pill.dataset.goroToggle === "on");
     document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+  });
+});
+
+document.querySelectorAll("#goro-button-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("goro_button", pill.dataset.goroButton === "on");
+    await refreshGoroButtonSetting();
+    document.querySelectorAll("#goro-button-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+    /* 設定を変えたあとに単語ページへ戻っても、前のままにならないよう描き直す */
+    if (currentWordDetailRecord) renderWordDetailGoro(currentWordDetailRecord);
   });
 });
 
@@ -11331,7 +11356,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "230";
+const APP_BUILD = "232";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -11346,6 +11371,7 @@ restoreCloudSession();
 refreshBuildTag();
 refreshGeminiKeyAvailability();
 refreshTtsAvailability();
+refreshGoroButtonSetting();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
