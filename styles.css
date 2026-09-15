@@ -309,6 +309,14 @@ button{font-family:inherit;cursor:pointer;}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--accent);animation:spin 1s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin-label{font-size:13px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
+/* まとめ生成が全体のどこまで来たか。工程名の前に置いて位置を動かさず、
+   桁が増えても幅が揺れないよう等幅の数字にする */
+.batch-chunk-count{
+  display:inline-block;margin-right:8px;padding:1px 7px;border-radius:999px;
+  background:color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color:var(--accent-ink);font-size:12px;font-weight:700;
+  font-variant-numeric:tabular-nums;letter-spacing:.02em;
+}
 @media (prefers-reduced-motion: reduce){
   .morph, .morph.word-pulse, .morph.shatter-in, .morph.burst-in, .morph.matrix-in, .morph.prism-in, .morph.mitosis-in, .morph.phoenix-in, .morph.origami-in, .morph.zipper-in,
   .morph.card-flip-out, .morph.card-flip-in, .morph.trash-shake, .morph.trash-toss,

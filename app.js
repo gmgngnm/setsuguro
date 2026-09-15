@@ -947,6 +947,10 @@ const DECOMPOSE_ROLE_RULES = [
   "corrected_wordを接頭辞・語根・接尾辞（接辞 = morpheme）に分割してください。",
 ];
 
+/* 覚え方の一文に、由来や他の単語とのつながりをもう一文足せるようにしたぶん、
+   長さの上限を広げてある（以前は覚え方だけで100字） */
+const MEMORY_TIP_MAX = 200;
+
 const DECOMPOSE_AFFIX_HINT = (knownAffixes) => `次の既知の接頭辞・接尾辞一覧を優先的に使ってください: ${knownAffixes}`;
 
 const DECOMPOSE_SPLIT_RULES = [
@@ -957,8 +961,11 @@ const DECOMPOSE_SPLIT_RULES = [
   "各要素を連結するとcorrected_wordと完全に一致するようにしてください（文字の欠落・重複がないこと）。",
   "各要素について、そのカタカナ読み（reading）・日本語での意味（meaning）・由来（origin、簡潔に）・国際音声記号によるその要素単体の発音記号（phonetic、IPA表記、スラッシュや括弧は付けない）を必ず付けてください。語根が一般に馴染みのないものでも、meaningとoriginを空にせず最も可能性の高い語源を推定して記入してください。",
   "あわせて、単語全体の日本語での意味（word_meaning、簡潔な訳語や説明）と、単語全体の国際音声記号による発音記号（word_phonetic、IPA表記、スラッシュや括弧は付けない）も必ず記入してください。",
-  "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で100文字以内で必ず記入してください。",
-  "memory_tipで言及する分割は、morphemesの分割と必ず一致させてください。memory_tipにmorphemesより細かい分割を書いてしまう場合（例: morphemesはbereave/mentなのにmemory_tipには「be-(強調)+reave(奪う)+ment(結果)」と書く）は、memory_tipの方が正しく、morphemesの分割が不足しています。その場合はmemory_tipに合わせてmorphemesを分割し直してから出力してください。",
+  "さらに、各接辞の意味を踏まえたうえでこの単語をどう覚えればよいかを示す一文（memory_tip）を、日本語で必ず記入してください。",
+  "memory_tipには、その覚え方の一文に続けて、その単語にまつわる面白い由来・逸話や、同じ語根を持つ意外な英単語とのつながりがある場合に限り、もう一文だけ足してください。例:「同じ語根 aster(星) は disaster(災害) にもあり、星が離れる＝凶事という発想が共通している。」",
+  "この二文目は、事実として確信が持てるものだけにしてください。もっともらしい作り話は書かないでください。特に面白い話が無い単語や、確信が持てない場合は、覚え方の一文だけで終えてください（無理に埋めない）。",
+  "memory_tipは全体で日本語200文字以内に収めてください。",
+  "memory_tipの一文目で言及する分割は、morphemesの分割と必ず一致させてください。memory_tipにmorphemesより細かい分割を書いてしまう場合（例: morphemesはbereave/mentなのにmemory_tipには「be-(強調)+reave(奪う)+ment(結果)」と書く）は、memory_tipの方が正しく、morphemesの分割が不足しています。その場合はmemory_tipに合わせてmorphemesを分割し直してから出力してください。",
   "また、この単語の類義語（synonyms、意味がほぼ同じ実在する一般的な英単語）を最大5個、対義語（antonyms、意味が反対・対照的な実在する一般的な英単語）を最大5個、それぞれ配列で挙げてください。該当する単語が少ない、または特に無い場合は無理に埋めず、空配列や少ない件数のままで構いません。",
 ];
 
@@ -972,7 +979,7 @@ const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
   DECOMPOSE_AFFIX_HINT(knownAffixes),
   ...DECOMPOSE_SPLIT_RULES,
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
+  '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。vestigは元は獣の足跡のことで、vestige(名残・痕跡)も同じ語根。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   ...DECOMPOSE_EXAMPLES,
 ].join("\n");
 
@@ -1218,8 +1225,47 @@ async function getActiveProvider() {
  *    ここだけ generateContent を直接叩く。APIキーは分解・語呂合わせと
  *    共通のものを使う。
  * ------------------------------------------------------------------ */
-/* 写真の読み取りも、画像を受け取れるモデルでないと動かない。
-   音声認識と同じ理由で既定のモデルに固定する */
+/* 写真の読み取りも音声認識も、その種類を受け取れるモデルでないと動かない。
+   設定で選んだモデルにそのまま追随させると軽いモデルで壊れるので、既定の
+   モデルを第一候補に固定する。ただしそこが混み合っているときに「busy」で
+   終わってしまうと、設定を変えても写真が登録できない行き止まりになる。
+   そこで既定のモデルが駄目だったときだけ、選択中のモデルと、キーで使える
+   モデル一覧（どれも gemini-*-flash / -pro の本体系列で、画像も音声も
+   受け取れる）を控えとして順に試す */
+const MEDIA_MODEL_FALLBACK_LIMIT = 3;
+
+async function mediaModelCandidates() {
+  const cached = await kvGet(CHAT_MODEL_CACHE_KEY, []);
+  const list = [GEMINI_CHAT_MODEL_DEFAULT, geminiChatModel, ...(Array.isArray(cached) ? cached : [])];
+  return [...new Set(list.filter(Boolean))].slice(0, MEDIA_MODEL_FALLBACK_LIMIT);
+}
+
+/* 別のモデルに移る価値があるか。混雑はもちろん、そのモデルが画像や音声を
+   受け取れない・そもそも存在しない場合も、別のモデルなら通る。
+   キー自体が拒否されたときは何を試しても同じなので、そこで諦める */
+function shouldTryNextMediaModel(err) {
+  const status = statusFromError(err);
+  if (status === 401 || status === 403) return false;
+  return isTransientAiError(err) || status === 400 || status === 404;
+}
+
+/* 候補のモデルを順に試す。第一候補は既定のモデルなので、ふだんはこれまでと
+   同じく1回の呼び出しで終わる。控えのモデルまで毎回引き直すと待ち時間が
+   積み上がるため、引き直すのは第一候補だけにしてある */
+async function callGeminiMedia(run) {
+  const models = await mediaModelCandidates();
+  let firstErr = null;
+  for (let i = 0; i < models.length; i++) {
+    try {
+      return i === 0 ? await withAiRetry(() => run(models[i])) : await run(models[i]);
+    } catch (err) {
+      firstErr = firstErr || err;
+      if (!shouldTryNextMediaModel(err)) throw err;
+      console.warn(`${models[i]} で失敗したため次のモデルを試します:`, err);
+    }
+  }
+  throw firstErr || new Error("利用できるモデルがありませんでした");
+}
 
 /* 画像(dataURL)を渡すと、写っている英単語をJSON配列で返す。
    手書き・活字どちらのノートでも読める前提のプロンプトにしてある */
@@ -1237,24 +1283,26 @@ async function recognizeWordsFromImage(dataUrl, apiKey) {
     '{"words":["abandon","bereavement"]}',
   ].join("\n");
 
-  const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL_DEFAULT}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: sys },
-          { inline_data: { mime_type: mimeType, data: base64 } },
-        ],
-      }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
-    }),
+  const json = await callGeminiMedia(async (model) => {
+    const res = await fetch(`${GEMINI_API_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: sys },
+            { inline_data: { mime_type: mimeType, data: base64 } },
+          ],
+        }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await res.json();
   let words = [];
   try { words = JSON.parse(geminiTextFromResponse(json)).words || []; } catch { words = []; }
   return words.filter((w) => typeof w === "string");
@@ -1418,9 +1466,13 @@ function isQuotaError(err) {
   return statusFromError(err) === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg);
 }
 
-/* 画面に出す文言。上限に当たったときだけ専用の案内に差し替える */
+/* 画面に出す文言。こちらでは直しようのない理由（上限・混雑）のときだけ
+   専用の案内に差し替える。生の英語のエラー本文をそのまま出すと、
+   何をすればいいのか分からないまま長文だけが残る */
 function aiErrorMessage(err) {
-  return isQuotaError(err) ? QUOTA_ERROR_MESSAGE : String(err?.message || "原因不明のエラー");
+  if (isQuotaError(err)) return QUOTA_ERROR_MESSAGE;
+  if (isTransientAiError(err)) return BUSY_RETRY_MESSAGE;
+  return String(err?.message || "原因不明のエラー");
 }
 
 function statusFromError(err) {
@@ -1438,6 +1490,7 @@ function isTransientAiError(err) {
 }
 
 const BUSY_ERROR_MESSAGE = "Gemini側が一時的に混み合っていて、今は確認できませんでした。キーはそのまま保存してあるので、しばらくしてからもう一度お試しください。";
+const BUSY_RETRY_MESSAGE = "Gemini側が一時的に混み合っています。少し時間をおいてからもう一度お試しください。";
 
 /* 一時的な失敗なら間を置いて引き直す。callAIと同じ方針を、
    callAIを通らない処理（疎通確認など）からも使えるようにしたもの */
@@ -1789,8 +1842,8 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
     shape.word_phonetic = "poʊstˈɡrædʒuət";
   }
   if (gaps.memoryTip) {
-    asks.push("memory_tip: 各接辞の意味をつないだ100字以内の覚え方");
-    shape.memory_tip = "post(後)+gradu(段階)+ate(にする)で、卒業の後の学び。";
+    asks.push("memory_tip: 各接辞の意味をつないだ200字以内の覚え方（面白い由来や他の単語とのつながりが確かにあれば、続けて一文だけ添える）");
+    shape.memory_tip = "post(後)+gradu(段階)+ate(にする)で、卒業の後の学び。graduは「段階・目盛り」で、gradual(段階的な)やgrade(等級)も同じ語根。";
   }
   if (gaps.parts.length) {
     asks.push(`morphemes: ${gaps.parts.join(" / ")} の各要素の reading・meaning・origin・phonetic`);
@@ -1814,7 +1867,7 @@ async function fillDecomposeGaps(word, morphemes, gaps, provider, apiKey) {
   return {
     wordMeaning: json.word_meaning || "",
     wordPhonetic: json.word_phonetic || "",
-    memoryTip: (json.memory_tip || "").slice(0, 100),
+    memoryTip: (json.memory_tip || "").slice(0, MEMORY_TIP_MAX),
     morphemes: Array.isArray(json.morphemes) ? json.morphemes : [],
     synonyms: Array.isArray(json.synonyms) ? json.synonyms : [],
     antonyms: Array.isArray(json.antonyms) ? json.antonyms : [],
@@ -1835,7 +1888,7 @@ async function decomposeWord(word, provider, apiKey) {
     if (!morphemes.length) throw new Error("empty");
     let wordMeaning = json.word_meaning || "";
     let wordPhonetic = json.word_phonetic || "";
-    let memoryTip = (json.memory_tip || "").slice(0, 100);
+    let memoryTip = (json.memory_tip || "").slice(0, MEMORY_TIP_MAX);
 
     /* 空いた項目だけを埋め直す。以前は同じプロンプトを丸ごと投げ直していたので、
        1項目欠けているだけで往復がまるまる1回増えていた */
@@ -1908,9 +1961,13 @@ function findLeftoverAffixes(morphemes) {
 /* memory_tipは「in(中へ)+vestig(足跡を)+ation(たどること)で、…」の形で返る。
    ここから分割を取り出す。連結して対象単語に一致する場合に限り、
    AI自身が語った信頼できる分割として扱う（一致しなければ、単語の一部だけを
-   説明しているか別語に言及しているので採用しない） */
+   説明しているか別語に言及しているので採用しない）。
+   二文目には由来や他の単語（vestige(名残) など）が書かれることがあるので、
+   分割を読むのは一文目だけにする。二文目まで混ぜると連結が単語と一致せず、
+   この分割不足の検出そのものが黙って効かなくなってしまう */
 function memoryTipSegments(word, memoryTip) {
-  const segments = [...String(memoryTip || "").matchAll(/([A-Za-z]+)\s*-?\s*[(（]/g)].map((m) => m[1].toLowerCase());
+  const firstSentence = String(memoryTip || "").split(/[。\n]/)[0];
+  const segments = [...firstSentence.matchAll(/([A-Za-z]+)\s*-?\s*[(（]/g)].map((m) => m[1].toLowerCase());
   if (segments.length < 2) return null;
   if (segments.join("") !== String(word || "").toLowerCase()) return null;
   return segments;
@@ -2606,7 +2663,7 @@ const BATCH_DECOMPOSE_SYS = [
   ...DECOMPOSE_SPLIT_RULES,
   "複数の英単語をまとめて渡します。単語ごとに独立して判定・分割・分析し、渡された順序のまま、渡された単語すべてについて結果を返してください。単語を飛ばしたり、複数の単語をまとめたりしてはいけません。まとめて処理するからといって、1語ずつ扱う場合より内容を簡略化しないでください。",
   "出力は次のJSON形式のみを返し、それ以外の文章は一切書かないでください。resultsの各要素のwordには、渡された単語（修正前の綴り）をそのまま入れてください。",
-  '{"results":[{"word":"investigation","word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}]}',
+  '{"results":[{"word":"investigation","word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。vestigは元は獣の足跡のことで、vestige(名残・痕跡)も同じ語根。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}]}',
   ...DECOMPOSE_EXAMPLES,
 ].join("\n");
 
@@ -2629,7 +2686,7 @@ async function buildDecomposeResult(word, json, provider, apiKey) {
     correctedWord, wasCorrected, wordExists: true,
     meaning: json.word_meaning || "",
     phonetic: json.word_phonetic || "",
-    memoryTip: (json.memory_tip || "").slice(0, 100),
+    memoryTip: (json.memory_tip || "").slice(0, MEMORY_TIP_MAX),
     synonyms, antonyms, morphemes,
   };
 }
@@ -3289,10 +3346,11 @@ const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押し
    multipart)だったが、Geminiは音声を inline_data で generateContent に
    渡して文字起こしさせる形なので、専用のプロンプトごとここに持つ。
    対応プロバイダを増やす場合はここに足せば、選択可否の判定も
-   フォールバックもこのマップの有無だけで動く */
+   フォールバックもこのマップの有無だけで動く。
+   実際に叩くモデルは callGeminiMedia が決める（既定のモデルが第一候補で、
+   そこが混み合っているときだけ控えに移る）ので、ここのurlは
+   「このプロバイダで音声認識ができる」という印を兼ねた既定値 */
 const STT_ENDPOINTS = {
-  /* 音声を受け取れるかはモデルによって違う。設定で軽いモデルに替えると
-     文字起こしごと失敗するので、ここは既定のモデルに固定する */
   gemini: { url: `${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL_DEFAULT}:generateContent` },
 };
 
@@ -3332,7 +3390,6 @@ function blobToBase64(blob) {
    1語だけを言う前提なので、文章として書き起こさせるより綴りを直接
    答えさせた方が余計な句読点や言い直しが混ざらない */
 async function transcribeWithGemini(blob, apiKey, mime) {
-  const cfg = STT_ENDPOINTS.gemini;
   const sys = [
     "この音声は、英単語を1語だけ発音したものです。",
     "聞こえた英単語の綴りだけを小文字で答えてください。",
@@ -3342,24 +3399,29 @@ async function transcribeWithGemini(blob, apiKey, mime) {
     '{"word":"abandon"}',
   ].join("\n");
 
-  const res = await fetch(cfg.url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: sys },
-          { inline_data: { mime_type: mime || "audio/webm", data: await blobToBase64(blob) } },
-        ],
-      }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0 },
-    }),
+  /* base64化は1度で済ませる。モデルを替えて引き直すたびに録音全体を
+     読み直すのは無駄なので、ループの外で作っておく */
+  const audio = await blobToBase64(blob);
+  const json = await callGeminiMedia(async (model) => {
+    const res = await fetch(`${GEMINI_API_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: sys },
+            { inline_data: { mime_type: mime || "audio/webm", data: audio } },
+          ],
+        }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0 },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await res.json();
   try { return JSON.parse(geminiTextFromResponse(json)).word || ""; } catch { return ""; }
 }
 
@@ -3573,7 +3635,7 @@ if (!SpeechRecognitionCtor && !canRecord) {
           } catch (err) {
             console.warn("音声認識に失敗しました:", err);
             resetMic();
-            toast(err.message || "音声認識に失敗しました");
+            toast(`音声認識に失敗しました（${aiErrorMessage(err)}）`);
           }
         };
 
@@ -10601,16 +10663,29 @@ function batchWordsFromCsv(text) {
    進捗行を元の工程名のまま復元するために覚えておく */
 let batchProgressPhrase = "";
 
+/* まとめ生成は単語をいくつかに分けて順に処理するが、工程名だけでは
+   全体のどこまで来たのかが分からない。「2/4」を工程名の前に添える。
+   分ける必要がなかった（＝1回で終わる）ときは出さない */
+let batchChunkLabel = "";
+
+function setBatchChunk(index, total) {
+  batchChunkLabel = total > 1 ? `${index}/${total}` : "";
+}
+
 function setBatchProgress(label) {
   batchProgressPhrase = label || "";
   const row = document.getElementById("batch-progress");
   const text = document.getElementById("batch-progress-label");
   if (!row || !text) return;
   row.style.display = label ? "flex" : "none";
+  /* 工程名は長さが変わるので、数えは前に置いて位置を動かさない */
+  const counter = label && batchChunkLabel
+    ? `<span class="batch-chunk-count">${escapeHtml(batchChunkLabel)}</span>`
+    : "";
   /* 回転リングではなく、他の待ち表示（AIで検索中…など）と同じく
      文字の後ろに1つずつ増える点で表す */
   text.innerHTML = label
-    ? `${escapeHtml(label)}<span class="goro-loading-dots" aria-hidden="true"></span>`
+    ? `${counter}${escapeHtml(label)}<span class="goro-loading-dots" aria-hidden="true"></span>`
     : "";
 }
 
@@ -10684,13 +10759,22 @@ async function runBatchGeneration() {
   const queue = (await loadBatchQueue()).filter((r) => r.status === "pending");
   if (!queue.length) { toast("生成待ちの単語がありません"); return; }
 
+  /* 設定で語呂合わせをオフにしているなら、まとめて登録でも作らない。
+     ここで設定を無視すると、オフにしたのにトークンも待ち時間も
+     いちばん掛かる工程が動いてしまう。語呂は保存したあとで、
+     単語ページの「語呂合わせを作る」から1語ずつ作れる */
+  const goroAuto = await isGoroAutoEnabled();
+
   batchRunning = true;
   await renderBatchQueue();
   let saved = 0;
+  const chunks = chunkArray(queue, BATCH_CHUNK_SIZE);
+  setBatchChunk(1, chunks.length);
   setBatchProgress("接辞に分解中");
 
   try {
-    for (const chunk of chunkArray(queue, BATCH_CHUNK_SIZE)) {
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      setBatchChunk(chunkIndex + 1, chunks.length);
       try {
         /* 分解はAIへの単発の問い合わせで内部の工程を観測できないため、
            1語ずつの経路と同じく「それらしい」工程名を回して見せる。
@@ -10709,13 +10793,18 @@ async function runBatchGeneration() {
           items.push({ row, decomposed: d, word: d.correctedWord, wordMeaning: d.meaning, morphemes: d.morphemes });
         }
         if (items.length) {
-          setBatchProgress("お手本を準備中");
-          const rag = await prepareBatchGoroRag(items, provider, apiKey);
-          const goro = await batchGenerateGoro(items, provider, apiKey, rag, setBatchProgress);
+          let goro = new Map();
+          if (goroAuto) {
+            setBatchProgress("お手本を準備中");
+            const rag = await prepareBatchGoroRag(items, provider, apiKey);
+            goro = await batchGenerateGoro(items, provider, apiKey, rag, setBatchProgress);
+          }
           setBatchProgress("単語帳に保存中");
           for (const it of items) {
             const cand = goro.get(it.word);
-            if (!cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
+            /* 語呂合わせを作る設定のときだけ、作れなかった語を失敗にする。
+               オフのときは語呂が無いのが正しい状態なので、そのまま保存する */
+            if (goroAuto && !cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
             it.row.status = "ready";
             it.row.error = "";
             it.row.result = {
@@ -10726,8 +10815,8 @@ async function runBatchGeneration() {
               morphemes: it.decomposed.morphemes,
               synonyms: it.decomposed.synonyms,
               antonyms: it.decomposed.antonyms,
-              goro_text: cand.text,
-              goro_highlight: cand.highlight,
+              goro_text: cand ? cand.text : "",
+              goro_highlight: cand ? cand.highlight : [],
               provider,
             };
             /* 生成できた語はその場で単語帳へ入れ、キューからは外す。
@@ -10751,6 +10840,7 @@ async function runBatchGeneration() {
   } finally {
     batchRunning = false;
     stopLoadingRotation("batch-progress");
+    setBatchChunk(0, 0);
     setBatchProgress("");
     await renderBatchQueue();
     renderBookList();
@@ -10897,7 +10987,7 @@ batchPhotoInput.addEventListener("change", async (e) => {
     }
   } catch (err) {
     console.error(err);
-    toast(`画像の読み取りに失敗しました（${err.message}）`);
+    toast(`画像の読み取りに失敗しました（${aiErrorMessage(err)}）`);
   }
   btn.disabled = false;
   progress.style.display = "none";
@@ -10998,7 +11088,14 @@ document.querySelectorAll('[data-nav="settings"]').forEach((el) => {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => console.warn("SW registration failed:", err));
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      /* ホーム画面から開きっぱなしのPWAは、読み込み時の1回しか更新を
+         見に行かない。前面に戻るたびに確かめておくと、次に開き直した
+         ときには新しい版になっている（右上のビルド番号もそこで変わる） */
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reg.update().catch(() => {});
+      });
+    }).catch((err) => console.warn("SW registration failed:", err));
   });
 }
 
@@ -11008,7 +11105,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "219";
+const APP_BUILD = "223";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
