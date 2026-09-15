@@ -8716,6 +8716,31 @@ const WORD_DETAIL_SWIPE_MIN = 60;
    いるときだけ送る */
 const WORD_DETAIL_SWIPE_RATIO = 1.5;
 
+/* 単語帳の何語目を読んでいるか。つまんで動かしている間は、まだ送らずに
+   行き先だけを見せる（指を離したところで送る）。1語しかないときは、
+   動かしようがないので出さない */
+function syncWordDetailProgress(previewIndex = null) {
+  const row = document.getElementById("word-detail-progress");
+  const range = document.getElementById("word-detail-range");
+  const label = document.getElementById("word-detail-progress-label");
+  if (!row || !range || !label) return;
+
+  const total = wordDetailList.length;
+  if (wordDetailIndex < 0 || total < 2) { row.hidden = true; return; }
+  row.hidden = false;
+
+  const index = previewIndex === null ? wordDetailIndex : previewIndex;
+  range.min = "1";
+  range.max = String(total);
+  if (previewIndex === null) range.value = String(wordDetailIndex + 1);
+
+  const percent = Math.round((index / (total - 1)) * 100);
+  range.style.setProperty("--fill", `${percent}%`);
+  /* 動かしている間はどの単語へ行くのかが見えないので、行き先を添える */
+  const heading = previewIndex === null ? "" : `　${wordDetailList[index]?.word || ""}`;
+  label.textContent = `${percent}% ・ ${index + 1}/${total}語${heading}`;
+}
+
 function stepWordDetail(delta) {
   if (wordDetailIndex < 0) return false;
   const next = wordDetailIndex + delta;
@@ -8739,6 +8764,7 @@ function openWordDetail(record, list = null) {
     wordDetailList = [];
     wordDetailIndex = -1;
   }
+  syncWordDetailProgress();
 
   const meaningEl = document.getElementById("word-detail-meaning");
   renderWordHeading(meaningEl, record.word, record.word_phonetic, record.word_meaning);
@@ -8866,6 +8892,33 @@ function buildRelatedWordButton(entry) {
 let affixWordsReturnScreen = "screen-result";
 let affixWordsRequestId = 0;
 
+(function bindWordDetailProgress() {
+  const range = document.getElementById("word-detail-range");
+  if (!range) return;
+  /* 動かしている最中は行き先を見せるだけ。1語ずつ開き直すと、通り過ぎた
+     ぶんまで全部描くことになって重い */
+  range.addEventListener("input", () => syncWordDetailProgress(Number(range.value) - 1));
+  range.addEventListener("change", () => {
+    const index = Number(range.value) - 1;
+    if (!wordDetailList[index] || index === wordDetailIndex) { syncWordDetailProgress(); return; }
+    openWordDetail(wordDetailList[index], wordDetailList);
+  });
+})();
+
+/* 押すと何かが起きるものの上では、送りに使わない。ここを踏んだタップは
+   そのボタン・カードの仕事 */
+const WORD_DETAIL_INTERACTIVE = "button, a, input, textarea, select, .affix-card, .word-progress";
+
+/* 払ったあとにブラウザがタップを続けて出すことがある。払いで送った直後だけ
+   タップを見送る（タップで送った直後は見送らない。続けて叩いて続けて
+   進みたいので） */
+let wordDetailSwipedAt = 0;
+
+/* 文字を選んでいる最中かどうか。押した瞬間に見ておく必要がある。
+   clickまで待つと、その押下でブラウザが選択を外したあとになってしまい、
+   「選んだ文字を外すつもりの一押し」で送られてしまう */
+let wordDetailHadSelection = false;
+
 /* 単語ページの左右送り。画面ごと触れるようにしておけば、接辞カードや
    語呂の上から払っても効く */
 (function bindWordDetailSwipe() {
@@ -8873,6 +8926,9 @@ let affixWordsRequestId = 0;
   if (!screen) return;
   let startX = 0, startY = 0, tracking = false;
   screen.addEventListener("touchstart", (e) => {
+    /* つまみを動かすのも横向きの操作なので、ここから始まった指は送りに
+       使わない（動かすたびに1語送られてしまう） */
+    if (e.target.closest && e.target.closest(".word-progress")) { tracking = false; return; }
     /* 2本指は拡大・縮小なので送らない */
     tracking = e.touches.length === 1;
     if (!tracking) return;
@@ -8888,8 +8944,23 @@ let affixWordsRequestId = 0;
     const dy = touch.clientY - startY;
     if (Math.abs(dx) < WORD_DETAIL_SWIPE_MIN) return;
     if (Math.abs(dx) < Math.abs(dy) * WORD_DETAIL_SWIPE_RATIO) return;
-    stepWordDetail(dx < 0 ? 1 : -1);
+    if (stepWordDetail(dx < 0 ? 1 : -1)) wordDetailSwipedAt = Date.now();
   }, { passive: true });
+
+  /* 何も無いところを叩いても送れるようにする。右半分で次、左半分で前。
+     払うより気軽で、片手でも押しやすい */
+  screen.addEventListener("pointerdown", () => {
+    const selection = window.getSelection && window.getSelection();
+    wordDetailHadSelection = !!(selection && !selection.isCollapsed && String(selection).trim());
+  }, { passive: true });
+
+  screen.addEventListener("click", (e) => {
+    if (Date.now() - wordDetailSwipedAt < 400) return;
+    if (wordDetailHadSelection) { wordDetailHadSelection = false; return; }
+    if (e.target.closest && e.target.closest(WORD_DETAIL_INTERACTIVE)) return;
+    const box = screen.getBoundingClientRect();
+    stepWordDetail(e.clientX < box.left + box.width / 2 ? -1 : 1);
+  });
 })();
 
 /* パソコンからは指で払えないので、矢印キーでも送れるようにする */
@@ -11182,7 +11253,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "226";
+const APP_BUILD = "228";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
