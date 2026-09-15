@@ -8537,7 +8537,7 @@ async function renderBookList() {
   if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
   rows.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
-    const row = buildBookRow(title, r.word_phonetic || "", r.word_meaning || "", r.created_at, () => openWordDetail(r), async () => {
+    const row = buildBookRow(title, r.word_phonetic || "", r.word_meaning || "", r.created_at, () => openWordDetail(r, rows), async () => {
       await deleteWordRecord(r.id);
       renderBookList();
     });
@@ -8704,8 +8704,41 @@ function renderWordDetailGoro(record) {
 
 let currentWordDetailRecord = null;
 
-function openWordDetail(record) {
+/* 単語ページを左右に送るための並びと、いま何番目か。単語帳に出ている順
+   （新しい順）をそのまま受け取る。単語帳以外から開かれたときは送り先が
+   無いので、空にして左右の操作を効かせない */
+let wordDetailList = [];
+let wordDetailIndex = -1;
+
+/* 指を左へ払う＝紙を右へ送る＝次の単語。写真アプリなどと同じ向きにしてある */
+const WORD_DETAIL_SWIPE_MIN = 60;
+/* 縦に読んでいる途中の指のブレで送ってしまわないよう、横が十分に勝って
+   いるときだけ送る */
+const WORD_DETAIL_SWIPE_RATIO = 1.5;
+
+function stepWordDetail(delta) {
+  if (wordDetailIndex < 0) return false;
+  const next = wordDetailIndex + delta;
+  if (next < 0 || next >= wordDetailList.length) return false;
+  const list = wordDetailList;
+  openWordDetail(list[next], list);
+  /* 送った向きに合わせて滑り込ませる。どちらへ動いたのかが分かる */
+  const screen = document.getElementById("screen-word-detail");
+  screen.classList.remove("slide-from-right", "slide-from-left");
+  void screen.offsetWidth;   // アニメーションを必ず出し直す
+  screen.classList.add(delta > 0 ? "slide-from-right" : "slide-from-left");
+  return true;
+}
+
+function openWordDetail(record, list = null) {
   currentWordDetailRecord = record;
+  if (list) {
+    wordDetailList = list;
+    wordDetailIndex = list.findIndex((r) => r.id === record.id);
+  } else {
+    wordDetailList = [];
+    wordDetailIndex = -1;
+  }
 
   const meaningEl = document.getElementById("word-detail-meaning");
   renderWordHeading(meaningEl, record.word, record.word_phonetic, record.word_meaning);
@@ -8832,6 +8865,43 @@ function buildRelatedWordButton(entry) {
 
 let affixWordsReturnScreen = "screen-result";
 let affixWordsRequestId = 0;
+
+/* 単語ページの左右送り。画面ごと触れるようにしておけば、接辞カードや
+   語呂の上から払っても効く */
+(function bindWordDetailSwipe() {
+  const screen = document.getElementById("screen-word-detail");
+  if (!screen) return;
+  let startX = 0, startY = 0, tracking = false;
+  screen.addEventListener("touchstart", (e) => {
+    /* 2本指は拡大・縮小なので送らない */
+    tracking = e.touches.length === 1;
+    if (!tracking) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+  screen.addEventListener("touchcancel", () => { tracking = false; }, { passive: true });
+  screen.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    if (Math.abs(dx) < WORD_DETAIL_SWIPE_MIN) return;
+    if (Math.abs(dx) < Math.abs(dy) * WORD_DETAIL_SWIPE_RATIO) return;
+    stepWordDetail(dx < 0 ? 1 : -1);
+  }, { passive: true });
+})();
+
+/* パソコンからは指で払えないので、矢印キーでも送れるようにする */
+document.addEventListener("keydown", (e) => {
+  const screen = document.getElementById("screen-word-detail");
+  if (!screen || !screen.classList.contains("active")) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = e.target;
+  if (el && el.closest && el.closest("input, textarea, select")) return;
+  if (e.key === "ArrowRight") { if (stepWordDetail(1)) e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { if (stepWordDetail(-1)) e.preventDefault(); }
+});
 
 async function openAffixWordsScreen(morpheme, sourceWord, returnScreenId) {
   const requestId = ++affixWordsRequestId;
@@ -11112,7 +11182,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "225";
+const APP_BUILD = "226";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
