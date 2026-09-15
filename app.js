@@ -1218,8 +1218,47 @@ async function getActiveProvider() {
  *    ここだけ generateContent を直接叩く。APIキーは分解・語呂合わせと
  *    共通のものを使う。
  * ------------------------------------------------------------------ */
-/* 写真の読み取りも、画像を受け取れるモデルでないと動かない。
-   音声認識と同じ理由で既定のモデルに固定する */
+/* 写真の読み取りも音声認識も、その種類を受け取れるモデルでないと動かない。
+   設定で選んだモデルにそのまま追随させると軽いモデルで壊れるので、既定の
+   モデルを第一候補に固定する。ただしそこが混み合っているときに「busy」で
+   終わってしまうと、設定を変えても写真が登録できない行き止まりになる。
+   そこで既定のモデルが駄目だったときだけ、選択中のモデルと、キーで使える
+   モデル一覧（どれも gemini-*-flash / -pro の本体系列で、画像も音声も
+   受け取れる）を控えとして順に試す */
+const MEDIA_MODEL_FALLBACK_LIMIT = 3;
+
+async function mediaModelCandidates() {
+  const cached = await kvGet(CHAT_MODEL_CACHE_KEY, []);
+  const list = [GEMINI_CHAT_MODEL_DEFAULT, geminiChatModel, ...(Array.isArray(cached) ? cached : [])];
+  return [...new Set(list.filter(Boolean))].slice(0, MEDIA_MODEL_FALLBACK_LIMIT);
+}
+
+/* 別のモデルに移る価値があるか。混雑はもちろん、そのモデルが画像や音声を
+   受け取れない・そもそも存在しない場合も、別のモデルなら通る。
+   キー自体が拒否されたときは何を試しても同じなので、そこで諦める */
+function shouldTryNextMediaModel(err) {
+  const status = statusFromError(err);
+  if (status === 401 || status === 403) return false;
+  return isTransientAiError(err) || status === 400 || status === 404;
+}
+
+/* 候補のモデルを順に試す。第一候補は既定のモデルなので、ふだんはこれまでと
+   同じく1回の呼び出しで終わる。控えのモデルまで毎回引き直すと待ち時間が
+   積み上がるため、引き直すのは第一候補だけにしてある */
+async function callGeminiMedia(run) {
+  const models = await mediaModelCandidates();
+  let firstErr = null;
+  for (let i = 0; i < models.length; i++) {
+    try {
+      return i === 0 ? await withAiRetry(() => run(models[i])) : await run(models[i]);
+    } catch (err) {
+      firstErr = firstErr || err;
+      if (!shouldTryNextMediaModel(err)) throw err;
+      console.warn(`${models[i]} で失敗したため次のモデルを試します:`, err);
+    }
+  }
+  throw firstErr || new Error("利用できるモデルがありませんでした");
+}
 
 /* 画像(dataURL)を渡すと、写っている英単語をJSON配列で返す。
    手書き・活字どちらのノートでも読める前提のプロンプトにしてある */
@@ -1237,24 +1276,26 @@ async function recognizeWordsFromImage(dataUrl, apiKey) {
     '{"words":["abandon","bereavement"]}',
   ].join("\n");
 
-  const res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL_DEFAULT}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: sys },
-          { inline_data: { mime_type: mimeType, data: base64 } },
-        ],
-      }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
-    }),
+  const json = await callGeminiMedia(async (model) => {
+    const res = await fetch(`${GEMINI_API_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: sys },
+            { inline_data: { mime_type: mimeType, data: base64 } },
+          ],
+        }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new Error(`Gemini API エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await res.json();
   let words = [];
   try { words = JSON.parse(geminiTextFromResponse(json)).words || []; } catch { words = []; }
   return words.filter((w) => typeof w === "string");
@@ -1418,9 +1459,13 @@ function isQuotaError(err) {
   return statusFromError(err) === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg);
 }
 
-/* 画面に出す文言。上限に当たったときだけ専用の案内に差し替える */
+/* 画面に出す文言。こちらでは直しようのない理由（上限・混雑）のときだけ
+   専用の案内に差し替える。生の英語のエラー本文をそのまま出すと、
+   何をすればいいのか分からないまま長文だけが残る */
 function aiErrorMessage(err) {
-  return isQuotaError(err) ? QUOTA_ERROR_MESSAGE : String(err?.message || "原因不明のエラー");
+  if (isQuotaError(err)) return QUOTA_ERROR_MESSAGE;
+  if (isTransientAiError(err)) return BUSY_RETRY_MESSAGE;
+  return String(err?.message || "原因不明のエラー");
 }
 
 function statusFromError(err) {
@@ -1438,6 +1483,7 @@ function isTransientAiError(err) {
 }
 
 const BUSY_ERROR_MESSAGE = "Gemini側が一時的に混み合っていて、今は確認できませんでした。キーはそのまま保存してあるので、しばらくしてからもう一度お試しください。";
+const BUSY_RETRY_MESSAGE = "Gemini側が一時的に混み合っています。少し時間をおいてからもう一度お試しください。";
 
 /* 一時的な失敗なら間を置いて引き直す。callAIと同じ方針を、
    callAIを通らない処理（疎通確認など）からも使えるようにしたもの */
@@ -3289,10 +3335,11 @@ const micHintIdle = () => (isDesktopMic() ? "クリックで入力" : "長押し
    multipart)だったが、Geminiは音声を inline_data で generateContent に
    渡して文字起こしさせる形なので、専用のプロンプトごとここに持つ。
    対応プロバイダを増やす場合はここに足せば、選択可否の判定も
-   フォールバックもこのマップの有無だけで動く */
+   フォールバックもこのマップの有無だけで動く。
+   実際に叩くモデルは callGeminiMedia が決める（既定のモデルが第一候補で、
+   そこが混み合っているときだけ控えに移る）ので、ここのurlは
+   「このプロバイダで音声認識ができる」という印を兼ねた既定値 */
 const STT_ENDPOINTS = {
-  /* 音声を受け取れるかはモデルによって違う。設定で軽いモデルに替えると
-     文字起こしごと失敗するので、ここは既定のモデルに固定する */
   gemini: { url: `${GEMINI_API_BASE}/models/${GEMINI_CHAT_MODEL_DEFAULT}:generateContent` },
 };
 
@@ -3332,7 +3379,6 @@ function blobToBase64(blob) {
    1語だけを言う前提なので、文章として書き起こさせるより綴りを直接
    答えさせた方が余計な句読点や言い直しが混ざらない */
 async function transcribeWithGemini(blob, apiKey, mime) {
-  const cfg = STT_ENDPOINTS.gemini;
   const sys = [
     "この音声は、英単語を1語だけ発音したものです。",
     "聞こえた英単語の綴りだけを小文字で答えてください。",
@@ -3342,24 +3388,29 @@ async function transcribeWithGemini(blob, apiKey, mime) {
     '{"word":"abandon"}',
   ].join("\n");
 
-  const res = await fetch(cfg.url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: sys },
-          { inline_data: { mime_type: mime || "audio/webm", data: await blobToBase64(blob) } },
-        ],
-      }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0 },
-    }),
+  /* base64化は1度で済ませる。モデルを替えて引き直すたびに録音全体を
+     読み直すのは無駄なので、ループの外で作っておく */
+  const audio = await blobToBase64(blob);
+  const json = await callGeminiMedia(async (model) => {
+    const res = await fetch(`${GEMINI_API_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: sys },
+            { inline_data: { mime_type: mime || "audio/webm", data: audio } },
+          ],
+        }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0 },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new Error(`音声認識エラー (${res.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await res.json();
   try { return JSON.parse(geminiTextFromResponse(json)).word || ""; } catch { return ""; }
 }
 
@@ -3573,7 +3624,7 @@ if (!SpeechRecognitionCtor && !canRecord) {
           } catch (err) {
             console.warn("音声認識に失敗しました:", err);
             resetMic();
-            toast(err.message || "音声認識に失敗しました");
+            toast(`音声認識に失敗しました（${aiErrorMessage(err)}）`);
           }
         };
 
@@ -10897,7 +10948,7 @@ batchPhotoInput.addEventListener("change", async (e) => {
     }
   } catch (err) {
     console.error(err);
-    toast(`画像の読み取りに失敗しました（${err.message}）`);
+    toast(`画像の読み取りに失敗しました（${aiErrorMessage(err)}）`);
   }
   btn.disabled = false;
   progress.style.display = "none";
@@ -11008,7 +11059,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "219";
+const APP_BUILD = "220";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
