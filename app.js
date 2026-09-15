@@ -1434,8 +1434,10 @@ async function isGoroAutoEnabled() {
   return !!(await kvGet("goro_auto", true));
 }
 
-/* 単語ページに「語呂合わせを作る」を出すか。単語ページは同期で描くので、
-   その場で設定を読みに行けない。先に読んで持っておく */
+/* 単語ページに語呂合わせを出すか。オフにすると、作るボタンだけでなく
+   出来上がった語呂も出さない（接辞だけを見たい人のための設定なので、
+   ボタンだけ消しても場所を取るものが残ってしまう）。
+   単語ページは同期で描くので、その場で設定を読みに行けない。先に読んでおく */
 let goroButtonVisible = true;
 async function refreshGoroButtonSetting() {
   goroButtonVisible = !!(await kvGet("goro_button", true));
@@ -3360,7 +3362,7 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
          テキストボックスの自動フォーカスはPC版のみで行う */
       if (window.innerWidth >= 860) document.getElementById("word-input").focus();
     }
-    if (target === "book") { showScreen("screen-book"); renderBookList(); syncBookOnOpen(); }
+    if (target === "book") { clearBookSelection(); showScreen("screen-book"); renderBookList(); syncBookOnOpen(); }
     if (target === "settings") { showScreen("screen-settings"); refreshUsageDisplay(); }
   });
 });
@@ -8604,6 +8606,46 @@ addGoroInput.addEventListener("keydown", (e) => {
 /* ------------------------------------------------------------------ *
  * 10. 単語帳（単語 / 接辞）
  * ------------------------------------------------------------------ */
+/* 選んでいる単語。選ぶ状態に入っているかは、1つでも選ばれているかで決まる
+   （最後の1つを外したらそのまま抜ける） */
+let bookSelection = new Set();
+/* いま一覧に出ている件数。数えの文言を作り直すために覚えておく */
+let bookStatsText = "";
+
+function syncBookSelectionUi() {
+  const selecting = bookSelection.size > 0;
+  const stats = document.getElementById("book-stats");
+  const back = document.getElementById("book-back-btn");
+  const cancel = document.getElementById("book-select-cancel-btn");
+  const add = document.getElementById("batch-entry-btn");
+  const del = document.getElementById("book-select-delete-btn");
+  if (!stats || !back || !cancel || !add || !del) return;
+
+  /* 上の帯は1行のまま。選んでいる間だけ、戻る→やめる、追加→削除に入れ替える */
+  back.hidden = selecting;
+  cancel.hidden = !selecting;
+  add.hidden = selecting;
+  del.hidden = !selecting;
+  stats.textContent = selecting ? `${bookSelection.size}語を選択中` : bookStatsText;
+  stats.classList.toggle("selecting", selecting);
+
+  document.querySelectorAll("#book-list .book-row").forEach((row) => {
+    row.classList.toggle("selected", bookSelection.has(row.dataset.wordId));
+  });
+  document.getElementById("book-list").classList.toggle("selecting", selecting);
+}
+
+function toggleBookSelection(id) {
+  if (bookSelection.has(id)) bookSelection.delete(id);
+  else bookSelection.add(id);
+  syncBookSelectionUi();
+}
+
+function clearBookSelection() {
+  bookSelection.clear();
+  syncBookSelectionUi();
+}
+
 async function renderBookList() {
   const listEl = document.getElementById("book-list");
   listEl.innerHTML = "";
@@ -8613,19 +8655,44 @@ async function renderBookList() {
 
   const memorizedCount = rows.filter((r) => r.memorized).length;
   const memorizedPct = rows.length ? Math.round((memorizedCount / rows.length) * 100) : 0;
-  document.getElementById("book-stats").textContent =
-    `全${rows.length}語 ・ 暗記済み${memorizedCount}（${memorizedPct}%） ・ 未暗記${rows.length - memorizedCount}`;
+  /* 上の帯の中、戻るボタンと追加ボタンの間に収める。割合が出ていれば
+     暗記済みの語数も未暗記の語数も引けば分かるので、語数は出さない */
+  bookStatsText = `${rows.length}語・暗記済${memorizedPct}%`;
 
-  if (!rows.length) { listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`; return; }
+  /* 消えた単語が選ばれたまま残らないようにする */
+  const alive = new Set(rows.map((r) => r.id));
+  [...bookSelection].forEach((id) => { if (!alive.has(id)) bookSelection.delete(id); });
+
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`;
+    syncBookSelectionUi();
+    return;
+  }
   rows.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
-    const row = buildBookRow(title, r.word_phonetic || "", r.word_meaning || "", r.created_at, () => openWordDetail(r, rows), async () => {
-      await deleteWordRecord(r.id);
-      renderBookList();
-    });
+    const row = buildBookRow(r.id, title, r.word_phonetic || "", r.word_meaning || "", r.created_at,
+      () => {
+        /* 選んでいる最中は、開かずに選ぶ／外すだけ */
+        if (bookSelection.size) toggleBookSelection(r.id);
+        else openWordDetail(r, rows);
+      },
+      () => toggleBookSelection(r.id));
     listEl.appendChild(row);
   });
+  syncBookSelectionUi();
 }
+
+document.getElementById("book-select-cancel-btn").addEventListener("click", clearBookSelection);
+
+document.getElementById("book-select-delete-btn").addEventListener("click", async () => {
+  const ids = [...bookSelection];
+  if (!ids.length) return;
+  if (!confirm(`${ids.length}語を単語帳から消します。よろしいですか？`)) return;
+  for (const id of ids) await deleteWordRecord(id);
+  bookSelection.clear();
+  await renderBookList();
+  toast(`${ids.length}語を消しました`);
+});
 
 /* --- CSV出力 / 読み込み（単語帳） --- */
 const CSV_COLUMNS = [
@@ -8767,7 +8834,7 @@ function renderWordDetailGoro(record) {
   const goroList = document.getElementById("word-detail-goro");
   goroList.innerHTML = "";
   const has = !!record.goro_text;
-  if (has) {
+  if (has && goroButtonVisible) {
     const card = document.createElement("div");
     card.className = "goro-card";
     card.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
@@ -8776,10 +8843,10 @@ function renderWordDetailGoro(record) {
   /* 語呂合わせ無しで保存した単語（自動生成をオフにしている場合）は、
      ここから作れるようにする。作り直すアイコンは、直すものがある時だけ */
   const showGenerate = !has && goroButtonVisible;
-  document.getElementById("word-detail-regen-btn").hidden = !has;
+  document.getElementById("word-detail-regen-btn").hidden = !has || !goroButtonVisible;
   document.getElementById("word-detail-goro-generate-btn").hidden = !showGenerate;
   /* 語呂も作るボタンも出ないなら、見出しだけ残しても場所を取るだけ */
-  document.getElementById("word-detail-goro-section").hidden = !has && !showGenerate;
+  document.getElementById("word-detail-goro-section").hidden = !goroButtonVisible || (!has && !showGenerate);
 }
 
 let currentWordDetailRecord = null;
@@ -8989,9 +9056,13 @@ let affixWordsRequestId = 0;
   });
 })();
 
-/* 押すと何かが起きるものの上では、送りに使わない。ここを踏んだタップは
-   そのボタン・カードの仕事 */
-const WORD_DETAIL_INTERACTIVE = "button, a, input, textarea, select, .affix-card, .word-progress";
+/* 押すと何かが起きるもの。指で触った場合は、少し押さえたときだけ働く */
+const WORD_DETAIL_CONTROLS = "button, a, input, textarea, select, .affix-card";
+/* 押さえたと認めるまでの時間。長すぎると押しっぱなしが要るように感じ、
+   短すぎると取り違えが残る */
+const WORD_DETAIL_HOLD_MS = 350;
+let wordDetailPressAt = 0;
+let wordDetailPressByTouch = false;
 
 /* 払ったあとにブラウザがタップを続けて出すことがある。払いで送った直後だけ
    タップを見送る（タップで送った直後は見送らない。続けて叩いて続けて
@@ -9031,20 +9102,38 @@ let wordDetailHadSelection = false;
     if (stepWordDetail(dx < 0 ? 1 : -1)) wordDetailSwipedAt = Date.now();
   }, { passive: true });
 
-  /* 何も無いところを叩いても送れるようにする。右半分で次、左半分で前。
-     払うより気軽で、片手でも押しやすい */
-  screen.addEventListener("pointerdown", () => {
+  /* 叩いて送れるようにする。右半分で次、左半分で前。払うより気軽で、
+     片手でも押しやすい */
+  screen.addEventListener("pointerdown", (e) => {
     const selection = window.getSelection && window.getSelection();
     wordDetailHadSelection = !!(selection && !selection.isCollapsed && String(selection).trim());
-  }, { passive: true });
+    wordDetailPressAt = Date.now();
+    wordDetailPressByTouch = e.pointerType === "touch";
+  }, { passive: true, capture: true });
 
+  /* ボタンや接辞カードの働きより先に受け取る。ページを送るつもりで指が
+     当たっただけなのに別の画面へ飛ばされる、という報告への対応で、
+     指で触った場合は少し押さえたときだけ本来の働きをさせ、短い一押しは
+     ページ送りとして扱う */
   screen.addEventListener("click", (e) => {
     if (Date.now() - wordDetailSwipedAt < 400) return;
     if (wordDetailHadSelection) { wordDetailHadSelection = false; return; }
-    if (e.target.closest && e.target.closest(WORD_DETAIL_INTERACTIVE)) return;
+    /* つまみは引いて使うもの。ここでは触らない */
+    if (e.target.closest && e.target.closest(".word-progress")) return;
+
+    const control = e.target.closest && e.target.closest(WORD_DETAIL_CONTROLS);
+    if (control) {
+      /* マウスの一押しは短いのが当たり前なので、押さえを求めるのは指のときだけ。
+         パソコンでは矢印キーで送れる */
+      const held = Date.now() - wordDetailPressAt >= WORD_DETAIL_HOLD_MS;
+      if (!wordDetailPressByTouch || held) return;
+      /* 本来の働きへ届かせない */
+      e.stopPropagation();
+      e.preventDefault();
+    }
     const box = screen.getBoundingClientRect();
     stepWordDetail(e.clientX < box.left + box.width / 2 ? -1 : 1);
-  });
+  }, true);
 })();
 
 /* パソコンからは指で払えないので、矢印キーでも送れるようにする */
@@ -9118,60 +9207,54 @@ document.getElementById("affix-words-back-btn").addEventListener("click", () => 
   showScreen(affixWordsReturnScreen);
 });
 
-function buildBookRow(title, phonetic, sub, createdAt, onTap, onDelete) {
+/* 長押しで選ぶ状態に入る。押しっぱなしと判断するまでの時間と、
+   ここまで動いたらスクロールとみなす距離 */
+const BOOK_LONGPRESS_MS = 500;
+const BOOK_LONGPRESS_SLOP = 10;
+
+function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
+  wrap.dataset.wordId = id;
   const date = new Date(createdAt);
   const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
   const phoneticHtml = phonetic ? `<span class="phonetic">[${escapeHtml(phonetic)}]</span>` : "";
   const subHtml = sub ? `<div class="g">${escapeHtml(sub)}</div>` : "";
   wrap.innerHTML = `
-    <div class="del-reveal">🗑 削除</div>
     <div class="row-body">
-      <div><div class="w">${escapeHtml(title)}${phoneticHtml}</div>${subHtml}</div>
+      <span class="row-check" aria-hidden="true"></span>
+      <div class="row-text"><div class="w">${escapeHtml(title)}${phoneticHtml}</div>${subHtml}</div>
       <div class="date">${dateStr}</div>
     </div>`;
   const body = wrap.querySelector(".row-body");
 
-  let startX = 0, dx = 0, dragging = false, moved = false;
-  const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
-
-  /* ずらしたまま指やマウスを離すと、行が横にずれて下の赤い「削除」が
-     見えたまま residue として残ってしまう。要素の外で離した場合でも
-     必ず後始末が走るよう、位置を戻す処理は1箇所にまとめて呼ぶ */
-  const resetPosition = () => {
-    dragging = false;
-    dx = 0;
-    body.style.transition = "transform .18s ease";
-    body.style.transform = "translateX(0)";
-  };
+  let timer = null, startX = 0, startY = 0, fired = false;
+  const clear = () => { clearTimeout(timer); timer = null; };
 
   body.addEventListener("pointerdown", (e) => {
-    dragging = true; moved = false; startX = clientX(e);
-    body.style.transition = "none";
-    /* 捕まえておかないと、要素の外で離したときに pointerup が飛んでこず、
-       ずれたままの見た目で固まる */
-    try { body.setPointerCapture(e.pointerId); } catch { /* 未対応でも動く */ }
+    fired = false;
+    startX = e.clientX; startY = e.clientY;
+    timer = setTimeout(() => {
+      fired = true;
+      /* 押し続けて入ったことが指先で分かるように、震わせられる端末では震わせる */
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* 拒否されても困らない */ } }
+      onLongPress();
+    }, BOOK_LONGPRESS_MS);
   });
   body.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    dx = Math.min(0, clientX(e) - startX);
-    if (Math.abs(dx) > 4) moved = true;
-    body.style.transform = `translateX(${dx}px)`;
+    if (!timer) return;
+    /* 一覧を縦に送っているだけの指を、長押しと取り違えない */
+    if (Math.abs(e.clientX - startX) > BOOK_LONGPRESS_SLOP
+      || Math.abs(e.clientY - startY) > BOOK_LONGPRESS_SLOP) clear();
   });
-  body.addEventListener("pointerup", (e) => {
-    if (!dragging) return;
-    const shouldDelete = dx < -80;
-    const wasTap = !moved;
-    try { body.releasePointerCapture(e.pointerId); } catch { /* 未対応でも動く */ }
-    /* 削除でも位置は戻しておく。一覧を描き直せば消えるが、描き直しが
-       失敗したり間に合わなかったときに、ずれた行が残らないようにする */
-    resetPosition();
-    if (shouldDelete) { onDelete(); return; }
-    if (wasTap) onTap();
+  body.addEventListener("pointerup", () => {
+    clear();
+    /* 長押しで入った直後の指離しを、そのまま選択の解除にしない */
+    if (!fired) onTap();
   });
-  /* スクロールに持っていかれた・別のジェスチャに切り替わった場合 */
-  body.addEventListener("pointercancel", resetPosition);
+  body.addEventListener("pointercancel", clear);
+  /* 長押しで出る端末の選択メニューやマウスの右クリックメニューを出さない */
+  body.addEventListener("contextmenu", (e) => e.preventDefault());
   return wrap;
 }
 
@@ -11355,7 +11438,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "235";
+const APP_BUILD = "238";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

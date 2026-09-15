@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#235</span>
+        <span class="build-tag" id="build-tag">#238</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -107,14 +107,15 @@
   <section id="screen-book" class="screen">
     <div class="appbar">
       <div class="appbar-lead">
-        <button class="icon-btn" data-nav="home" title="ホームへ戻る" aria-label="ホームへ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
-        <span class="logo">単語帳</span>
+        <button class="icon-btn" id="book-back-btn" data-nav="home" title="ホームへ戻る" aria-label="ホームへ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+        <button class="icon-btn" id="book-select-cancel-btn" type="button" title="選択をやめる" aria-label="選択をやめる" hidden><svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <span class="book-stats" id="book-stats"></span>
       </div>
       <div class="nav-icons">
         <button class="icon-btn" id="batch-entry-btn" type="button" title="単語をまとめて登録・生成する" aria-label="単語をまとめて登録・生成する"><svg class="icon-svg icon-svg-add" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+        <button class="icon-btn icon-btn-danger" id="book-select-delete-btn" type="button" title="選んだ単語を消す" aria-label="選んだ単語を消す" hidden><svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
       </div>
     </div>
-    <div class="book-stats" id="book-stats"></div>
     <button class="memorize-entry-btn" id="memorize-entry-btn">学習開始</button>
     <div class="memorize-mode-sheet" id="memorize-mode-sheet" style="display:none;">
       <div class="memorize-mode-hint">暗記カードのモードを選択</div>
@@ -270,7 +271,7 @@
     </div>
     <div class="usage-note">語呂合わせの生成はトークン消費が多くなります。</div>
 
-    <div class="section-label" style="margin-top:6px;">単語ページの「語呂合わせを作る」ボタン</div>
+    <div class="section-label" style="margin-top:6px;">単語ページの語呂合わせ</div>
     <div class="provider-row" id="goro-button-row">
       <button class="mode-pill on" data-goro-button="on">表示</button>
       <button class="mode-pill" data-goro-button="off">非表示</button>
