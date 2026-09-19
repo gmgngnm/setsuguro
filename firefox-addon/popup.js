@@ -55,6 +55,7 @@ async function flushKey() {
 }
 
 async function init() {
+  showVersion();
   settings = await loadSettings();
   el.engine.replaceChildren(
     ...ENGINES_INFO.map((info) => {

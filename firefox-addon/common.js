@@ -41,3 +41,12 @@ async function loadSettings() {
      埋めて返ってくる */
   return browser.storage.local.get(SETTINGS_DEFAULTS);
 }
+
+/* いま読み込まれているのがどの版か、設定画面と板の見出しに出す。本体アプリの
+   ビルド番号と同じ役目で、直したつもりが古いままだった、を見分けるためのもの */
+function showVersion() {
+  const el = document.getElementById("version");
+  if (!el) return;
+  const version = browser.runtime.getManifest?.().version;
+  if (version) el.textContent = `v${version}`;
+}
