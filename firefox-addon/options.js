@@ -5,6 +5,7 @@ const el = {
   peek: document.getElementById("peek"),
   model: document.getElementById("model"),
   modelList: document.getElementById("model-list"),
+  engoloydUrl: document.getElementById("engoloyd-url"),
   enabled: document.getElementById("enabled"),
   test: document.getElementById("test"),
   testResult: document.getElementById("test-result"),
@@ -49,6 +50,7 @@ async function init() {
   const settings = await loadSettings();
   el.apiKey.value = settings.apiKey;
   el.model.value = settings.model;
+  el.engoloydUrl.value = settings.engoloydUrl;
   el.enabled.checked = settings.enabled;
   for (const radio of document.querySelectorAll('input[name="trigger"]')) {
     radio.checked = radio.value === settings.trigger;
@@ -73,6 +75,11 @@ el.peek.addEventListener("click", () => {
 el.model.addEventListener("input", () => {
   /* 空のまま保存すると訳せなくなるので、その時は既定へ戻す */
   saveSoon({ model: el.model.value.trim() || SETTINGS_DEFAULTS.model });
+});
+
+el.engoloydUrl.addEventListener("input", () => {
+  /* 空にされたら既定へ戻す。空のままだと「EnGoloydで開く」が行き先を失う */
+  saveSoon({ engoloydUrl: el.engoloydUrl.value.trim() || SETTINGS_DEFAULTS.engoloydUrl });
 });
 
 el.enabled.addEventListener("change", () => {

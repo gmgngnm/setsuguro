@@ -38,6 +38,10 @@ Service Worker はシェル（index.html / app.js / styles.css など）をHTTP�
 直したら `manifest.json` の `version` を上げる。ビルド番号のような表示は無いので、
 `about:debugging` で読み込み直したものかどうかはここで見分ける。
 
+アドオンは英単語を一語だけ選んだとき `index.html?w=単語` で本体アプリを開く。
+それを受ける口が `app.js` の `startDecomposeFromQuery`。アドオン側の唯一の
+繋ぎ目なので、消すなら向こうの「EnGoloydで開く」も一緒に外すこと。
+
 ## 確認のしかた
 
 テストは Playwright で、実際に画面を動かして確かめる。作業用のファイルは

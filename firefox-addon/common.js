@@ -11,6 +11,10 @@ const SETTINGS_DEFAULTS = {
      自動は手数が要らない代わりに、選び直すたびにAPIを叩く */
   trigger: "auto",
   enabled: true,
+  /* 単語を一語だけ選んだときに出る「EnGoloydで開く」の飛び先。既定は
+     GitHub Pages に置いてある本体アプリ。自分で配る場所が違う人もいるので
+     設定から差し替えられる */
+  engoloydUrl: "https://gmgngnm.github.io/setsuguro/",
 };
 
 async function loadSettings() {

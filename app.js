@@ -11469,17 +11469,32 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "240";
+const APP_BUILD = "241";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
   if (el) el.textContent = `#${APP_BUILD}`;
 }
 
+/* Firefoxアドオン「選んで訳す」から ?w=単語 で開かれる。開いた勢いのまま
+   分解に入れるようにしておく */
+function startDecomposeFromQuery() {
+  const word = new URLSearchParams(location.search).get("w");
+  if (!word) return;
+  /* 付けたまま残すと、ホーム画面に置いたPWAを開き直すたびに同じ語で走る
+     （そのたびAPIを叩く）。読み取ったらURLから外す */
+  history.replaceState({}, "", location.pathname + location.hash);
+  wordInput.value = word;
+  startDecompose(word);
+}
+
 renderRecentChips();
 applyThemeMode();
 /* 保存値の読み替えは、それを読む処理より先に済ませておく */
-migrateToGeminiOnce().then(() => migrateTtsSpeakerDefaultOnce());
+migrateToGeminiOnce()
+  .then(() => migrateTtsSpeakerDefaultOnce())
+  /* 読み替えの前に走らせると、providerが古い名前のままキーを探しに行く */
+  .then(startDecomposeFromQuery);
 restoreCloudSession();
 refreshBuildTag();
 refreshGeminiKeyAvailability();

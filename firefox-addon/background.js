@@ -176,6 +176,27 @@ async function listModels() {
   }
 }
 
+/* 一語だけ選んだときに出る「EnGoloydで開く」。本体アプリは ?w=単語 で開くと
+   そのまま分解に入る */
+async function openEngoloyd(word) {
+  const clean = String(word || "").trim();
+  if (!clean) return { ok: false, message: "単語が空でした" };
+  const settings = await loadSettings();
+  let url;
+  try {
+    url = new URL((settings.engoloydUrl || SETTINGS_DEFAULTS.engoloydUrl).trim());
+  } catch {
+    return { ok: false, message: "EnGoloyd の場所が正しくありません。設定を確かめてください", showSettings: true };
+  }
+  /* 設定に何を書かれても、開くのはウェブのページだけにしておく */
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return { ok: false, message: "EnGoloyd の場所は http(s) で書いてください", showSettings: true };
+  }
+  url.searchParams.set("w", clean);
+  await browser.tabs.create({ url: url.toString() });
+  return { ok: true, url: url.toString() };
+}
+
 browser.runtime.onMessage.addListener((msg) => {
   if (!msg || typeof msg !== "object") return undefined;
   switch (msg.type) {
@@ -187,6 +208,8 @@ browser.runtime.onMessage.addListener((msg) => {
       return translate(String(msg.text || ""), { bypassCache: true });
     case "models":
       return listModels();
+    case "open-engoloyd":
+      return openEngoloyd(msg.word);
     case "open-options":
       browser.runtime.openOptionsPage();
       return Promise.resolve({ ok: true });
@@ -195,20 +218,22 @@ browser.runtime.onMessage.addListener((msg) => {
   }
 });
 
-/* ツールバーの釦は入切の札。止めているのが見て分かるように印を付ける */
+/* 入れた直後は、APIキーをどこに入れるのか分からないまま止まってしまう。
+   最初の一度だけ設定画面を開いて、入り口を見せる */
+browser.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") browser.runtime.openOptionsPage();
+});
+
+/* ツールバーの釦を押すと出る板に入切がある。止めているのが見て分かるよう印を付ける */
 async function applyBadge() {
   const { enabled } = await loadSettings();
   await browser.browserAction.setBadgeText({ text: enabled ? "" : "切" });
   await browser.browserAction.setBadgeBackgroundColor({ color: "#C74B3F" });
+  /* 釦を押すと板が出るので、押して何が起きるかではなく、いまの状態を書く */
   await browser.browserAction.setTitle({
-    title: enabled ? "選んで訳す（動作中）— 押すと止める" : "選んで訳す（停止中）— 押すと動かす",
+    title: enabled ? "選んで訳す（動作中）" : "選んで訳す（停止中）— 押して「動かす」を入れる",
   });
 }
-
-browser.browserAction.onClicked.addListener(async () => {
-  const { enabled } = await loadSettings();
-  await browser.storage.local.set({ enabled: !enabled });
-});
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.enabled) applyBadge();

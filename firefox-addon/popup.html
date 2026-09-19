@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>選んで訳す</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body class="popup">
+<header class="pop-head">
+  <img src="icons/icon.svg" width="26" height="26" alt="">
+  <b>選んで訳す</b>
+  <label class="pop-switch">
+    <input type="checkbox" id="enabled">
+    <span>動かす</span>
+  </label>
+</header>
+
+<label class="pop-label" for="api-key">Gemini のAPIキー</label>
+<div class="row">
+  <input id="api-key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
+  <button id="peek" class="ghost" type="button">表示</button>
+</div>
+<p id="key-note" class="help" role="status" aria-live="polite"></p>
+
+<button id="more" class="ghost wide" type="button">くわしい設定</button>
+
+<script src="common.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

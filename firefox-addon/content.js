@@ -50,7 +50,7 @@ const BUBBLE_CSS = `
 }
 .body.err{font-size:13.5px; color:#C74B3F;}
 .body.wait{color:#7C897E;}
-.foot{display:flex; align-items:center; gap:6px; margin-top:8px;}
+.foot{display:flex; flex-wrap:wrap; align-items:center; gap:6px; row-gap:6px; margin-top:8px;}
 .foot[hidden]{display:none;}
 .act{
   flex:none; padding:3px 10px;
@@ -106,10 +106,14 @@ function buildBubble() {
     ask: make("button", { className: "act ask", type: "button", textContent: "訳す", hidden: true }),
     copy: make("button", { className: "act copy", type: "button", textContent: "コピー", hidden: true }),
     retry: make("button", { className: "act retry", type: "button", textContent: "もう一度", hidden: true }),
+    engoloyd: make("button", {
+      className: "act engoloyd", type: "button", textContent: "EnGoloydで開く",
+      title: "EnGoloyd で接辞に分解して覚える", hidden: true,
+    }),
     settings: make("button", { className: "act settings", type: "button", textContent: "設定を開く", hidden: true }),
     note: make("span", { className: "note" }),
   };
-  parts.foot = make("div", { className: "foot" }, parts.ask, parts.copy, parts.retry, parts.settings, parts.note);
+  parts.foot = make("div", { className: "foot" }, parts.ask, parts.copy, parts.retry, parts.engoloyd, parts.settings, parts.note);
   parts.bubble = make(
     "div",
     { className: "bubble", role: "status", "aria-live": "polite", hidden: true },
@@ -127,6 +131,8 @@ let ui = null;
    ページをスクロールしても文に付いて回れる */
 let anchor = null;
 let shownText = "";
+/* 選んだのが英単語一語のときだけ、その語。EnGoloyd へ渡せる形に整えてある */
+let shownWord = "";
 let translation = "";
 /* 選び直した後に古い応答が返ってきて、新しい吹き出しを上書きするのを防ぐ */
 let seq = 0;
@@ -189,6 +195,11 @@ function ensureUI() {
     hide();
   });
   ui.copy.addEventListener("click", copyTranslation);
+  ui.engoloyd.addEventListener("click", () => {
+    const word = shownWord;
+    hide();
+    browser.runtime.sendMessage({ type: "open-engoloyd", word });
+  });
 
   return ui;
 }
@@ -222,6 +233,14 @@ function readSelection(target) {
   if (!text.trim()) return null;
   const range = selection.getRangeAt(0).cloneRange();
   return { text, rectOf: () => range.getBoundingClientRect() };
+}
+
+/* 英単語を一語だけ選んだときは、本体アプリで覚える方へも行けるようにする。
+   「library.」のように句読点ごと選んでも拾えるよう端を削り、EnGoloyd が
+   受け取れる形（英字とアポストロフィ・ハイフンだけ）に合うものだけ返す */
+function wordOf(text) {
+  const bare = text.replace(/^[^A-Za-z]+/, "").replace(/[^A-Za-z]+$/, "");
+  return /^[A-Za-z][A-Za-z'-]*$/.test(bare) ? bare : "";
 }
 
 /* 押しただけ・記号だけ・元から日本語、で吹き出しが出ると邪魔でしかない */
@@ -311,8 +330,11 @@ function render({ kind, message = "", note = "" }) {
   ui.ask.hidden = kind !== "ask";
   ui.copy.hidden = kind !== "ok";
   ui.retry.hidden = kind !== "error" && kind !== "ok";
+  /* 訳が出せなかったときでも、単語なら本体アプリへは行ける */
+  ui.engoloyd.hidden = !shownWord;
   ui.settings.hidden = !(kind === "error" && showSettingsFlag);
-  ui.foot.hidden = ui.ask.hidden && ui.copy.hidden && ui.retry.hidden && ui.settings.hidden && !note;
+  ui.foot.hidden =
+    ui.ask.hidden && ui.copy.hidden && ui.retry.hidden && ui.engoloyd.hidden && ui.settings.hidden && !note;
 
   ui.bubble.hidden = false;
   place();
@@ -324,6 +346,7 @@ function hide() {
   seq += 1;
   anchor = null;
   shownText = "";
+  shownWord = "";
   translation = "";
   if (ui) ui.bubble.hidden = true;
 }
@@ -386,6 +409,7 @@ function handleSelection(target) {
 
   anchor = picked;
   shownText = text;
+  shownWord = wordOf(text);
   translation = "";
   showSettingsFlag = false;
 
