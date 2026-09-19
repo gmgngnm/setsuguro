@@ -70,6 +70,7 @@ async function fillModelList() {
 }
 
 async function init() {
+  showVersion();
   const settings = await loadSettings();
   for (const { info, input } of keyInputs) input.value = settings[info.keyField];
   el.model.value = settings.model;
