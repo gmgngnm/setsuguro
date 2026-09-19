@@ -353,10 +353,15 @@ browser.runtime.onMessage.addListener((msg) => {
   }
 });
 
-/* 入れた直後は、APIキーをどこに入れるのか分からないまま止まってしまう。
-   最初の一度だけ設定画面を開いて、入り口を見せる */
-browser.runtime.onInstalled.addListener((details) => {
-  if (details.reason === "install") browser.runtime.openOptionsPage();
+/* 鍵が無いままでは何も訳せないのに、入り口が奥にあって見つからない。入れた
+   ときも入れ直したときも、選んでいる相手の鍵がまだ無ければ設定画面を開く。
+   鍵が入っているなら黙っている（読み込み直すたびに開くのは邪魔なので） */
+browser.runtime.onInstalled.addListener(async () => {
+  const settings = await loadSettings();
+  const engine = pickEngine(settings);
+  if (!String(settings[engine.keyField] || "").trim()) {
+    browser.runtime.openOptionsPage();
+  }
 });
 
 /* ツールバーの釦を押すと出る板に入切がある。止めているのが見て分かるよう印を付ける */
