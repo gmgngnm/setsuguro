@@ -1,40 +1,46 @@
 # 選んで訳す（Firefox アドオン）
 
 ページの英文をマウスでなぞって選ぶと、その場に日本語訳の吹き出しが出る。
-訳は Google の Gemini に頼む。EnGoloyd 本体とは別物で、APIキーだけを同じ流儀で使う。
+英単語を一語だけ選んだときは、EnGoloyd 本体へ飛んでそのまま分解に入れる。
+
+## 前提
+
+Firefox 142 以降（Android 版を含めた下限）。何を外に出すのかを申告する
+`data_collection_permissions`（選んだ本文を訳す相手へ送る、という申告）が
+そこから入ったため、下限をそこに合わせてある。
 
 ## 入れ方（自分の Firefox で試す）
 
 1. Firefox で `about:debugging#/runtime/this-firefox` を開く
 2. 「一時的なアドオンを読み込む…」を押し、この `firefox-addon/manifest.json` を選ぶ
-3. 読み込むと設定画面が自動で開くので、そこに Gemini のAPIキーを入れる
+3. 読み込むと設定画面が自動で開くので、訳す相手を選んでAPIキーを入れる
    （閉じてしまっても、ツールバーのアイコンを押せば同じ欄が出る）
 
-この入れ方だと Firefox を閉じるまでの命。ずっと使うなら
-[AMO で署名](https://addons.mozilla.org/developers/) して入れるか、
-Developer Edition / Nightly で `xpinstall.signatures.required` を外す。
+この入れ方だと Firefox を閉じるまでの命。ずっと使うなら次の「入れ直すのが面倒な
+とき」を見る。
 
-zip に固める場合は、`firefox-addon/` の**中身**を固める（フォルダごとではない）。
+## 訳す相手とAPIキー
 
-```
-cd firefox-addon && zip -r -FS ../select-to-ja.xpi . -x '*.md'
-```
+三択。鍵は相手ごとに別に覚えているので、行き来しても入れ直しは要らない。
 
-## APIキーはどこで入れるか
+| 相手 | 鍵の取り方 | 向き |
+| --- | --- | --- |
+| Gemini | [Google AI Studio](https://aistudio.google.com/apikey) | 翻訳専用ではない分、語の意味を汲んだ訳になる。モデルも選べる |
+| DeepL | [DeepL API](https://www.deepl.com/pro-api) | 翻訳専用。無料枠のあるプランがある。末尾が `:fx` の鍵は無料版の宛先へ送る |
+| Google翻訳 | [Google Cloud の認証情報](https://console.cloud.google.com/apis/credentials)（Cloud Translation API を有効にしてから） | 翻訳専用。速い |
 
-二か所どちらでも入る。中身は同じ設定。
+入れる場所は二か所あり、中身は同じ設定。
 
-- **ツールバーのアイコンを押す** → 小さな板が出る。鍵の欄と入切だけがある。
+- **ツールバーのアイコンを押す** → 小さな板が出る。相手の選択と鍵の欄と入切だけ。
   読んでいるページを離れずに入れられる
 - **その板の「くわしい設定」** → 設定画面。モデル、訳すきっかけ、EnGoloyd の
   場所まで触れる（`about:addons` の歯車からも開ける）
 
-鍵は Google AI Studio で作る。この端末の `storage.local` にだけ入り、Gemini
-以外には送らない。
+鍵はこの端末の `storage.local` にだけ入り、選んだ相手以外には送らない。
 
 ## 使い方
 
-- 英文をマウスで選ぶ → 下に吹き出しが出て訳が入る
+- 英文をマウスで選ぶ → 下に吹き出しが出て訳が入る。右下に何で訳したかが小さく出る
 - `Esc` かページの余白を押すと閉じる。× でも閉じる
 - 「コピー」で訳文だけを写し取る。「もう一度」は覚えている訳を使わず訳し直す
 - **英単語を一語だけ選んだときは「EnGoloydで開く」が出る**。押すと本体アプリが
@@ -52,32 +58,66 @@ cd firefox-addon && zip -r -FS ../select-to-ja.xpi . -x '*.md'
 
 | 項目 | 既定 | 何のためか |
 | --- | --- | --- |
-| APIキー | 空 | Gemini を呼ぶための鍵。この端末の `storage.local` にだけ入る |
-| モデル | `gemini-3.7-flash` | 本体アプリと同じ既定。キーを入れると候補が出る |
+| 翻訳に使うもの | Gemini | Gemini / DeepL / Google翻訳 |
+| APIキー | 空 | 相手ごとに別に持つ |
+| モデル | `gemini-3.7-flash` | Gemini のときだけ使う。本体アプリと同じ既定 |
 | 訳すきっかけ | 選んだらすぐ | 「訳す」を押したときだけ、にもできる |
 | EnGoloyd の場所 | `https://gmgngnm.github.io/setsuguro/` | 「EnGoloydで開く」の飛び先。自分で配っている場所が違うなら書き換える |
 | 動作 | 入 | ツールバーの板と同じ札 |
+
+## 入れ直すのが面倒なとき
+
+直すたびに `about:debugging` で読み込み直すのは、手順としては最後の手段。
+
+**1. 直しながら試すなら `web-ext`**（Node が要る）
+
+```
+npx web-ext run --source-dir firefox-addon
+```
+
+専用の Firefox が立ち上がり、**ファイルを保存するたびに勝手に読み込み直す**。
+`about:debugging` を触らなくてよくなる。
+
+**2. 普段使いの Firefox に入れたままにするなら署名する**
+
+AMO で「自分にだけ配る」署名（unlisted）を取れば、更新を自動で受け取れる。
+
+```
+npx web-ext sign --source-dir firefox-addon --channel unlisted \
+  --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+```
+
+（鍵は https://addons.mozilla.org/developers/addon/api/key/ で作る）
+出来上がった `.xpi` を GitHub Pages などに置き、`manifest.json` に
+`browser_specific_settings.gecko.update_url` を足して更新情報のJSONを指せば、
+以降は Firefox が自分で新しい版を拾いに行く。
+
+**3. それまでの間**
+
+`git pull` して `about:debugging` の「再読み込み」を押すだけでよい。
+zip を落としてくる必要は無い。
 
 ## 中身
 
 | ファイル | 役目 |
 | --- | --- |
 | `content.js` | ページ側。選択を拾い、影(Shadow DOM)の中に吹き出しを描く |
-| `background.js` | 裏方。Gemini を呼び、直近の訳を覚えておく |
-| `common.js` | 設定の既定値。3か所から同じ物を読むためのもの |
-| `popup.html/.js` | ツールバーの釦から出る板。鍵と入切だけ |
+| `background.js` | 裏方。訳す相手を呼び、直近の訳を覚えておく |
+| `common.js` | 設定の既定値と、相手と鍵の対応表。4か所から同じ物を読むためのもの |
+| `popup.html/.js` | ツールバーの釦から出る板。相手と鍵と入切だけ |
 | `options.html/.js/.css` | 設定画面（板と同じ `options.css` を使う） |
 
-Gemini を呼ぶのは裏方だけにしてある。ページ側から直に呼ぶと、ページごとの
+訳す相手を呼ぶのは裏方だけにしてある。ページ側から直に呼ぶと、ページごとの
 CSP（外部への通信の禁止）に引っかかる上、APIキーが読んでいるページと同じ場所に
-置かれることになるため。
+置かれることになるため。相手は `background.js` の `ENGINES` に一つ足せば増える。
 
 単語を EnGoloyd へ渡すのも裏方の仕事。飛び先は設定から差し替えられるが、
 開くのは http(s) のページだけに限ってある。
 
 吹き出しは閉じた Shadow DOM の中に作る。ページのCSSに崩されず、こちらの見た目も
-ページへ漏らさないため。ページから拾った文は「訳す素材」として目印で囲んで渡し、
-本文中の指示めいた文をモデルが真に受けないようにしている。
+ページへ漏らさないため。Gemini に渡すときはページから拾った文を目印で囲い、
+本文中の指示めいた文を真に受けないようにしている（DeepL と Google翻訳は文章を
+指示として読まないので、その囲みは要らない）。
 
 ### マニフェストは v2
 
@@ -86,15 +126,9 @@ Firefox の MV3 では `host_permissions` が入れた時点では許可され�
 v2 にしてある（Firefox は v2 を今も受け付ける）。v3 に移すときは、許可を求める
 導線を設定画面に足すこと。
 
-## 前提
-
-Firefox 142 以降（Android 版を含めた下限）。何を外に出すのかを申告する
-`data_collection_permissions`（選んだ本文を Gemini へ送る、という申告）が
-そこから入ったため、下限をそこに合わせてある。
-
 ## 直したら
 
 - `manifest.json` の `version` を上げる
 - Playwright で確かめる。作業用のファイルはリポジトリに入れず、スクラッチ領域へ置く
   （やり方は本体の `CLAUDE.md` に合わせる。Chromium に `browser.*` の代わりを
-  差し込み、Gemini は `page.route` で差し替える）
+  差し込み、訳す相手は `page.route` で差し替える）

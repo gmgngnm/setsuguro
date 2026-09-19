@@ -16,30 +16,72 @@
   </header>
 
   <section class="card">
+    <h2>翻訳に使うもの</h2>
+    <p class="help">どれか一つ。鍵はそれぞれ別に覚えているので、行き来しても入れ直しは要りません。</p>
+    <label class="choice">
+      <input type="radio" name="engine" value="gemini">
+      <span><b>Gemini</b><small>翻訳専用ではない分、語の意味を汲んだ訳になる。モデルも選べる</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="engine" value="deepl">
+      <span><b>DeepL</b><small>翻訳専用。無料枠のあるプランがある</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="engine" value="google">
+      <span><b>Google翻訳</b><small>翻訳専用。速い。Cloud Translation API の鍵が要る</small></span>
+    </label>
+  </section>
+
+  <section class="card" data-engine="gemini">
     <h2>Gemini のAPIキー</h2>
     <p class="help">
-      訳は Google の Gemini に頼みます。キーは
+      キーは
       <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>
-      で作れます。キーはこの端末の中だけに保存され、Gemini 以外には送りません。
+      で作れます。キーはこの端末の中だけに保存され、訳す相手以外には送りません。
     </p>
     <div class="row">
       <input id="api-key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
-      <button id="peek" class="ghost" type="button">表示</button>
+      <button class="ghost peek" type="button" data-for="api-key">表示</button>
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" data-engine="gemini">
     <h2>モデル</h2>
     <p class="help">迷ったらそのままで構いません。キーを入れると、使えるモデルが候補に出ます。</p>
     <input id="model" list="model-list" spellcheck="false" autocomplete="off">
     <datalist id="model-list"></datalist>
   </section>
 
+  <section class="card" data-engine="deepl">
+    <h2>DeepL のAPIキー</h2>
+    <p class="help">
+      <a href="https://www.deepl.com/pro-api" target="_blank" rel="noreferrer">DeepL API</a>
+      の認証キー。末尾が <code>:fx</code> の鍵は無料プランのものとして、無料版の宛先に送ります。
+    </p>
+    <div class="row">
+      <input id="deepl-key" type="password" placeholder="xxxxxxxx-xxxx-...:fx" autocomplete="off" spellcheck="false">
+      <button class="ghost peek" type="button" data-for="deepl-key">表示</button>
+    </div>
+  </section>
+
+  <section class="card" data-engine="google">
+    <h2>Google翻訳のAPIキー</h2>
+    <p class="help">
+      Google Cloud で Cloud Translation API を有効にしてから、
+      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">認証情報</a>
+      で作ったAPIキー。
+    </p>
+    <div class="row">
+      <input id="google-key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
+      <button class="ghost peek" type="button" data-for="google-key">表示</button>
+    </div>
+  </section>
+
   <section class="card">
     <h2>訳すきっかけ</h2>
     <label class="choice">
       <input type="radio" name="trigger" value="auto">
-      <span><b>選んだらすぐ訳す</b><small>手数は要らないが、選び直すたびに Gemini を呼ぶ</small></span>
+      <span><b>選んだらすぐ訳す</b><small>手数は要らないが、選び直すたびに呼ぶ</small></span>
     </label>
     <label class="choice">
       <input type="radio" name="trigger" value="button">

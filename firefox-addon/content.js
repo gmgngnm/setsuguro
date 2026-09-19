@@ -374,7 +374,7 @@ async function startTranslate(text, { fresh = false } = {}) {
 
   if (res && res.ok) {
     translation = res.translation;
-    render({ kind: "ok", note: res.cached ? "覚えていた訳" : res.model || "" });
+    render({ kind: "ok", note: res.cached ? "覚えていた訳" : res.via || "" });
   } else {
     showSettingsFlag = Boolean(res && res.showSettings);
     render({ kind: "error", message: (res && res.message) || "訳せませんでした" });

@@ -4,6 +4,25 @@
    叩くと、ページごとのCSP（外部への通信の禁止）に引っかかる上、APIキーが
    ページと同じ場所に置かれることになる */
 
+async function extractErrorDetail(res) {
+  try {
+    const json = await res.json();
+    return json.error?.message || json.message || "";
+  } catch {
+    return "";
+  }
+}
+
+async function httpError(res) {
+  const detail = await extractErrorDetail(res);
+  return Object.assign(new Error(detail || `HTTP ${res.status}`), { status: res.status, detail });
+}
+
+/* ------------------------------------------------------------------ *
+ * 1. Gemini
+ *    翻訳専用ではない分、語の意味を汲んだ訳になる。代わりに「訳文だけ
+ *    返す」ことは言い聞かせないと守られない
+ * ------------------------------------------------------------------ */
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 /* 訳文だけを返させる。前置きや原文の再掲が混じると、狭い吹き出しの一行目が
@@ -18,38 +37,10 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 /* ページから拾った文には「これまでの指示を無視して…」の類が紛れ込みうる。
-   訳す範囲を目印で囲い、どこからどこまでが素材かをはっきりさせる */
+   訳す範囲を目印で囲い、どこからどこまでが素材かをはっきりさせる。
+   DeepL と Google翻訳は文章を指示として読まないので、この囲みは要らない */
 function buildUserPrompt(text) {
   return `次の <<<TEXT>>> と <<</TEXT>>> に挟まれた部分を訳してください。\n<<<TEXT>>>\n${text}\n<<</TEXT>>>`;
-}
-
-/* 同じ語を選び直すたびに課金されるのは馬鹿らしいので、直近の結果を覚えておく。
-   裏方が眠ると消えるが、そのとき困るのは一度余分に呼ぶことだけ */
-const CACHE_MAX = 300;
-const cache = new Map();
-function cacheKey(model, text) {
-  return `${model}\n${text}`;
-}
-function cacheGet(key) {
-  if (!cache.has(key)) return null;
-  const value = cache.get(key);
-  /* 取り出したものを入れ直して、よく使う物が押し出されないようにする */
-  cache.delete(key);
-  cache.set(key, value);
-  return value;
-}
-function cacheSet(key, value) {
-  cache.set(key, value);
-  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
-}
-
-async function extractErrorDetail(res) {
-  try {
-    const json = await res.json();
-    return json.error?.message || json.message || "";
-  } catch {
-    return "";
-  }
 }
 
 /* 思考するモデルは、本文の前に thought:true の内訳を混ぜて返すことがある。
@@ -74,53 +65,174 @@ function geminiTextFromResponse(json) {
    ましなので、その時だけ指定を外して一度やり直す（本体アプリと同じ考え方） */
 let thinkingSupported = true;
 
-async function callGemini(text, model, apiKey) {
-  const generationConfig = { temperature: 0.2 };
-  /* 訳は知識を引き出して並べ替える作業で、長く考えてもらっても待ち時間が
-     増えるだけ。選んだそばから出ることの方が効く */
-  if (thinkingSupported) generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
+/* ------------------------------------------------------------------ *
+ * 2. Google翻訳（Cloud Translation v2）
+ * ------------------------------------------------------------------ */
+const NAMED_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
-  const res = await fetch(`${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ role: "user", parts: [{ text: buildUserPrompt(text) }] }],
-      generationConfig,
-    }),
-  });
-
-  if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    if (res.status === 400 && generationConfig.thinkingConfig && /thinking/i.test(detail)) {
-      console.warn("このモデルは思考レベルの指定を受け付けないため、指定なしでやり直します:", detail);
-      thinkingSupported = false;
-      return callGemini(text, model, apiKey);
+/* Google は format:"text" で頼んでも「&#39;」のような実体参照を混ぜて返す
+   ことがある。そのまま出すと吹き出しに記号が並ぶので戻す */
+function decodeEntities(text) {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
+    if (body[0] === "#") {
+      const hex = body[1] === "x" || body[1] === "X";
+      const code = parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
+      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole;
+      return String.fromCodePoint(code);
     }
-    throw Object.assign(new Error(detail || `HTTP ${res.status}`), { status: res.status, detail });
-  }
-
-  return geminiTextFromResponse(await res.json()).trim();
+    const named = NAMED_ENTITIES[body.toLowerCase()];
+    return named === undefined ? whole : named;
+  });
 }
 
-/* 失敗の中身は吹き出しの中に一行で出る。何をすれば直るのかまで書く */
-function describeFailure(err) {
+/* ------------------------------------------------------------------ *
+ * 3. 訳す相手の一覧
+ *    増やすときはここに一つ足せば、設定画面も吹き出しもそのまま動く。
+ *    translate は訳文を返すか、status を持たせた例外を投げる
+ * ------------------------------------------------------------------ */
+const ENGINES = {
+  gemini: {
+    label: "Gemini",
+    keyField: "apiKey",
+    /* 同じ文でもモデルが違えば別の訳。覚えておく鍵に混ぜる */
+    variant: (settings) => (settings.model || SETTINGS_DEFAULTS.model).trim().replace(/^models\//, ""),
+    async translate(text, apiKey, settings) {
+      const model = this.variant(settings);
+      const generationConfig = { temperature: 0.2 };
+      /* 訳は知識を引き出して並べ替える作業で、長く考えてもらっても待ち時間が
+         増えるだけ。選んだそばから出ることの方が効く */
+      if (thinkingSupported) generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
+
+      const res = await fetch(`${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts: [{ text: buildUserPrompt(text) }] }],
+          generationConfig,
+        }),
+      });
+      if (!res.ok) {
+        const err = await httpError(res);
+        if (res.status === 400 && generationConfig.thinkingConfig && /thinking/i.test(err.detail)) {
+          console.warn("このモデルは思考レベルの指定を受け付けないため、指定なしでやり直します:", err.detail);
+          thinkingSupported = false;
+          return this.translate(text, apiKey, settings);
+        }
+        throw err;
+      }
+      return geminiTextFromResponse(await res.json()).trim();
+    },
+    describe(status, detail, settings) {
+      if (status === 400 && /API[_ ]?key/i.test(detail)) {
+        return { message: "APIキーが正しくないようです。設定を確かめてください", showSettings: true };
+      }
+      if (status === 404) {
+        return {
+          message: `モデル「${this.variant(settings)}」が見つかりません。設定でモデル名を確かめてください`,
+          showSettings: true,
+        };
+      }
+      return null;
+    },
+  },
+
+  deepl: {
+    label: "DeepL",
+    keyField: "deeplKey",
+    variant: () => "",
+    async translate(text, authKey) {
+      /* 無料版と有料版で宛先が違う。鍵の末尾 :fx が無料版の印で、公式の
+         クライアントも同じ見分け方をしている */
+      const host = authKey.endsWith(":fx") ? "https://api-free.deepl.com" : "https://api.deepl.com";
+      const body = new URLSearchParams();
+      body.append("text", text);
+      body.append("target_lang", "JA");
+      /* source_lang は指定しない。英語のつもりで選んだ文が実は別の言語、
+         ということがあるので、向こうに見分けさせる */
+      const res = await fetch(`${host}/v2/translate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `DeepL-Auth-Key ${authKey}`,
+        },
+        body: body.toString(),
+      });
+      if (!res.ok) throw await httpError(res);
+      const json = await res.json();
+      const out = (json?.translations || [])
+        .map((t) => (t && typeof t.text === "string" ? t.text : ""))
+        .join("\n")
+        .trim();
+      if (!out) throw new Error("DeepL が訳文を返しませんでした");
+      return out;
+    },
+    describe(status) {
+      if (status === 403) {
+        return { message: "DeepL にAPIキーを拒まれました。設定を確かめてください", showSettings: true };
+      }
+      /* DeepL は上限切れを 456 という独自の番号で返す */
+      if (status === 456) {
+        return { message: "DeepL の今期の上限に達しました" };
+      }
+      return null;
+    },
+  },
+
+  google: {
+    label: "Google翻訳",
+    keyField: "googleKey",
+    variant: () => "",
+    async translate(text, apiKey) {
+      const url = new URL("https://translation.googleapis.com/language/translate/v2");
+      url.searchParams.set("key", apiKey);
+      const res = await fetch(url.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        /* source を書かないと向こうが元の言語を見分ける。format:"text" は
+           ページから拾った記号を目印として解釈させないため */
+        body: JSON.stringify({ q: text, target: "ja", format: "text" }),
+      });
+      if (!res.ok) throw await httpError(res);
+      const json = await res.json();
+      const out = json?.data?.translations?.[0]?.translatedText;
+      if (!out || !out.trim()) throw new Error("Google翻訳が訳文を返しませんでした");
+      return decodeEntities(out).trim();
+    },
+    describe(status, detail) {
+      if (status === 400 && /API[_ ]?key/i.test(detail)) {
+        return { message: "APIキーが正しくないようです。設定を確かめてください", showSettings: true };
+      }
+      if (status === 403) {
+        return {
+          message: "Google にAPIキーを拒まれました。Cloud Translation API が有効か、キーの制限を確かめてください",
+          showSettings: true,
+        };
+      }
+      return null;
+    },
+  },
+};
+
+function pickEngine(settings) {
+  return ENGINES[settings.engine] || ENGINES[SETTINGS_DEFAULTS.engine];
+}
+
+/* 失敗の中身は吹き出しの中に一行で出る。何をすれば直るのかまで書く。
+   相手ごとの言い分を先に見て、無ければどの相手でも同じ言い方に落とす */
+function describeFailure(engine, err, settings) {
   const status = err?.status;
   const detail = err?.detail || "";
-  if (status === 400 && /API[_ ]?key/i.test(detail)) {
-    return { message: "APIキーが正しくないようです。設定を確かめてください", showSettings: true };
-  }
+  const own = engine.describe ? engine.describe(status, detail, settings) : null;
+  if (own) return own;
   if (status === 401 || status === 403) {
-    return { message: "APIキーが拒まれました。設定を確かめてください", showSettings: true };
-  }
-  if (status === 404) {
-    return { message: `モデル「${err.model || ""}」が見つかりません。設定でモデル名を確かめてください`, showSettings: true };
+    return { message: `${engine.label} にAPIキーを拒まれました。設定を確かめてください`, showSettings: true };
   }
   if (status === 429) {
-    return { message: "Gemini が混み合っているか、無料枠の上限に当たりました。少し待ってからもう一度" };
+    return { message: `${engine.label} が混み合っているか、上限に当たりました。少し待ってからもう一度` };
   }
   if (status >= 500) {
-    return { message: `Gemini 側で不具合が起きています (${status})。少し待ってからもう一度` };
+    return { message: `${engine.label} 側で不具合が起きています (${status})。少し待ってからもう一度` };
   }
   if (err instanceof TypeError) {
     /* fetch が例外で落ちるのは、ほぼ回線かブロッカーの類 */
@@ -129,33 +241,56 @@ function describeFailure(err) {
   return { message: err?.message || "訳せませんでした" };
 }
 
+/* ------------------------------------------------------------------ *
+ * 4. 覚えておく
+ *    同じ語を選び直すたびに課金されるのは馬鹿らしいので、直近の結果を
+ *    覚えておく。裏方が眠ると消えるが、そのとき困るのは一度余分に呼ぶ
+ *    ことだけ
+ * ------------------------------------------------------------------ */
+const CACHE_MAX = 300;
+const cache = new Map();
+function cacheGet(key) {
+  if (!cache.has(key)) return null;
+  const value = cache.get(key);
+  /* 取り出したものを入れ直して、よく使う物が押し出されないようにする */
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+function cacheSet(key, value) {
+  cache.set(key, value);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
+
 async function translate(text, { bypassCache = false } = {}) {
   const settings = await loadSettings();
-  if (!settings.apiKey) {
-    return { ok: false, message: "Gemini のAPIキーがまだ入っていません", showSettings: true };
+  const engine = pickEngine(settings);
+  const apiKey = String(settings[engine.keyField] || "").trim();
+  if (!apiKey) {
+    return { ok: false, message: `${engine.label} のAPIキーがまだ入っていません`, showSettings: true };
   }
-  /* 「models/gemini-…」の形で貼られても通るようにしておく */
-  const model = (settings.model || SETTINGS_DEFAULTS.model).trim().replace(/^models\//, "");
 
-  const key = cacheKey(model, text);
+  const variant = engine.variant(settings);
+  /* 相手やモデルが変われば訳も変わる。覚えている分はそれごとに分ける */
+  const key = `${settings.engine}\n${variant}\n${text}`;
+  const via = variant || engine.label;
   if (!bypassCache) {
     const hit = cacheGet(key);
-    if (hit) return { ok: true, translation: hit, cached: true, model };
+    if (hit) return { ok: true, translation: hit, cached: true, via };
   }
 
   try {
-    const translation = await callGemini(text, model, settings.apiKey);
+    const translation = await engine.translate(text, apiKey, settings);
     cacheSet(key, translation);
-    return { ok: true, translation, cached: false, model };
+    return { ok: true, translation, cached: false, via };
   } catch (err) {
-    if (err && typeof err === "object") err.model = model;
     console.warn("訳に失敗しました:", err);
-    return { ok: false, ...describeFailure(err) };
+    return { ok: false, ...describeFailure(engine, err, settings) };
   }
 }
 
-/* 設定画面のモデル欄の候補に使う。取れなければ既定のまま使えばよいので、
-   失敗は黙って空で返す */
+/* 設定画面のモデル欄の候補に使う（Gemini のときだけ）。取れなければ既定の
+   まま使えばよいので、失敗は黙って空で返す */
 async function listModels() {
   const settings = await loadSettings();
   if (!settings.apiKey) return { ok: false, models: [] };
@@ -202,7 +337,7 @@ browser.runtime.onMessage.addListener((msg) => {
   switch (msg.type) {
     case "translate":
       return translate(String(msg.text || ""));
-    /* 設定画面の「試してみる」は、キーを替えた直後に古い訳が返っては困るので
+    /* 設定画面の「試す」は、鍵や相手を替えた直後に古い訳が返っては困るので
        覚えている分を読まない */
     case "translate-fresh":
       return translate(String(msg.text || ""), { bypassCache: true });

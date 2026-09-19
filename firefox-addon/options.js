@@ -1,16 +1,17 @@
 "use strict";
 
 const el = {
-  apiKey: document.getElementById("api-key"),
-  peek: document.getElementById("peek"),
-  model: document.getElementById("model"),
-  modelList: document.getElementById("model-list"),
   engoloydUrl: document.getElementById("engoloyd-url"),
   enabled: document.getElementById("enabled"),
+  model: document.getElementById("model"),
+  modelList: document.getElementById("model-list"),
   test: document.getElementById("test"),
   testResult: document.getElementById("test-result"),
   status: document.getElementById("status"),
 };
+
+/* 鍵の欄は相手の数だけある。どれも同じ扱いなので表で回す */
+const keyInputs = ENGINES_INFO.map((info) => ({ info, input: document.getElementById(info.inputId) }));
 
 /* 「試す」に使う一文。訳が崩れたらすぐ分かる程度に普通の文 */
 const TEST_SENTENCE = "The quick brown fox jumps over the lazy dog.";
@@ -23,15 +24,37 @@ function say(text) {
   statusTimer = setTimeout(() => el.status.classList.remove("on"), 1600);
 }
 
-/* 保存釦は置かない。設定が3つしか無いので、押し忘れで動かない方が事故が多い。
-   打っている最中に毎打鍵書きに行かないよう、手が止まってからまとめて保存する */
+/* 保存釦は置かない。押し忘れで動かない事故の方が多いため。打っている最中に
+   毎打鍵書きに行かないよう、手が止まってからまとめて保存する。
+   待っている分は溜めてから一度に書く。時計を一つで使い回して上書きすると、
+   鍵を打った直後に相手を選び替えたときに、打った鍵ごと消える */
 let saveTimer = null;
+let pending = {};
 function saveSoon(values, delay = 400) {
+  Object.assign(pending, values);
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    await browser.storage.local.set(values);
-    say("保存しました");
-  }, delay);
+  saveTimer = setTimeout(flushSave, delay);
+}
+async function flushSave() {
+  clearTimeout(saveTimer);
+  if (!Object.keys(pending).length) return;
+  const values = pending;
+  pending = {};
+  await browser.storage.local.set(values);
+  say("保存しました");
+}
+
+/* 選んでいる相手の欄だけ出す。使わない鍵の欄まで並ぶと、どれに入れればよいか
+   分からなくなる */
+function showEngineCards(engine) {
+  for (const card of document.querySelectorAll("[data-engine]")) {
+    card.hidden = card.dataset.engine !== engine;
+  }
+}
+
+function currentEngine() {
+  const picked = document.querySelector('input[name="engine"]:checked');
+  return picked ? picked.value : SETTINGS_DEFAULTS.engine;
 }
 
 async function fillModelList() {
@@ -48,29 +71,48 @@ async function fillModelList() {
 
 async function init() {
   const settings = await loadSettings();
-  el.apiKey.value = settings.apiKey;
+  for (const { info, input } of keyInputs) input.value = settings[info.keyField];
   el.model.value = settings.model;
   el.engoloydUrl.value = settings.engoloydUrl;
   el.enabled.checked = settings.enabled;
+  for (const radio of document.querySelectorAll('input[name="engine"]')) {
+    radio.checked = radio.value === settings.engine;
+  }
   for (const radio of document.querySelectorAll('input[name="trigger"]')) {
     radio.checked = radio.value === settings.trigger;
   }
+  showEngineCards(settings.engine);
   if (settings.apiKey) fillModelList();
 }
 
-el.apiKey.addEventListener("input", () => {
-  saveSoon({ apiKey: el.apiKey.value.trim() });
-});
-/* キーを入れ終えた頃に、そのキーで使えるモデルを候補へ */
-el.apiKey.addEventListener("change", () => {
+for (const { info, input } of keyInputs) {
+  input.addEventListener("input", () => {
+    saveSoon({ [info.keyField]: input.value.trim() });
+  });
+}
+
+/* Gemini の鍵を入れ終えた頃に、そのキーで使えるモデルを候補へ */
+const geminiInput = keyInputs.find((k) => k.info.id === "gemini").input;
+geminiInput.addEventListener("change", () => {
   setTimeout(fillModelList, 500);
 });
 
-el.peek.addEventListener("click", () => {
-  const hidden = el.apiKey.type === "password";
-  el.apiKey.type = hidden ? "text" : "password";
-  el.peek.textContent = hidden ? "隠す" : "表示";
-});
+for (const button of document.querySelectorAll(".peek")) {
+  button.addEventListener("click", () => {
+    const input = document.getElementById(button.dataset.for);
+    const hidden = input.type === "password";
+    input.type = hidden ? "text" : "password";
+    button.textContent = hidden ? "隠す" : "表示";
+  });
+}
+
+for (const radio of document.querySelectorAll('input[name="engine"]')) {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    showEngineCards(radio.value);
+    saveSoon({ engine: radio.value }, 0);
+  });
+}
 
 el.model.addEventListener("input", () => {
   /* 空のまま保存すると訳せなくなるので、その時は既定へ戻す */
@@ -95,10 +137,10 @@ for (const radio of document.querySelectorAll('input[name="trigger"]')) {
 el.test.addEventListener("click", async () => {
   /* 打ちかけの設定で試すと結果が食い違う。待っている保存を先に片付ける */
   clearTimeout(saveTimer);
-  await browser.storage.local.set({
-    apiKey: el.apiKey.value.trim(),
-    model: el.model.value.trim() || SETTINGS_DEFAULTS.model,
-  });
+  pending = {};
+  const values = { engine: currentEngine(), model: el.model.value.trim() || SETTINGS_DEFAULTS.model };
+  for (const { info, input } of keyInputs) values[info.keyField] = input.value.trim();
+  await browser.storage.local.set(values);
 
   el.test.disabled = true;
   el.testResult.classList.remove("err");
@@ -107,7 +149,7 @@ el.test.addEventListener("click", async () => {
   el.test.disabled = false;
 
   if (res && res.ok) {
-    el.testResult.textContent = `${TEST_SENTENCE}\n→ ${res.translation}`;
+    el.testResult.textContent = `${TEST_SENTENCE}\n→ ${res.translation}（${res.via}）`;
   } else {
     el.testResult.classList.add("err");
     el.testResult.textContent = (res && res.message) || "訳せませんでした";
