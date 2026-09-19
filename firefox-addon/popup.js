@@ -6,6 +6,7 @@
 
 const el = {
   enabled: document.getElementById("enabled"),
+  hover: document.getElementById("hover"),
   engine: document.getElementById("engine"),
   key: document.getElementById("key-input"),
   keyLabel: document.getElementById("key-label"),
@@ -67,6 +68,7 @@ async function init() {
   );
   el.engine.value = settings.engine;
   el.enabled.checked = settings.enabled;
+  el.hover.checked = settings.hover;
   showEngine(settings.engine);
 }
 
@@ -80,6 +82,10 @@ el.engine.addEventListener("change", async () => {
 
 el.enabled.addEventListener("change", () => {
   browser.storage.local.set({ enabled: el.enabled.checked });
+});
+
+el.hover.addEventListener("change", () => {
+  browser.storage.local.set({ hover: el.hover.checked });
 });
 
 el.key.addEventListener("input", saveKeySoon);

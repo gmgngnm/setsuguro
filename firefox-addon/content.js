@@ -137,6 +137,12 @@ let seq = 0;
 /* 「設定を開く」を出すかどうか。鍵が無い・弾かれた類の失敗だけに出す */
 let showSettingsFlag = false;
 let placeQueued = false;
+/* いま出ている吹き出しが、選んで出した物か、カーソルを合わせて出た物か。
+   合わせて出た物だけ、離れたときに引っ込める */
+let hoverSource = false;
+let hoverTimer = null;
+let hoverLeaveTimer = null;
+let hoverPoint = null;
 
 loadSettings().then((saved) => {
   settings = saved;
@@ -146,6 +152,8 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   for (const [key, change] of Object.entries(changes)) settings[key] = change.newValue;
   if (!settings.enabled) hide();
+  /* 合わせて出す方を切ったのに、出たままなのは気味が悪い */
+  if (!settings.hover && hoverSource) hide();
 });
 
 /* ------------------------------------------------------------------ *
@@ -331,6 +339,9 @@ function hide() {
   shownText = "";
   shownWord = "";
   translation = "";
+  hoverSource = false;
+  clearHoverTimers();
+  hoverPoint = null;
   if (ui) ui.bubble.hidden = true;
 }
 
@@ -365,6 +376,87 @@ async function startTranslate(text) {
 }
 
 /* ------------------------------------------------------------------ *
+ * カーソルを合わせて意味を出す
+ *    選ぶ手間が要らない代わりに、動かしている最中に出ては邪魔でしかない。
+ *    同じ字の上で手が止まってから出す
+ * ------------------------------------------------------------------ */
+const HOVER_DELAY_MS = 1000;
+/* 手の震えで数え直していると、いつまでも一秒が貯まらない */
+const HOVER_JITTER_PX = 6;
+/* 語から離れた瞬間に消すと、吹き出しの中の釦を押しに行けない */
+const HOVER_LEAVE_MS = 300;
+const HOVER_LEAVE_MARGIN_PX = 24;
+
+function clearHoverTimers() {
+  clearTimeout(hoverTimer);
+  clearTimeout(hoverLeaveTimer);
+  hoverTimer = null;
+  hoverLeaveTimer = null;
+}
+
+/* その座標にある英単語を、端まで広げて取り出す */
+function wordAtPoint(x, y) {
+  let node = null;
+  let offset = 0;
+  if (document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(x, y);
+    if (!position) return null;
+    node = position.offsetNode;
+    offset = position.offset;
+  } else if (document.caretRangeFromPoint) {
+    /* Chromium系にはこちらしか無い。テストはそちらで動かしている */
+    const range = document.caretRangeFromPoint(x, y);
+    if (!range) return null;
+    node = range.startContainer;
+    offset = range.startOffset;
+  }
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+  /* 入力欄の中身は書きかけの文であることが多く、合わせただけで訳すと邪魔 */
+  if (node.parentElement && node.parentElement.closest("input, textarea")) return null;
+
+  const text = node.nodeValue || "";
+  const isWordChar = (ch) => /[A-Za-z'\u2019-]/.test(ch);
+  let start = Math.min(offset, text.length);
+  let end = start;
+  while (start > 0 && isWordChar(text[start - 1])) start -= 1;
+  while (end < text.length && isWordChar(text[end])) end += 1;
+  if (end - start < 2) return null;
+
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  const rect = range.getBoundingClientRect();
+  /* 字の無い余白でも、いちばん近い場所を返してくる。本当にその字の上に
+     居るときだけ相手にする */
+  if (x < rect.left - 2 || x > rect.right + 2 || y < rect.top - 2 || y > rect.bottom + 2) return null;
+
+  const word = wordOf(range.toString());
+  if (!word) return null;
+  return { word, range };
+}
+
+/* 手が止まって一秒 */
+function onDwell(point) {
+  hoverTimer = null;
+  if (!settings.enabled || !settings.hover) return;
+  /* 選んで出した吹き出しが出ているなら、そちらを立てる */
+  if (ui && !ui.bubble.hidden && !hoverSource) return;
+
+  const found = wordAtPoint(point.x, point.y);
+  if (!found || !looksTranslatable(found.word)) return;
+  /* 同じ語で出し直すと、覚えている訳でも一度消えて瞬く */
+  if (hoverSource && found.word === shownText && ui && !ui.bubble.hidden) return;
+
+  hoverSource = true;
+  anchor = { text: found.word, rectOf: () => found.range.getBoundingClientRect() };
+  shownText = found.word;
+  shownWord = found.word;
+  translation = "";
+  showSettingsFlag = false;
+  startTranslate(found.word);
+}
+
+/* ------------------------------------------------------------------ *
  * ページ側の出来事
  * ------------------------------------------------------------------ */
 function insideUI(event) {
@@ -395,6 +487,8 @@ function handleSelection(target) {
   shownWord = wordOf(text);
   translation = "";
   showSettingsFlag = false;
+  hoverSource = false;
+  clearHoverTimers();
 
   if (text.length > MAX_CHARS) {
     seq += 1;
@@ -417,6 +511,47 @@ document.addEventListener("mouseup", (event) => {
   setTimeout(() => handleSelection(target), 0);
 }, true);
 
+document.addEventListener("mousemove", (event) => {
+  if (!settings.enabled || !settings.hover) return;
+  /* 吹き出しの上に居る間は引っ込めない。中の釦を押しに行けなくなる */
+  if (insideUI(event)) {
+    clearTimeout(hoverLeaveTimer);
+    hoverLeaveTimer = null;
+    return;
+  }
+  const point = { x: event.clientX, y: event.clientY };
+
+  /* 合わせて出した吹き出しは、その語から離れたら引っ込める */
+  if (hoverSource && ui && !ui.bubble.hidden) {
+    const rect = currentRect();
+    const away =
+      !rect ||
+      point.x < rect.left - HOVER_LEAVE_MARGIN_PX || point.x > rect.right + HOVER_LEAVE_MARGIN_PX ||
+      point.y < rect.top - HOVER_LEAVE_MARGIN_PX || point.y > rect.bottom + HOVER_LEAVE_MARGIN_PX;
+    if (away && !hoverLeaveTimer) {
+      hoverLeaveTimer = setTimeout(() => {
+        hoverLeaveTimer = null;
+        if (hoverSource) hide();
+      }, HOVER_LEAVE_MS);
+    } else if (!away && hoverLeaveTimer) {
+      clearTimeout(hoverLeaveTimer);
+      hoverLeaveTimer = null;
+    }
+  }
+
+  /* ほとんど動いていないなら数え直さない */
+  if (
+    hoverPoint &&
+    Math.abs(point.x - hoverPoint.x) <= HOVER_JITTER_PX &&
+    Math.abs(point.y - hoverPoint.y) <= HOVER_JITTER_PX
+  ) {
+    return;
+  }
+  hoverPoint = point;
+  clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => onDwell(point), HOVER_DELAY_MS);
+}, { capture: true, passive: true });
+
 document.addEventListener("mousedown", (event) => {
   if (insideUI(event)) return;
   hide();
@@ -426,5 +561,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && ui && !ui.bubble.hidden) hide();
 }, true);
 
-window.addEventListener("scroll", queuePlace, { capture: true, passive: true });
+window.addEventListener("scroll", () => {
+  /* 動いた先の字は、合わせていた字とは別物 */
+  clearTimeout(hoverTimer);
+  hoverTimer = null;
+  queuePlace();
+}, { capture: true, passive: true });
 window.addEventListener("resize", queuePlace, { passive: true });
