@@ -3,6 +3,7 @@
 const el = {
   engoloydUrl: document.getElementById("engoloyd-url"),
   enabled: document.getElementById("enabled"),
+  hover: document.getElementById("hover"),
   model: document.getElementById("model"),
   modelList: document.getElementById("model-list"),
   test: document.getElementById("test"),
@@ -76,6 +77,7 @@ async function init() {
   el.model.value = settings.model;
   el.engoloydUrl.value = settings.engoloydUrl;
   el.enabled.checked = settings.enabled;
+  el.hover.checked = settings.hover;
   for (const radio of document.querySelectorAll('input[name="engine"]')) {
     radio.checked = radio.value === settings.engine;
   }
@@ -127,6 +129,10 @@ el.engoloydUrl.addEventListener("input", () => {
 
 el.enabled.addEventListener("change", () => {
   saveSoon({ enabled: el.enabled.checked }, 0);
+});
+
+el.hover.addEventListener("change", () => {
+  saveSoon({ hover: el.hover.checked }, 0);
 });
 
 for (const radio of document.querySelectorAll('input[name="trigger"]')) {
