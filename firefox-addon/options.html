@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>選んで訳す — 設定</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="head">
+    <img class="logo" src="icons/icon.svg" width="40" height="40" alt="">
+    <div>
+      <h1>選んで訳す</h1>
+      <p class="lead">ページの英文をマウスで選ぶと、その場に日本語訳が出ます。</p>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>翻訳に使うもの</h2>
+    <p class="help">どれか一つ。鍵はそれぞれ別に覚えているので、行き来しても入れ直しは要りません。</p>
+    <label class="choice">
+      <input type="radio" name="engine" value="gemini">
+      <span><b>Gemini</b><small>翻訳専用ではない分、語の意味を汲んだ訳になる。モデルも選べる</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="engine" value="deepl">
+      <span><b>DeepL</b><small>翻訳専用。無料枠のあるプランがある</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="engine" value="google">
+      <span><b>Google翻訳</b><small>翻訳専用。速い。Cloud Translation API の鍵が要る</small></span>
+    </label>
+  </section>
+
+  <section class="card" data-engine="gemini">
+    <h2>Gemini のAPIキー</h2>
+    <p class="help">
+      キーは
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>
+      で作れます。キーはこの端末の中だけに保存され、訳す相手以外には送りません。
+    </p>
+    <div class="row">
+      <input id="api-key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
+      <button class="ghost peek" type="button" data-for="api-key">表示</button>
+    </div>
+  </section>
+
+  <section class="card" data-engine="gemini">
+    <h2>モデル</h2>
+    <p class="help">迷ったらそのままで構いません。キーを入れると、使えるモデルが候補に出ます。</p>
+    <input id="model" list="model-list" spellcheck="false" autocomplete="off">
+    <datalist id="model-list"></datalist>
+  </section>
+
+  <section class="card" data-engine="deepl">
+    <h2>DeepL のAPIキー</h2>
+    <p class="help">
+      <a href="https://www.deepl.com/pro-api" target="_blank" rel="noreferrer">DeepL API</a>
+      の認証キー。末尾が <code>:fx</code> の鍵は無料プランのものとして、無料版の宛先に送ります。
+    </p>
+    <div class="row">
+      <input id="deepl-key" type="password" placeholder="xxxxxxxx-xxxx-...:fx" autocomplete="off" spellcheck="false">
+      <button class="ghost peek" type="button" data-for="deepl-key">表示</button>
+    </div>
+  </section>
+
+  <section class="card" data-engine="google">
+    <h2>Google翻訳のAPIキー</h2>
+    <p class="help">
+      Google Cloud で Cloud Translation API を有効にしてから、
+      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">認証情報</a>
+      で作ったAPIキー。
+    </p>
+    <div class="row">
+      <input id="google-key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
+      <button class="ghost peek" type="button" data-for="google-key">表示</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>訳すきっかけ</h2>
+    <label class="choice">
+      <input type="radio" name="trigger" value="auto">
+      <span><b>選んだらすぐ訳す</b><small>手数は要らないが、選び直すたびに呼ぶ</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="trigger" value="button">
+      <span><b>「訳す」を押したときだけ訳す</b><small>選んでも勝手には呼ばない</small></span>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>EnGoloyd の場所</h2>
+    <p class="help">
+      英単語を一語だけ選んだときに出る「EnGoloydで開く」の飛び先。開いた先では
+      その単語の分解が始まります。自分で配っている場所が違うなら書き換えてください。
+    </p>
+    <input id="engoloyd-url" type="text" spellcheck="false" autocomplete="off" placeholder="https://...">
+  </section>
+
+  <section class="card">
+    <h2>動作</h2>
+    <label class="choice">
+      <input type="checkbox" id="enabled">
+      <span><b>拡張機能を動かす</b><small>ツールバーのアイコンを押すと出る板でも入切できる（止めていると「切」と出る）</small></span>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>試してみる</h2>
+    <p class="help">いま入っている設定のまま、短い英文を一つ訳します。</p>
+    <button id="test" class="primary" type="button">試す</button>
+    <p id="test-result" class="result"></p>
+  </section>
+
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+</main>
+<script src="common.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

@@ -29,6 +29,22 @@ git fetch origin main && git checkout -B <枝> origin/main
 Service Worker はシェル（index.html / app.js / styles.css など）をHTTPキャッシュを
 通さずに取りに行く。キャッシュの持ち方を変えたときは `sw.js` の `CACHE` 名も上げる。
 
+## Firefox アドオン（`firefox-addon/`）
+
+ページの英文を選ぶとその場に日本語訳を出す拡張機能。PWA とは別物で、置き場所を
+同じリポジトリにしているだけ。訳す相手は Gemini / DeepL / Google翻訳 から選べて、
+APIキーも拡張機能側で別に持つ。入れ方と中身は `firefox-addon/README.md` に書いてある。
+
+直しながら試すときは `npx web-ext run --source-dir firefox-addon`。
+保存するたびに読み込み直すので、`about:debugging` を触らなくてよい。
+
+直したら `manifest.json` の `version` を上げる。ビルド番号のような表示は無いので、
+`about:debugging` で読み込み直したものかどうかはここで見分ける。
+
+アドオンは英単語を一語だけ選んだとき `index.html?w=単語` で本体アプリを開く。
+それを受ける口が `app.js` の `startDecomposeFromQuery`。アドオン側の唯一の
+繋ぎ目なので、消すなら向こうの「EnGoloydで開く」も一緒に外すこと。
+
 ## 確認のしかた
 
 テストは Playwright で、実際に画面を動かして確かめる。作業用のファイルは
