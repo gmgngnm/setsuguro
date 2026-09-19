@@ -104,8 +104,6 @@ function buildBubble() {
     x: make("button", { className: "x", type: "button", title: "閉じる", textContent: "×", "aria-label": "閉じる" }),
     body: make("div", { className: "body" }),
     ask: make("button", { className: "act ask", type: "button", textContent: "訳す", hidden: true }),
-    copy: make("button", { className: "act copy", type: "button", textContent: "コピー", hidden: true }),
-    retry: make("button", { className: "act retry", type: "button", textContent: "もう一度", hidden: true }),
     engoloyd: make("button", {
       className: "act engoloyd", type: "button", textContent: "EnGoloydで開く",
       title: "EnGoloyd で接辞に分解して覚える", hidden: true,
@@ -113,7 +111,7 @@ function buildBubble() {
     settings: make("button", { className: "act settings", type: "button", textContent: "設定を開く", hidden: true }),
     note: make("span", { className: "note" }),
   };
-  parts.foot = make("div", { className: "foot" }, parts.ask, parts.copy, parts.retry, parts.engoloyd, parts.settings, parts.note);
+  parts.foot = make("div", { className: "foot" }, parts.ask, parts.engoloyd, parts.settings, parts.note);
   parts.bubble = make(
     "div",
     { className: "bubble", role: "status", "aria-live": "polite", hidden: true },
@@ -189,12 +187,10 @@ function ensureUI() {
 
   ui.x.addEventListener("click", hide);
   ui.ask.addEventListener("click", () => startTranslate(shownText));
-  ui.retry.addEventListener("click", () => startTranslate(shownText, { fresh: true }));
   ui.settings.addEventListener("click", () => {
     browser.runtime.sendMessage({ type: "open-options" });
     hide();
   });
-  ui.copy.addEventListener("click", copyTranslation);
   ui.engoloyd.addEventListener("click", () => {
     const word = shownWord;
     hide();
@@ -202,16 +198,6 @@ function ensureUI() {
   });
 
   return ui;
-}
-
-async function copyTranslation() {
-  if (!translation) return;
-  try {
-    await navigator.clipboard.writeText(translation);
-    ui.note.textContent = "コピーしました";
-  } catch {
-    ui.note.textContent = "コピーできませんでした";
-  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -328,13 +314,10 @@ function render({ kind, message = "", note = "" }) {
   }
 
   ui.ask.hidden = kind !== "ask";
-  ui.copy.hidden = kind !== "ok";
-  ui.retry.hidden = kind !== "error" && kind !== "ok";
   /* 訳が出せなかったときでも、単語なら本体アプリへは行ける */
   ui.engoloyd.hidden = !shownWord;
   ui.settings.hidden = !(kind === "error" && showSettingsFlag);
-  ui.foot.hidden =
-    ui.ask.hidden && ui.copy.hidden && ui.retry.hidden && ui.engoloyd.hidden && ui.settings.hidden && !note;
+  ui.foot.hidden = ui.ask.hidden && ui.engoloyd.hidden && ui.settings.hidden && !note;
 
   ui.bubble.hidden = false;
   place();
@@ -354,19 +337,19 @@ function hide() {
 /* ------------------------------------------------------------------ *
  * 訳を頼む
  * ------------------------------------------------------------------ */
-async function startTranslate(text, { fresh = false } = {}) {
+async function startTranslate(text) {
   if (!text) return;
   const mine = ++seq;
   translation = "";
   showSettingsFlag = false;
   render({ kind: "loading" });
 
-  await new Promise((resolve) => setTimeout(resolve, fresh ? 0 : SEND_DELAY_MS));
+  await new Promise((resolve) => setTimeout(resolve, SEND_DELAY_MS));
   if (mine !== seq) return;
 
   let res;
   try {
-    res = await browser.runtime.sendMessage({ type: fresh ? "translate-fresh" : "translate", text });
+    res = await browser.runtime.sendMessage({ type: "translate", text });
   } catch {
     res = { ok: false, message: "拡張機能の裏側と話せませんでした。Firefoxを開き直してください" };
   }
