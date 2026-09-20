@@ -4,10 +4,20 @@ const el = {
   enabled: document.getElementById("enabled"),
   hover: document.getElementById("hover"),
   delay: document.getElementById("hover-delay"),
+  delayLabel: document.getElementById("hover-delay-label"),
   trigger: document.getElementById("trigger"),
   engine: document.getElementById("engine"),
   model: document.getElementById("model"),
   modelList: document.getElementById("model-list"),
+  radius: document.getElementById("bubble-radius"),
+  radiusLabel: document.getElementById("bubble-radius-label"),
+  border: document.getElementById("bubble-border"),
+  borderLabel: document.getElementById("bubble-border-label"),
+  custom: document.getElementById("bubble-custom"),
+  bg: document.getElementById("bubble-bg"),
+  line: document.getElementById("bubble-line"),
+  inkColor: document.getElementById("bubble-ink"),
+  preview: document.getElementById("bubble-preview"),
   theme: document.getElementById("theme"),
   accent: document.getElementById("accent"),
   status: document.getElementById("status"),
@@ -44,6 +54,26 @@ async function flushSave() {
   say("保存しました");
 }
 
+/* 決め方をそのまま見本に当てる。吹き出しは読んでいるページの上にしか出ない
+   ので、ここで確かめられないと決めようがない */
+function drawPreview() {
+  const style = el.preview.style;
+  style.borderRadius = `${el.radius.value}px`;
+  style.borderWidth = `${el.border.value}px`;
+  if (el.custom.checked) {
+    style.background = el.bg.value;
+    style.borderColor = el.line.value;
+    style.color = el.inkColor.value;
+  } else {
+    style.background = "";
+    style.borderColor = "";
+    style.color = "";
+  }
+  el.radiusLabel.textContent = `${el.radius.value}px`;
+  el.borderLabel.textContent = `${el.border.value}px`;
+  for (const row of document.querySelectorAll("[data-custom]")) row.hidden = !el.custom.checked;
+}
+
 /* 選んでいる相手の行だけ出す。使わない鍵の欄まで並ぶと、どれに入れればよいか
    分からなくなる */
 function showEngineRows(engine) {
@@ -70,10 +100,18 @@ async function init() {
   for (const { info, input } of keyInputs) input.value = settings[info.keyField];
   el.enabled.checked = settings.enabled;
   el.hover.checked = settings.hover;
-  fillDelaySelect(el.delay, settings.hoverDelay);
+  fillDelayBar(el.delay, settings.hoverDelay);
+  el.delayLabel.textContent = delayLabel(el.delay.value);
   fillEngineSelect(el.engine, settings.engine);
   el.trigger.value = settings.trigger;
   el.model.value = settings.model;
+  el.radius.value = String(clampNum(settings.bubbleRadius, 0, 20, SETTINGS_DEFAULTS.bubbleRadius));
+  el.border.value = String(clampNum(settings.bubbleBorder, 0, 5, SETTINGS_DEFAULTS.bubbleBorder));
+  el.custom.checked = Boolean(settings.bubbleCustomColors);
+  el.bg.value = settings.bubbleBg;
+  el.line.value = settings.bubbleLine;
+  el.inkColor.value = settings.bubbleInk;
+  drawPreview();
   fillSelect(el.theme, THEMES, settings.theme);
   fillSelect(el.accent, ACCENTS, settings.accent);
   applyLook(settings);
@@ -109,6 +147,10 @@ el.engine.addEventListener("change", () => {
 
 el.enabled.addEventListener("change", () => saveSoon({ enabled: el.enabled.checked }, 0));
 el.hover.addEventListener("change", () => saveSoon({ hover: el.hover.checked }, 0));
+/* つまみを動かしている間は数字だけ追わせ、離したところで保存する */
+el.delay.addEventListener("input", () => {
+  el.delayLabel.textContent = delayLabel(el.delay.value);
+});
 el.delay.addEventListener("change", () => saveSoon({ hoverDelay: Number(el.delay.value) }, 0));
 el.trigger.addEventListener("change", () => saveSoon({ trigger: el.trigger.value }, 0));
 
@@ -117,14 +159,33 @@ el.model.addEventListener("input", () => {
   saveSoon({ model: el.model.value.trim() || SETTINGS_DEFAULTS.model });
 });
 
+for (const [input, key] of [[el.radius, "bubbleRadius"], [el.border, "bubbleBorder"]]) {
+  input.addEventListener("input", drawPreview);
+  input.addEventListener("change", () => saveSoon({ [key]: Number(input.value) }, 0));
+}
+
+el.custom.addEventListener("change", () => {
+  drawPreview();
+  saveSoon({ bubbleCustomColors: el.custom.checked }, 0);
+});
+
+for (const [input, key] of [[el.bg, "bubbleBg"], [el.line, "bubbleLine"], [el.inkColor, "bubbleInk"]]) {
+  input.addEventListener("input", () => {
+    drawPreview();
+    saveSoon({ [key]: input.value });
+  });
+}
+
 /* 見た目は選んだ場で確かめられた方がよいので、保存を待たずに当てる */
 el.theme.addEventListener("change", () => {
   applyLook({ theme: el.theme.value, accent: el.accent.value });
+  drawPreview();
   saveSoon({ theme: el.theme.value }, 0);
 });
 
 el.accent.addEventListener("change", () => {
   applyLook({ theme: el.theme.value, accent: el.accent.value });
+  drawPreview();
   saveSoon({ accent: el.accent.value }, 0);
 });
 

@@ -8,6 +8,7 @@ const el = {
   enabled: document.getElementById("enabled"),
   hover: document.getElementById("hover"),
   delay: document.getElementById("hover-delay"),
+  delayLabel: document.getElementById("hover-delay-label"),
   engine: document.getElementById("engine"),
   note: document.getElementById("key-note"),
 };
@@ -28,7 +29,8 @@ async function init() {
   applyLook(settings);
   el.enabled.checked = settings.enabled;
   el.hover.checked = settings.hover;
-  fillDelaySelect(el.delay, settings.hoverDelay);
+  fillDelayBar(el.delay, settings.hoverDelay);
+  el.delayLabel.textContent = delayLabel(el.delay.value);
   fillEngineSelect(el.engine, settings.engine);
   showKeyState();
 }
@@ -39,6 +41,11 @@ el.enabled.addEventListener("change", () => {
 
 el.hover.addEventListener("change", () => {
   browser.storage.local.set({ hover: el.hover.checked });
+});
+
+/* つまみを動かしている間は数字だけ追わせ、離したところで保存する */
+el.delay.addEventListener("input", () => {
+  el.delayLabel.textContent = delayLabel(el.delay.value);
 });
 
 el.delay.addEventListener("change", () => {

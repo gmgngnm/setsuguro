@@ -14,9 +14,11 @@ const MAX_CHARS = 1200;
    揃えてある） */
 const TAIL_INSET = 14;
 
-/* 待つ間は設定から。壊れた値が入っていても止まらないよう既定に落とす */
+/* 待つ間は設定から。0（待たない）を選べるので、素直に || で既定へ落とすと
+   0 が消える。数かどうかだけ見る */
 function waitMs() {
-  return Number(settings.hoverDelay) || SETTINGS_DEFAULTS.hoverDelay;
+  const value = Number(settings.hoverDelay);
+  return Number.isFinite(value) && value >= 0 ? value : SETTINGS_DEFAULTS.hoverDelay;
 }
 
 const BUBBLE_CSS = `
@@ -29,7 +31,9 @@ const BUBBLE_CSS = `
   box-sizing:border-box;
   width:max-content; min-width:110px;
   padding:5px 18px 6px 8px;
-  border:1px solid var(--line); border-radius:7px;
+  border:var(--bw,1px) solid var(--line); border-radius:var(--radius,7px);
+  /* しっぽの二枚重ねのずらし幅。枠が太いほど、枠に見える部分も太くする */
+  --tail-gap:calc(var(--bw,1px) * 2);
   background:var(--box); color:var(--ink);
   font:13px/1.5 arial,helvetica,"Hiragino Kaku Gothic ProN","Yu Gothic","MS PGothic",sans-serif;
   text-align:left;
@@ -56,11 +60,11 @@ const BUBBLE_CSS = `
   clip-path:polygon(0 0, 100% 100%, 0 100%);
 }
 .bubble::before{top:-10px; left:var(--tail-x,14px); background:var(--line);}
-.bubble::after{top:-8px; left:calc(var(--tail-x,14px) + 2px); background:var(--box);}
+.bubble::after{top:calc(-10px + var(--tail-gap)); left:calc(var(--tail-x,14px) + var(--tail-gap)); background:var(--box);}
 /* 上に出したときは、下へ向けて尖らせる */
 .bubble.up::before,.bubble.up::after{clip-path:polygon(0 0, 100% 0, 0 100%);}
 .bubble.up::before{top:auto; bottom:-10px;}
-.bubble.up::after{top:auto; bottom:-8px;}
+.bubble.up::after{top:auto; bottom:calc(-10px + var(--tail-gap));}
 
 .x{
   position:absolute; top:2px; right:3px;
@@ -276,8 +280,16 @@ function looksTranslatable(text) {
    吹き出し自身に札を付けて中のCSSで拾う */
 function applyBubbleLook() {
   if (!ui) return;
-  ui.bubble.dataset.theme = settings.theme || SETTINGS_DEFAULTS.theme;
-  ui.bubble.dataset.accent = settings.accent || SETTINGS_DEFAULTS.accent;
+  const bubble = ui.bubble;
+  bubble.dataset.theme = settings.theme || SETTINGS_DEFAULTS.theme;
+  bubble.dataset.accent = settings.accent || SETTINGS_DEFAULTS.accent;
+  bubble.style.setProperty("--radius", `${clampNum(settings.bubbleRadius, 0, 20, SETTINGS_DEFAULTS.bubbleRadius)}px`);
+  bubble.style.setProperty("--bw", `${clampNum(settings.bubbleBorder, 0, 5, SETTINGS_DEFAULTS.bubbleBorder)}px`);
+  /* 自分で決めた色は、明暗や色味より後に当てる。切れば元の色味に戻す */
+  for (const [prop, value] of [["--box", settings.bubbleBg], ["--line", settings.bubbleLine], ["--ink", settings.bubbleInk]]) {
+    if (settings.bubbleCustomColors && value) bubble.style.setProperty(prop, value);
+    else bubble.style.removeProperty(prop);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -335,8 +347,11 @@ function place() {
      決め、画面からはみ出す分だけ戻す */
   const apex = point.x;
   const left = Math.min(Math.max(8, apex - TAIL_INSET), Math.max(8, vw - bw - 8));
-  /* 端に寄せて動かした分は、しっぽの位置で吸収して指し先を語に残す */
-  const tailX = Math.min(Math.max(apex - left, 8), Math.max(8, bw - 26));
+  /* 端に寄せて動かした分は、しっぽの位置で吸収して指し先を語に残す。角を丸めて
+     いるときは、丸みの上にしっぽが乗らないところまで */
+  const radius = parseFloat(getComputedStyle(bubble).borderTopLeftRadius) || 0;
+  const minTail = Math.max(8, radius + 4);
+  const tailX = Math.min(Math.max(apex - left, minTail), Math.max(minTail, bw - 26));
   bubble.style.setProperty("--tail-x", `${Math.round(tailX)}px`);
   bubble.classList.toggle("up", above);
 

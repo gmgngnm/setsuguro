@@ -21,14 +21,23 @@ const SETTINGS_DEFAULTS = {
   /* カーソルを英単語に1秒あわせたら、その語の意味を出す。選ぶ手間が要らない
      代わりに、読んでいるだけで呼ぶことになるので、切れるようにしてある */
   hover: true,
-  /* 訳しに行くまでの間。カーソルを合わせたときも、文を選んだときも同じだけ待つ。
-     短いと読んでいるだけで出てしまい、長いと待たされる。好みが割れるので選べる
-     ようにした（保存の名前は合わせて出す札だけだった頃のまま） */
+  /* 訳しに行くまでの間（ミリ秒）。カーソルを合わせたときも、文を選んだときも
+     同じだけ待つ。短いと読んでいるだけで出てしまい、長いと待たされる。好みが
+     割れるのでバーで決められるようにした（保存の名前は合わせて出す札だけ
+     だった頃のまま） */
   hoverDelay: 1000,
   enabled: true,
   /* 見た目。auto は端末の設定（OSの明暗）に従う */
   theme: "auto",
   accent: "blue",
+  /* 吹き出しの見た目。色は「自分で決める」を入れたときだけ効く。切っていれば
+     上の色味（accent）に従う */
+  bubbleRadius: 7,
+  bubbleBorder: 1,
+  bubbleCustomColors: false,
+  bubbleBg: "#D6DAF0",
+  bubbleLine: "#B7C5D9",
+  bubbleInk: "#000000",
   /* 単語を一語だけ選んだときに出る「EnGoloydで開く」の飛び先。既定は
      GitHub Pages に置いてある本体アプリ。自分で配る場所が違う人もいるので
      設定から差し替えられる */
@@ -75,28 +84,24 @@ function applyLook(settings) {
   root.dataset.accent = settings.accent || SETTINGS_DEFAULTS.accent;
 }
 
-/* 出すまでの間の選択肢。板と設定画面で同じ並びを出す */
-const HOVER_DELAYS = [
-  { ms: 300, label: "0.3秒" },
-  { ms: 500, label: "0.5秒" },
-  { ms: 1000, label: "1秒" },
-  { ms: 1500, label: "1.5秒" },
-  { ms: 2000, label: "2秒" },
-  { ms: 3000, label: "3秒" },
-];
+/* 待機時間はバーで決める。0 は「待たない」。上は5秒まであれば足りる */
+const HOVER_DELAY_MIN = 0;
+const HOVER_DELAY_MAX = 5000;
+const HOVER_DELAY_STEP = 100;
 
-function fillDelaySelect(select, value) {
-  select.replaceChildren(
-    ...HOVER_DELAYS.map((choice) => {
-      const option = document.createElement("option");
-      option.value = String(choice.ms);
-      option.textContent = choice.label;
-      return option;
-    })
-  );
-  select.value = String(value);
-  /* 覚えている値が並びに無ければ、既定に寄せる（空欄のままにしない） */
-  if (!select.value) select.value = String(SETTINGS_DEFAULTS.hoverDelay);
+function delayLabel(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value <= 0) return "すぐ";
+  return `${(value / 1000).toFixed(1)}秒`;
+}
+
+function fillDelayBar(bar, value) {
+  bar.type = "range";
+  bar.min = String(HOVER_DELAY_MIN);
+  bar.max = String(HOVER_DELAY_MAX);
+  bar.step = String(HOVER_DELAY_STEP);
+  const saved = Number(value);
+  bar.value = String(Number.isFinite(saved) ? Math.min(Math.max(saved, HOVER_DELAY_MIN), HOVER_DELAY_MAX) : SETTINGS_DEFAULTS.hoverDelay);
 }
 
 function fillEngineSelect(select, value) {
@@ -128,4 +133,11 @@ function showVersion() {
   if (!el) return;
   const version = browser.runtime.getManifest?.().version;
   if (version) el.textContent = `v${version}`;
+}
+
+/* 設定から来た数を、決めた幅に収める。壊れた値でも止まらないように */
+function clampNum(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(Math.max(num, min), max);
 }
