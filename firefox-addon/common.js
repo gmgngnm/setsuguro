@@ -25,6 +25,9 @@ const SETTINGS_DEFAULTS = {
      待たされる。好みが割れるので選べるようにした */
   hoverDelay: 1000,
   enabled: true,
+  /* 見た目。auto は端末の設定（OSの明暗）に従う */
+  theme: "auto",
+  accent: "blue",
   /* 単語を一語だけ選んだときに出る「EnGoloydで開く」の飛び先。既定は
      GitHub Pages に置いてある本体アプリ。自分で配る場所が違う人もいるので
      設定から差し替えられる */
@@ -37,6 +40,39 @@ const ENGINES_INFO = [
   { id: "deepl", label: "DeepL", keyField: "deeplKey", inputId: "deepl-key" },
   { id: "google", label: "Google翻訳", keyField: "googleKey", inputId: "google-key" },
 ];
+
+/* 色味の選択肢。掲示板の配色に寄せた四色 */
+const ACCENTS = [
+  { id: "blue", label: "青" },
+  { id: "orange", label: "橙" },
+  { id: "green", label: "緑" },
+  { id: "gray", label: "灰" },
+];
+
+const THEMES = [
+  { id: "auto", label: "自動（端末に合わせる）" },
+  { id: "light", label: "明るい" },
+  { id: "dark", label: "暗い" },
+];
+
+function fillSelect(select, items, value) {
+  select.replaceChildren(
+    ...items.map((item) => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.label;
+      return option;
+    })
+  );
+  select.value = value;
+}
+
+/* 設定画面と板の見た目を、保存してある明暗と色味に合わせる */
+function applyLook(settings) {
+  const root = document.documentElement;
+  root.dataset.theme = settings.theme || SETTINGS_DEFAULTS.theme;
+  root.dataset.accent = settings.accent || SETTINGS_DEFAULTS.accent;
+}
 
 /* 出すまでの間の選択肢。板と設定画面で同じ並びを出す */
 const HOVER_DELAYS = [

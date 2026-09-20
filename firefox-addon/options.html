@@ -18,9 +18,9 @@
     <tr><td class="k"><label for="hover">カーソルで意味を出す</label></td>
       <td><input type="checkbox" class="sw" id="hover">
         <span class="note">選ばなくても、英単語の上で手を止めるとその語の意味が出る</span></td></tr>
-    <tr><td class="k"><label for="hover-delay">出すまでの時間</label></td>
+    <tr><td class="k"><label for="hover-delay">待機時間</label></td>
       <td><select id="hover-delay"></select>
-        <span class="note">短いほど早く出るが、読んでいるだけで出やすくなる</span></td></tr>
+        <span class="note">カーソルを合わせてから意味を出すまで。短いほど早く出るが、読んでいるだけで出やすくなる</span></td></tr>
     <tr><td class="k"><label for="trigger">選んだとき</label></td>
       <td><select id="trigger">
           <option value="auto">すぐ訳す</option>
@@ -48,18 +48,13 @@
         <span class="note">Cloud Translation API を有効にしてから、<a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">認証情報</a> で作ったキー</span></td></tr>
   </table>
 
-  <div class="grp">EnGoloyd</div>
+  <div class="grp">見た目</div>
   <table>
-    <tr><td class="k"><label for="engoloyd-url">飛び先</label></td>
-      <td><input id="engoloyd-url" type="text" spellcheck="false" autocomplete="off" placeholder="https://...">
-        <span class="note">英単語を一語だけ選んだときに出る「EnGoloydで開く」の行き先。開いた先でその単語の分解が始まります</span></td></tr>
-  </table>
-
-  <div class="grp">試してみる</div>
-  <table>
-    <tr><td class="k"><button id="test" type="button">試す</button></td>
-      <td><span class="note">いま入っている設定のまま、短い英文を一つ訳します</span>
-        <span id="test-result" class="result"></span></td></tr>
+    <tr><td class="k"><label for="theme">明るさ</label></td>
+      <td><select id="theme"></select></td></tr>
+    <tr><td class="k"><label for="accent">色</label></td>
+      <td><select id="accent"></select>
+        <span class="note">吹き出しと、この画面の色味</span></td></tr>
   </table>
 
   <p id="status" class="status" role="status" aria-live="polite"></p>

@@ -15,59 +15,74 @@ const MAX_CHARS = 1200;
 const SEND_DELAY_MS = 150;
 
 const BUBBLE_CSS = `
-/* 見た目は掲示板の書き込み欄くらいの素っ気なさで足りる。角丸も影も動きも
-   付けない。読んでいるページの上に出す物なので、飾るほど邪魔になる */
+/* 漫画のセリフのように、元の文へ向かって尖らせる。角は少しだけ丸めて、
+   影や動きは付けない。色は設定の明暗と色味に従う */
 .bubble{
+  --box:#D6DAF0; --line:#B7C5D9; --ink:#000000; --soft:#707070;
+  --link:#34345C; --link-hover:#DD0000; --danger:#AF0A0F;
   position:fixed; top:0; left:0;
   box-sizing:border-box;
-  width:max-content; min-width:120px;
-  padding:4px 6px 5px;
-  border:1px solid #B7C5D9;
-  background:#D6DAF0; color:#000000;
-  font:13px/1.45 arial,helvetica,"Hiragino Kaku Gothic ProN","Yu Gothic","MS PGothic",sans-serif;
+  width:max-content; min-width:110px;
+  padding:5px 18px 6px 8px;
+  border:1px solid var(--line); border-radius:7px;
+  background:var(--box); color:var(--ink);
+  font:13px/1.5 arial,helvetica,"Hiragino Kaku Gothic ProN","Yu Gothic","MS PGothic",sans-serif;
   text-align:left;
   pointer-events:auto;
 }
+.bubble[data-accent="orange"]{--box:#F0E0D6; --line:#D9BFB7; --link:#800000;}
+.bubble[data-accent="green"]{--box:#D9EBDD; --line:#B3CDBA; --link:#17603A;}
+.bubble[data-accent="gray"]{--box:#E4E4E4; --line:#BDBDBD; --link:#3A3A3A;}
+@media (prefers-color-scheme: dark){
+  .bubble:not([data-theme="light"]){--box:#282A2E; --line:#3F4247; --ink:#C5C8C6; --soft:#969896; --link:#81A2BE; --link-hover:#5F89AC; --danger:#CC6666;}
+  .bubble:not([data-theme="light"])[data-accent="orange"]{--link:#DE935F;}
+  .bubble:not([data-theme="light"])[data-accent="green"]{--link:#B5BD68;}
+  .bubble:not([data-theme="light"])[data-accent="gray"]{--link:#C5C8C6;}
+}
+.bubble[data-theme="dark"]{--box:#282A2E; --line:#3F4247; --ink:#C5C8C6; --soft:#969896; --link:#81A2BE; --link-hover:#5F89AC; --danger:#CC6666;}
+.bubble[data-theme="dark"][data-accent="orange"]{--link:#DE935F;}
+.bubble[data-theme="dark"][data-accent="green"]{--link:#B5BD68;}
+.bubble[data-theme="dark"][data-accent="gray"]{--link:#C5C8C6;}
 .bubble[hidden]{display:none;}
-.head{display:flex; align-items:baseline; gap:6px;}
-.src{
-  flex:1; min-width:0;
-  font-size:11px; line-height:1.4; color:#707070;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
-  word-break:break-word;
+
+/* しっぽ。枠の色と塗りの色で二枚重ね、下の一枚を1pxずらして枠線に見せる */
+.bubble::before,.bubble::after{
+  content:""; position:absolute; width:13px; height:10px;
+  clip-path:polygon(0 0, 100% 100%, 0 100%);
 }
+.bubble::before{top:-10px; left:var(--tail-x,14px); background:var(--line);}
+.bubble::after{top:-8px; left:calc(var(--tail-x,14px) + 2px); background:var(--box);}
+/* 上に出したときは、下へ向けて尖らせる */
+.bubble.up::before,.bubble.up::after{clip-path:polygon(0 0, 100% 0, 0 100%);}
+.bubble.up::before{top:auto; bottom:-10px;}
+.bubble.up::after{top:auto; bottom:-8px;}
+
 .x{
-  flex:none; padding:0; border:0; background:none;
-  color:#34345C; font:inherit; font-size:11px; line-height:1; cursor:pointer;
+  position:absolute; top:2px; right:3px;
+  padding:0; border:0; background:none;
+  color:var(--soft); font:inherit; font-size:11px; line-height:1; cursor:pointer;
 }
-.x:hover{color:#DD0000;}
+.x:hover{color:var(--link-hover);}
 .body{
-  margin-top:2px; font-size:13px; line-height:1.55;
+  font-size:13px; line-height:1.55;
   white-space:pre-wrap; word-break:break-word;
   max-height:40vh; overflow:auto;
   user-select:text; -moz-user-select:text;
 }
-.body.err{color:#AF0A0F;}
-.body.wait{color:#707070;}
+.body.err{color:var(--danger);}
+.body.wait{color:var(--soft);}
 .foot{display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; margin-top:3px;}
 .foot[hidden]{display:none;}
 /* 釦らしくせず、掲示板の [返信] のような括弧付きの字にする */
 .act{
   flex:none; padding:0; border:0; background:none;
-  color:#34345C; font:inherit; font-size:11px; cursor:pointer;
+  color:var(--link); font:inherit; font-size:11px; cursor:pointer;
 }
 .act::before{content:"[";}
 .act::after{content:"]";}
-.act:hover{color:#DD0000;}
+.act:hover{color:var(--link-hover);}
 .act[hidden]{display:none;}
-.note{margin-left:auto; font-size:10px; color:#707070; white-space:nowrap;}
-@media (prefers-color-scheme: dark){
-  .bubble{background:#282A2E; border-color:#3F4247; color:#C5C8C6;}
-  .src,.note,.body.wait{color:#969896;}
-  .x,.act{color:#81A2BE;}
-  .x:hover,.act:hover{color:#5F89AC;}
-  .body.err{color:#CC6666;}
-}
+.note{margin-left:auto; font-size:10px; color:var(--soft); white-space:nowrap;}
 `;
 
 /* innerHTML は使わない。差し込むのは決め打ちの文字列だけとはいえ、拡張機能では
@@ -84,7 +99,6 @@ function make(tag, props = {}, ...children) {
 
 function buildBubble() {
   const parts = {
-    src: make("div", { className: "src" }),
     x: make("button", { className: "x", type: "button", title: "閉じる", textContent: "×", "aria-label": "閉じる" }),
     body: make("div", { className: "body" }),
     ask: make("button", { className: "act ask", type: "button", textContent: "訳す", hidden: true }),
@@ -99,7 +113,7 @@ function buildBubble() {
   parts.bubble = make(
     "div",
     { className: "bubble", role: "status", "aria-live": "polite", hidden: true },
-    make("div", { className: "head" }, parts.src, parts.x),
+    parts.x,
     parts.body,
     parts.foot
   );
@@ -138,6 +152,8 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (!settings.enabled) hide();
   /* 合わせて出す方を切ったのに、出たままなのは気味が悪い */
   if (!settings.hover && hoverSource) hide();
+  /* 見た目を変えたら、出ている吹き出しもその場で合わせる */
+  applyBubbleLook();
 });
 
 /* ------------------------------------------------------------------ *
@@ -231,6 +247,14 @@ function looksTranslatable(text) {
   return true;
 }
 
+/* 明暗と色味は設定に従う。影の中からはページ側の指定が見えないので、
+   吹き出し自身に札を付けて中のCSSで拾う */
+function applyBubbleLook() {
+  if (!ui) return;
+  ui.bubble.dataset.theme = settings.theme || SETTINGS_DEFAULTS.theme;
+  ui.bubble.dataset.accent = settings.accent || SETTINGS_DEFAULTS.accent;
+}
+
 /* ------------------------------------------------------------------ *
  * 置き場所
  * ------------------------------------------------------------------ */
@@ -263,15 +287,26 @@ function place() {
 
   const bw = bubble.offsetWidth;
   const bh = bubble.offsetHeight;
-  const left = Math.min(Math.max(8, rect.left + rect.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
+  /* しっぽが左斜め上を指すので、吹き出しは語の右下に置く。真ん中に揃えると
+     しっぽが語から外れる */
+  const left = Math.min(Math.max(8, rect.left - 6), Math.max(8, vw - bw - 8));
 
-  /* まず選んだ文の下。入らなければ上。どちらも入らないほど狭いときは、
-     とにかく画面の中に収める（訳が読めないよりはまし） */
-  let top = rect.bottom + 10;
+  /* まず語の下。入らなければ上。どちらも入らないほど狭いときは、とにかく
+     画面の中に収める（訳が読めないよりはまし） */
+  let top = rect.bottom + 11;
+  let above = false;
   if (top + bh > vh - 8) {
-    const above = rect.top - bh - 10;
-    top = above >= 8 ? above : Math.max(8, vh - bh - 8);
+    const overWord = rect.top - bh - 11;
+    above = overWord >= 8;
+    top = above ? overWord : Math.max(8, vh - bh - 8);
   }
+
+  /* しっぽの先が語に触れるように、左右の位置を合わせる。画面端で吹き出しが
+     ずれても、指し先だけは語に残す */
+  const apex = rect.left + Math.min(12, rect.width / 2);
+  const tailX = Math.min(Math.max(apex - left, 8), Math.max(8, bw - 26));
+  bubble.style.setProperty("--tail-x", `${Math.round(tailX)}px`);
+  bubble.classList.toggle("up", above);
 
   bubble.style.left = `${Math.round(left)}px`;
   bubble.style.top = `${Math.round(top)}px`;
@@ -291,7 +326,7 @@ function queuePlace() {
  * ------------------------------------------------------------------ */
 function render({ kind, message = "", note = "" }) {
   ensureUI();
-  ui.src.textContent = shownText;
+  applyBubbleLook();
   ui.note.textContent = note;
   ui.body.classList.toggle("err", kind === "error");
   ui.body.classList.toggle("wait", kind === "loading" || kind === "ask");
@@ -349,7 +384,7 @@ async function startTranslate(text) {
 
   if (res && res.ok) {
     translation = res.translation;
-    render({ kind: "ok", note: res.cached ? "覚えていた訳" : res.via || "" });
+    render({ kind: "ok", note: res.via || "" });
   } else {
     showSettingsFlag = Boolean(res && res.showSettings);
     render({ kind: "error", message: (res && res.message) || "訳せませんでした" });

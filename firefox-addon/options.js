@@ -8,17 +8,13 @@ const el = {
   engine: document.getElementById("engine"),
   model: document.getElementById("model"),
   modelList: document.getElementById("model-list"),
-  engoloydUrl: document.getElementById("engoloyd-url"),
-  test: document.getElementById("test"),
-  testResult: document.getElementById("test-result"),
+  theme: document.getElementById("theme"),
+  accent: document.getElementById("accent"),
   status: document.getElementById("status"),
 };
 
 /* 鍵の欄は相手の数だけある。どれも同じ扱いなので表で回す */
 const keyInputs = ENGINES_INFO.map((info) => ({ info, input: document.getElementById(info.inputId) }));
-
-/* 「試す」に使う一文。訳が崩れたらすぐ分かる程度に普通の文 */
-const TEST_SENTENCE = "The quick brown fox jumps over the lazy dog.";
 
 let statusTimer = null;
 function say(text) {
@@ -78,7 +74,9 @@ async function init() {
   fillEngineSelect(el.engine, settings.engine);
   el.trigger.value = settings.trigger;
   el.model.value = settings.model;
-  el.engoloydUrl.value = settings.engoloydUrl;
+  fillSelect(el.theme, THEMES, settings.theme);
+  fillSelect(el.accent, ACCENTS, settings.accent);
+  applyLook(settings);
   showEngineRows(settings.engine);
   if (settings.apiKey) fillModelList();
 }
@@ -119,31 +117,15 @@ el.model.addEventListener("input", () => {
   saveSoon({ model: el.model.value.trim() || SETTINGS_DEFAULTS.model });
 });
 
-el.engoloydUrl.addEventListener("input", () => {
-  /* 空にされたら既定へ戻す。空のままだと「EnGoloydで開く」が行き先を失う */
-  saveSoon({ engoloydUrl: el.engoloydUrl.value.trim() || SETTINGS_DEFAULTS.engoloydUrl });
+/* 見た目は選んだ場で確かめられた方がよいので、保存を待たずに当てる */
+el.theme.addEventListener("change", () => {
+  applyLook({ theme: el.theme.value, accent: el.accent.value });
+  saveSoon({ theme: el.theme.value }, 0);
 });
 
-el.test.addEventListener("click", async () => {
-  /* 打ちかけの設定で試すと結果が食い違う。待っている保存を先に片付ける */
-  clearTimeout(saveTimer);
-  pending = {};
-  const values = { engine: el.engine.value, model: el.model.value.trim() || SETTINGS_DEFAULTS.model };
-  for (const { info, input } of keyInputs) values[info.keyField] = input.value.trim();
-  await browser.storage.local.set(values);
-
-  el.test.disabled = true;
-  el.testResult.classList.remove("err");
-  el.testResult.textContent = "訳しています…";
-  const res = await browser.runtime.sendMessage({ type: "translate-fresh", text: TEST_SENTENCE });
-  el.test.disabled = false;
-
-  if (res && res.ok) {
-    el.testResult.textContent = `${TEST_SENTENCE} → ${res.translation}（${res.via}）`;
-  } else {
-    el.testResult.classList.add("err");
-    el.testResult.textContent = (res && res.message) || "訳せませんでした";
-  }
+el.accent.addEventListener("change", () => {
+  applyLook({ theme: el.theme.value, accent: el.accent.value });
+  saveSoon({ accent: el.accent.value }, 0);
 });
 
 init();

@@ -241,28 +241,7 @@ function describeFailure(engine, err, settings) {
   return { message: err?.message || "訳せませんでした" };
 }
 
-/* ------------------------------------------------------------------ *
- * 4. 覚えておく
- *    同じ語を選び直すたびに課金されるのは馬鹿らしいので、直近の結果を
- *    覚えておく。裏方が眠ると消えるが、そのとき困るのは一度余分に呼ぶ
- *    ことだけ
- * ------------------------------------------------------------------ */
-const CACHE_MAX = 300;
-const cache = new Map();
-function cacheGet(key) {
-  if (!cache.has(key)) return null;
-  const value = cache.get(key);
-  /* 取り出したものを入れ直して、よく使う物が押し出されないようにする */
-  cache.delete(key);
-  cache.set(key, value);
-  return value;
-}
-function cacheSet(key, value) {
-  cache.set(key, value);
-  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
-}
-
-async function translate(text, { bypassCache = false } = {}) {
+async function translate(text) {
   const settings = await loadSettings();
   const engine = pickEngine(settings);
   const apiKey = String(settings[engine.keyField] || "").trim();
@@ -270,19 +249,11 @@ async function translate(text, { bypassCache = false } = {}) {
     return { ok: false, message: `${engine.label} のAPIキーがまだ入っていません`, showSettings: true };
   }
 
-  const variant = engine.variant(settings);
-  /* 相手やモデルが変われば訳も変わる。覚えている分はそれごとに分ける */
-  const key = `${settings.engine}\n${variant}\n${text}`;
-  const via = variant || engine.label;
-  if (!bypassCache) {
-    const hit = cacheGet(key);
-    if (hit) return { ok: true, translation: hit, cached: true, via };
-  }
-
+  /* 訳は覚えておかない。同じ語を選び直せばその都度呼ぶ */
+  const via = engine.variant(settings) || engine.label;
   try {
     const translation = await engine.translate(text, apiKey, settings);
-    cacheSet(key, translation);
-    return { ok: true, translation, cached: false, via };
+    return { ok: true, translation, via };
   } catch (err) {
     console.warn("訳に失敗しました:", err);
     return { ok: false, ...describeFailure(engine, err, settings) };
@@ -337,10 +308,6 @@ browser.runtime.onMessage.addListener((msg) => {
   switch (msg.type) {
     case "translate":
       return translate(String(msg.text || ""));
-    /* 設定画面の「試す」は、鍵や相手を替えた直後に古い訳が返っては困るので
-       覚えている分を読まない */
-    case "translate-fresh":
-      return translate(String(msg.text || ""), { bypassCache: true });
     case "models":
       return listModels();
     case "open-engoloyd":
