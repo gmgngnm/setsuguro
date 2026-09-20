@@ -1,11 +1,14 @@
 "use strict";
 
 const el = {
-  engoloydUrl: document.getElementById("engoloyd-url"),
   enabled: document.getElementById("enabled"),
   hover: document.getElementById("hover"),
+  delay: document.getElementById("hover-delay"),
+  trigger: document.getElementById("trigger"),
+  engine: document.getElementById("engine"),
   model: document.getElementById("model"),
   modelList: document.getElementById("model-list"),
+  engoloydUrl: document.getElementById("engoloyd-url"),
   test: document.getElementById("test"),
   testResult: document.getElementById("test-result"),
   status: document.getElementById("status"),
@@ -45,17 +48,12 @@ async function flushSave() {
   say("保存しました");
 }
 
-/* 選んでいる相手の欄だけ出す。使わない鍵の欄まで並ぶと、どれに入れればよいか
+/* 選んでいる相手の行だけ出す。使わない鍵の欄まで並ぶと、どれに入れればよいか
    分からなくなる */
-function showEngineCards(engine) {
-  for (const card of document.querySelectorAll("[data-engine]")) {
-    card.hidden = card.dataset.engine !== engine;
+function showEngineRows(engine) {
+  for (const row of document.querySelectorAll("[data-engine]")) {
+    row.hidden = row.dataset.engine !== engine;
   }
-}
-
-function currentEngine() {
-  const picked = document.querySelector('input[name="engine"]:checked');
-  return picked ? picked.value : SETTINGS_DEFAULTS.engine;
 }
 
 async function fillModelList() {
@@ -74,17 +72,14 @@ async function init() {
   showVersion();
   const settings = await loadSettings();
   for (const { info, input } of keyInputs) input.value = settings[info.keyField];
-  el.model.value = settings.model;
-  el.engoloydUrl.value = settings.engoloydUrl;
   el.enabled.checked = settings.enabled;
   el.hover.checked = settings.hover;
-  for (const radio of document.querySelectorAll('input[name="engine"]')) {
-    radio.checked = radio.value === settings.engine;
-  }
-  for (const radio of document.querySelectorAll('input[name="trigger"]')) {
-    radio.checked = radio.value === settings.trigger;
-  }
-  showEngineCards(settings.engine);
+  fillDelaySelect(el.delay, settings.hoverDelay);
+  fillEngineSelect(el.engine, settings.engine);
+  el.trigger.value = settings.trigger;
+  el.model.value = settings.model;
+  el.engoloydUrl.value = settings.engoloydUrl;
+  showEngineRows(settings.engine);
   if (settings.apiKey) fillModelList();
 }
 
@@ -109,13 +104,15 @@ for (const button of document.querySelectorAll(".peek")) {
   });
 }
 
-for (const radio of document.querySelectorAll('input[name="engine"]')) {
-  radio.addEventListener("change", () => {
-    if (!radio.checked) return;
-    showEngineCards(radio.value);
-    saveSoon({ engine: radio.value }, 0);
-  });
-}
+el.engine.addEventListener("change", () => {
+  showEngineRows(el.engine.value);
+  saveSoon({ engine: el.engine.value }, 0);
+});
+
+el.enabled.addEventListener("change", () => saveSoon({ enabled: el.enabled.checked }, 0));
+el.hover.addEventListener("change", () => saveSoon({ hover: el.hover.checked }, 0));
+el.delay.addEventListener("change", () => saveSoon({ hoverDelay: Number(el.delay.value) }, 0));
+el.trigger.addEventListener("change", () => saveSoon({ trigger: el.trigger.value }, 0));
 
 el.model.addEventListener("input", () => {
   /* 空のまま保存すると訳せなくなるので、その時は既定へ戻す */
@@ -127,25 +124,11 @@ el.engoloydUrl.addEventListener("input", () => {
   saveSoon({ engoloydUrl: el.engoloydUrl.value.trim() || SETTINGS_DEFAULTS.engoloydUrl });
 });
 
-el.enabled.addEventListener("change", () => {
-  saveSoon({ enabled: el.enabled.checked }, 0);
-});
-
-el.hover.addEventListener("change", () => {
-  saveSoon({ hover: el.hover.checked }, 0);
-});
-
-for (const radio of document.querySelectorAll('input[name="trigger"]')) {
-  radio.addEventListener("change", () => {
-    if (radio.checked) saveSoon({ trigger: radio.value }, 0);
-  });
-}
-
 el.test.addEventListener("click", async () => {
   /* 打ちかけの設定で試すと結果が食い違う。待っている保存を先に片付ける */
   clearTimeout(saveTimer);
   pending = {};
-  const values = { engine: currentEngine(), model: el.model.value.trim() || SETTINGS_DEFAULTS.model };
+  const values = { engine: el.engine.value, model: el.model.value.trim() || SETTINGS_DEFAULTS.model };
   for (const { info, input } of keyInputs) values[info.keyField] = input.value.trim();
   await browser.storage.local.set(values);
 
@@ -156,7 +139,7 @@ el.test.addEventListener("click", async () => {
   el.test.disabled = false;
 
   if (res && res.ok) {
-    el.testResult.textContent = `${TEST_SENTENCE}\n→ ${res.translation}（${res.via}）`;
+    el.testResult.textContent = `${TEST_SENTENCE} → ${res.translation}（${res.via}）`;
   } else {
     el.testResult.classList.add("err");
     el.testResult.textContent = (res && res.message) || "訳せませんでした";

@@ -361,8 +361,7 @@ async function startTranslate(text) {
  *    選ぶ手間が要らない代わりに、動かしている最中に出ては邪魔でしかない。
  *    同じ字の上で手が止まってから出す
  * ------------------------------------------------------------------ */
-const HOVER_DELAY_MS = 1000;
-/* 手の震えで数え直していると、いつまでも一秒が貯まらない */
+/* 手の震えで数え直していると、いつまでも時間が貯まらない */
 const HOVER_JITTER_PX = 6;
 /* 語から離れた瞬間に消すと、吹き出しの中の釦を押しに行けない */
 const HOVER_LEAVE_MS = 300;
@@ -530,7 +529,9 @@ document.addEventListener("mousemove", (event) => {
   }
   hoverPoint = point;
   clearTimeout(hoverTimer);
-  hoverTimer = setTimeout(() => onDwell(point), HOVER_DELAY_MS);
+  /* 待つ間は設定から。壊れた値が入っていても止まらないよう既定に落とす */
+  const delay = Number(settings.hoverDelay) || SETTINGS_DEFAULTS.hoverDelay;
+  hoverTimer = setTimeout(() => onDwell(point), delay);
 }, { capture: true, passive: true });
 
 document.addEventListener("mousedown", (event) => {

@@ -2,26 +2,24 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>選んで訳す</title>
+<title>Cursor Translator</title>
 <link rel="stylesheet" href="options.css">
 </head>
 <body class="popup">
 <div class="pop-head">
-  <label class="pop-switch"><input type="checkbox" id="enabled"> 動かす</label>
-  <h1>選んで訳す <span class="ver" id="version"></span></h1>
+  <button id="gear" class="gear" type="button" title="くわしい設定" aria-label="くわしい設定">
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+  <h1>Cursor Translator <span class="ver" id="version"></span></h1>
 </div>
+<hr>
 
-<label class="pop-check"><input type="checkbox" id="hover"> カーソルを1秒あわせて意味を出す</label>
-
-<label class="pop-label" for="engine">翻訳に使うもの</label>
-<select id="engine"></select>
-
-<label class="pop-label" id="key-label" for="key-input">APIキー</label>
-<input id="key-input" type="password" autocomplete="off" spellcheck="false">
-<button id="peek" type="button">表示</button>
-<span id="key-note" class="note" role="status" aria-live="polite"></span>
-
-<button id="more" class="wide" type="button">くわしい設定</button>
+<label class="prow" for="enabled"><span>動かす</span><input type="checkbox" class="sw" id="enabled"></label>
+<label class="prow" for="hover"><span>カーソルで意味を出す</span><input type="checkbox" class="sw" id="hover"></label>
+<label class="prow" for="hover-delay"><span>出すまで</span><select id="hover-delay"></select></label>
+<hr>
+<label class="prow" for="engine"><span>翻訳</span><select id="engine"></select></label>
+<p id="key-note" class="note" role="status" aria-live="polite"></p>
 
 <script src="common.js"></script>
 <script src="popup.js"></script>
