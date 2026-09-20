@@ -10,9 +10,10 @@ const HOST_ID = "engoloyd-select-to-ja";
    少し余裕を持たせた上限 */
 const MAX_CHARS = 1200;
 
-/* 選び直している最中に投げてしまわないための間。指を離してすぐ次の範囲へ
-   移る人がいるので、ひと呼吸だけ待ってから頼む */
-const SEND_DELAY_MS = 150;
+/* 待つ間は設定から。壊れた値が入っていても止まらないよう既定に落とす */
+function waitMs() {
+  return Number(settings.hoverDelay) || SETTINGS_DEFAULTS.hoverDelay;
+}
 
 const BUBBLE_CSS = `
 /* 漫画のセリフのように、元の文へ向かって尖らせる。角は少しだけ丸めて、
@@ -364,14 +365,16 @@ function hide() {
 /* ------------------------------------------------------------------ *
  * 訳を頼む
  * ------------------------------------------------------------------ */
-async function startTranslate(text) {
+/* wait は頼むまでに置く間。選んだときは、選び直している最中に投げてしまわない
+   よう待つ。カーソルを合わせたときは、合わせている間にもう待っているので置かない */
+async function startTranslate(text, { wait = 0 } = {}) {
   if (!text) return;
   const mine = ++seq;
   translation = "";
   showSettingsFlag = false;
   render({ kind: "loading" });
 
-  await new Promise((resolve) => setTimeout(resolve, SEND_DELAY_MS));
+  if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
   if (mine !== seq) return;
 
   let res;
@@ -515,7 +518,8 @@ function handleSelection(target) {
     render({ kind: "ask", message: "" });
     return;
   }
-  startTranslate(text);
+  /* 単語に合わせたときと同じだけ待ってから頼む */
+  startTranslate(text, { wait: waitMs() });
 }
 
 /* ページ側が止めてしまう作りでも拾えるよう、降りていく段階（capture）で聞く */
@@ -564,9 +568,7 @@ document.addEventListener("mousemove", (event) => {
   }
   hoverPoint = point;
   clearTimeout(hoverTimer);
-  /* 待つ間は設定から。壊れた値が入っていても止まらないよう既定に落とす */
-  const delay = Number(settings.hoverDelay) || SETTINGS_DEFAULTS.hoverDelay;
-  hoverTimer = setTimeout(() => onDwell(point), delay);
+  hoverTimer = setTimeout(() => onDwell(point), waitMs());
 }, { capture: true, passive: true });
 
 document.addEventListener("mousedown", (event) => {
