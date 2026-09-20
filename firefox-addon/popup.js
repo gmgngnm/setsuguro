@@ -25,6 +25,7 @@ function showKeyState() {
 async function init() {
   showVersion();
   settings = await loadSettings();
+  applyLook(settings);
   el.enabled.checked = settings.enabled;
   el.hover.checked = settings.hover;
   fillDelaySelect(el.delay, settings.hoverDelay);
