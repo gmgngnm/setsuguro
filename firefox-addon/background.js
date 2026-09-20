@@ -373,6 +373,8 @@ browser.runtime.onInstalled.addListener(async () => {
 async function applyBadge() {
   const { enabled, hover } = await loadSettings();
   const off = !enabled && !hover;
+  /* 動いていれば白地、止めていれば黒地。ツールバーを見ただけで分かるように */
+  await browser.browserAction.setIcon({ path: off ? "icons/icon-off.svg" : "icons/icon.svg" });
   await browser.browserAction.setBadgeText({ text: off ? "切" : "" });
   await browser.browserAction.setBadgeBackgroundColor({ color: "#C74B3F" });
   /* 釦を押すと板が出るので、押して何が起きるかではなく、いまの状態を書く */
