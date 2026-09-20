@@ -15,74 +15,58 @@ const MAX_CHARS = 1200;
 const SEND_DELAY_MS = 150;
 
 const BUBBLE_CSS = `
+/* 見た目は掲示板の書き込み欄くらいの素っ気なさで足りる。角丸も影も動きも
+   付けない。読んでいるページの上に出す物なので、飾るほど邪魔になる */
 .bubble{
   position:fixed; top:0; left:0;
   box-sizing:border-box;
-  width:max-content; min-width:150px;
-  padding:10px 12px 8px;
-  border:1px solid #D6DBCF; border-radius:12px;
-  background:#FFFFFF; color:#17211C;
-  font-family:"Hiragino Sans","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
-  font-size:14px; line-height:1.7; text-align:left;
-  box-shadow:0 1px 2px rgba(23,33,28,.06), 0 10px 28px rgba(23,33,28,.18);
+  width:max-content; min-width:120px;
+  padding:4px 6px 5px;
+  border:1px solid #B7C5D9;
+  background:#D6DAF0; color:#000000;
+  font:13px/1.45 arial,helvetica,"Hiragino Kaku Gothic ProN","Yu Gothic","MS PGothic",sans-serif;
+  text-align:left;
   pointer-events:auto;
-  animation:pop .12s ease-out;
 }
 .bubble[hidden]{display:none;}
-.head{display:flex; align-items:flex-start; gap:8px;}
+.head{display:flex; align-items:baseline; gap:6px;}
 .src{
   flex:1; min-width:0;
-  font-size:11.5px; line-height:1.5; color:#7C897E;
+  font-size:11px; line-height:1.4; color:#707070;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
   word-break:break-word;
 }
 .x{
-  flex:none; width:20px; height:20px; margin:-2px -4px 0 0; padding:0;
-  border:0; border-radius:6px; background:transparent;
-  color:#7C897E; font-size:15px; line-height:1; cursor:pointer;
+  flex:none; padding:0; border:0; background:none;
+  color:#34345C; font:inherit; font-size:11px; line-height:1; cursor:pointer;
 }
-.x:hover{background:#E7EBE2; color:#17211C;}
+.x:hover{color:#DD0000;}
 .body{
-  margin-top:3px; font-size:15px; line-height:1.75;
+  margin-top:2px; font-size:13px; line-height:1.55;
   white-space:pre-wrap; word-break:break-word;
   max-height:40vh; overflow:auto;
   user-select:text; -moz-user-select:text;
 }
-.body.err{font-size:13.5px; color:#C74B3F;}
-.body.wait{color:#7C897E;}
-.foot{display:flex; flex-wrap:wrap; align-items:center; gap:6px; row-gap:6px; margin-top:8px;}
+.body.err{color:#AF0A0F;}
+.body.wait{color:#707070;}
+.foot{display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; margin-top:3px;}
 .foot[hidden]{display:none;}
+/* 釦らしくせず、掲示板の [返信] のような括弧付きの字にする */
 .act{
-  flex:none; padding:3px 10px;
-  border:1px solid #D6DBCF; border-radius:999px; background:transparent;
-  color:#1F6F63; font:inherit; font-size:12px; line-height:1.6; cursor:pointer;
+  flex:none; padding:0; border:0; background:none;
+  color:#34345C; font:inherit; font-size:11px; cursor:pointer;
 }
-.act:hover{background:#E7EBE2;}
+.act::before{content:"[";}
+.act::after{content:"]";}
+.act:hover{color:#DD0000;}
 .act[hidden]{display:none;}
-.note{margin-left:auto; font-size:11px; color:#7C897E; white-space:nowrap;}
-.dots i{
-  display:inline-block; width:5px; height:5px; margin-right:3px;
-  border-radius:50%; background:currentColor; opacity:.3;
-  animation:blink 1s infinite;
-}
-.dots i:nth-child(2){animation-delay:.15s;}
-.dots i:nth-child(3){animation-delay:.3s;}
-@keyframes pop{from{opacity:0; transform:translateY(-4px) scale(.98);} to{opacity:1; transform:none;}}
-@keyframes blink{0%,100%{opacity:.25;} 50%{opacity:.9;}}
-@media (prefers-reduced-motion: reduce){
-  .bubble{animation:none;}
-  .dots i{animation:none; opacity:.5;}
-}
+.note{margin-left:auto; font-size:10px; color:#707070; white-space:nowrap;}
 @media (prefers-color-scheme: dark){
-  .bubble{
-    background:#182019; color:#ECF1E8; border-color:#2A342A;
-    box-shadow:0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.5);
-  }
-  .src,.note,.x,.body.wait{color:#7E8B80;}
-  .x:hover{background:#202A21; color:#ECF1E8;}
-  .act{color:#4FBFA8; border-color:#2A342A;}
-  .act:hover{background:#202A21;}
-  .body.err{color:#E27B70;}
+  .bubble{background:#282A2E; border-color:#3F4247; color:#C5C8C6;}
+  .src,.note,.body.wait{color:#969896;}
+  .x,.act{color:#81A2BE;}
+  .x:hover,.act:hover{color:#5F89AC;}
+  .body.err{color:#CC6666;}
 }
 `;
 
@@ -313,10 +297,7 @@ function render({ kind, message = "", note = "" }) {
   ui.body.classList.toggle("wait", kind === "loading" || kind === "ask");
 
   if (kind === "loading") {
-    ui.body.replaceChildren(
-      make("span", { className: "dots" }, make("i"), make("i"), make("i")),
-      document.createTextNode("訳しています")
-    );
+    ui.body.textContent = "訳しています…";
   } else {
     ui.body.textContent = kind === "ok" ? translation : message;
   }

@@ -6,32 +6,22 @@
 <link rel="stylesheet" href="options.css">
 </head>
 <body class="popup">
-<header class="pop-head">
-  <img src="icons/icon.svg" width="26" height="26" alt="">
-  <b>選んで訳す</b>
-  <span class="ver" id="version"></span>
-  <label class="pop-switch">
-    <input type="checkbox" id="enabled">
-    <span>動かす</span>
-  </label>
-</header>
+<div class="pop-head">
+  <label class="pop-switch"><input type="checkbox" id="enabled"> 動かす</label>
+  <h1>選んで訳す <span class="ver" id="version"></span></h1>
+</div>
 
-<label class="pop-check">
-  <input type="checkbox" id="hover">
-  <span>カーソルを1秒あわせて意味を出す</span>
-</label>
+<label class="pop-check"><input type="checkbox" id="hover"> カーソルを1秒あわせて意味を出す</label>
 
 <label class="pop-label" for="engine">翻訳に使うもの</label>
 <select id="engine"></select>
 
 <label class="pop-label" id="key-label" for="key-input">APIキー</label>
-<div class="row">
-  <input id="key-input" type="password" autocomplete="off" spellcheck="false">
-  <button id="peek" class="ghost" type="button">表示</button>
-</div>
-<p id="key-note" class="help" role="status" aria-live="polite"></p>
+<input id="key-input" type="password" autocomplete="off" spellcheck="false">
+<button id="peek" type="button">表示</button>
+<span id="key-note" class="note" role="status" aria-live="polite"></span>
 
-<button id="more" class="ghost wide" type="button">くわしい設定</button>
+<button id="more" class="wide" type="button">くわしい設定</button>
 
 <script src="common.js"></script>
 <script src="popup.js"></script>
