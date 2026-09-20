@@ -75,7 +75,7 @@ input.sw:checked::after{left:auto; right:0;}
 
 /* 吹き出しの見本。本物と同じ決め方で描く */
 .preview{
-  display:inline-block; padding:4px 8px 5px;
+  display:inline-block; padding:4px 8px 5px; box-sizing:border-box;
   border:1px solid var(--line); border-radius:7px;
   background:var(--box); color:var(--ink);
   font-size:13px; line-height:1.5;
