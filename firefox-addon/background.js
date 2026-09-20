@@ -375,7 +375,7 @@ async function applyBadge() {
   await browser.browserAction.setBadgeBackgroundColor({ color: "#C74B3F" });
   /* 釦を押すと板が出るので、押して何が起きるかではなく、いまの状態を書く */
   await browser.browserAction.setTitle({
-    title: enabled ? "Cursor Translator（動作中）" : "Cursor Translator（停止中）— 押して「動かす」を入れる",
+    title: enabled ? "Cursor Translator（動作中）" : "Cursor Translator（停止中）— 押して「ポップアップ表示」を入れる",
   });
 }
 

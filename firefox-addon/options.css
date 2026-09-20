@@ -73,6 +73,24 @@ input.sw::after{
 input.sw:checked{background:var(--on); border-color:var(--on);}
 input.sw:checked::after{left:auto; right:0;}
 
+/* 吹き出しの見本。本物と同じ決め方で描く */
+.preview{
+  display:inline-block; padding:4px 8px 5px;
+  border:1px solid var(--line); border-radius:7px;
+  background:var(--box); color:var(--ink);
+  font-size:13px; line-height:1.5;
+}
+input[type="color"]{
+  width:46px; height:20px; padding:0; vertical-align:middle;
+  border:1px solid var(--line); background:var(--field); cursor:pointer;
+}
+
+/* 待機時間のバー。つまみの色だけ合わせて、あとはブラウザの見た目のまま */
+input.bar{width:100%; margin:2px 0 0; accent-color:var(--on); vertical-align:middle;}
+.val{color:var(--soft); font-weight:normal; font-size:11px;}
+td input.bar{width:60%;}
+td .val{margin-left:6px;}
+
 select,input[type="text"],input[type="password"]{
   border:1px solid var(--line); background:var(--field); color:var(--ink);
   font:inherit; font-size:12px; padding:1px 3px;
