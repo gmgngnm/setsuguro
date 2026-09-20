@@ -241,6 +241,34 @@ function describeFailure(engine, err, settings) {
   return { message: err?.message || "訳せませんでした" };
 }
 
+/* ------------------------------------------------------------------ *
+ * 4. 一語だけ覚えておく
+ *    読んでいる間、同じ語には何度も戻ってくる。語なら短いので、裏方が起きて
+ *    いる間だけ覚えておけば呼ぶ回数がまとまって減る。文は同じ物を選び直す
+ *    ことがまず無いうえ長いので、覚えない
+ * ------------------------------------------------------------------ */
+const CACHE_MAX = 300;
+const cache = new Map();
+
+/* EnGoloyd が受け取れる形と同じ「英単語一語」だけを相手にする */
+function wordKey(text) {
+  return /^[A-Za-z][A-Za-z'-]*$/.test(text) ? text : "";
+}
+
+function cacheGet(key) {
+  if (!cache.has(key)) return null;
+  const value = cache.get(key);
+  /* 取り出したものを入れ直して、よく使う物が押し出されないようにする */
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function cacheSet(key, value) {
+  cache.set(key, value);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
+
 async function translate(text) {
   const settings = await loadSettings();
   const engine = pickEngine(settings);
@@ -249,11 +277,20 @@ async function translate(text) {
     return { ok: false, message: `${engine.label} のAPIキーがまだ入っていません`, showSettings: true };
   }
 
-  /* 訳は覚えておかない。同じ語を選び直せばその都度呼ぶ */
-  const via = engine.variant(settings) || engine.label;
+  const variant = engine.variant(settings);
+  const via = variant || engine.label;
+  /* 相手やモデルが変われば訳も変わる。覚えている分はそれごとに分ける */
+  const word = wordKey(text.trim());
+  const key = word && `${settings.engine}\n${variant}\n${word}`;
+  if (key) {
+    const hit = cacheGet(key);
+    if (hit) return { ok: true, translation: hit, cached: true, via };
+  }
+
   try {
     const translation = await engine.translate(text, apiKey, settings);
-    return { ok: true, translation, via };
+    if (key) cacheSet(key, translation);
+    return { ok: true, translation, cached: false, via };
   } catch (err) {
     console.warn("訳に失敗しました:", err);
     return { ok: false, ...describeFailure(engine, err, settings) };
