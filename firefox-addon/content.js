@@ -223,7 +223,7 @@ function readSelection(target) {
   const field = target && target.closest ? target.closest("input, textarea") : null;
   if (field && typeof field.selectionStart === "number" && field.selectionStart !== field.selectionEnd) {
     const text = String(field.value || "").slice(field.selectionStart, field.selectionEnd);
-    return { text, rectOf: () => field.getBoundingClientRect(), pointOf: () => endPoint(field.getBoundingClientRect()) };
+    return { text, rectOf: () => field.getBoundingClientRect(), pointOf: () => aimPoint(field.getBoundingClientRect()) };
   }
 
   const selection = window.getSelection();
@@ -231,19 +231,27 @@ function readSelection(target) {
   const text = selection.toString();
   if (!text.trim()) return null;
   const range = selection.getRangeAt(0).cloneRange();
-  return { text, rectOf: () => range.getBoundingClientRect(), pointOf: () => rangeEnd(range) };
+  return { text, rectOf: () => range.getBoundingClientRect(), pointOf: () => rangeAim(range) };
 }
 
-/* しっぽが指す先は、語や選んだ範囲の「終わり」。何行にもまたがるときは、
-   最後の行の終わり（指を離したあたり）を指す方が目で追いやすい */
-function rangeEnd(range) {
-  const rects = range.getClientRects();
-  const last = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
-  return endPoint(last);
+/* しっぽが指す先は、語や選んだ範囲の「真ん中」。何行にもまたがるときは、
+   吹き出しを置く側＝最後の行の真ん中を指す */
+function rangeAim(range) {
+  const rects = [...range.getClientRects()].filter((rect) => rect.width || rect.height);
+  if (!rects.length) return aimPoint(range.getBoundingClientRect());
+  /* 1行が複数の矩形に割れることがある（途中に別のタグが挟まる場合）ので、
+     最後の行に居る分をまとめてから真ん中を取る */
+  const last = rects[rects.length - 1];
+  const line = rects.filter((rect) => Math.abs(rect.bottom - last.bottom) < 2);
+  return {
+    x: (Math.min(...line.map((r) => r.left)) + Math.max(...line.map((r) => r.right))) / 2,
+    top: Math.min(...line.map((r) => r.top)),
+    bottom: Math.max(...line.map((r) => r.bottom)),
+  };
 }
 
-function endPoint(rect) {
-  return { x: rect.right, top: rect.top, bottom: rect.bottom };
+function aimPoint(rect) {
+  return { x: (rect.left + rect.right) / 2, top: rect.top, bottom: rect.bottom };
 }
 
 /* 英単語を一語だけ選んだときは、本体アプリで覚える方へも行けるようにする。
@@ -304,13 +312,13 @@ function place() {
 
   const bw = bubble.offsetWidth;
   const bh = bubble.offsetHeight;
-  /* しっぽの先が語の終わりに来るように置く。先が左斜め上を向いているので、
-     吹き出しは語の右下（上に出すときは右上）に来る */
+  /* しっぽの先が語の真ん中に来るように置く。先が左斜め上を向いているので、
+     吹き出しはそこから右下（上に出すときは右上）へ広がる */
   let point;
   try {
     point = anchor.pointOf();
   } catch {
-    point = { x: rect.right, top: rect.top, bottom: rect.bottom };
+    point = aimPoint(rect);
   }
 
   /* まず語の下。入らなければ上。どちらも入らないほど狭いときは、とにかく
@@ -323,9 +331,9 @@ function place() {
     top = above ? overWord : Math.max(8, vh - bh - 8);
   }
 
-  /* しっぽの先は TAIL_INSET だけ内側にある。そこが語の終わりの少し右に来る
-     よう左端を決め、画面からはみ出す分だけ戻す */
-  const apex = point.x + 6;
+  /* しっぽの先は TAIL_INSET だけ内側にある。そこが語の真ん中に来るよう左端を
+     決め、画面からはみ出す分だけ戻す */
+  const apex = point.x;
   const left = Math.min(Math.max(8, apex - TAIL_INSET), Math.max(8, vw - bw - 8));
   /* 端に寄せて動かした分は、しっぽの位置で吸収して指し先を語に残す */
   const tailX = Math.min(Math.max(apex - left, 8), Math.max(8, bw - 26));
@@ -492,7 +500,7 @@ function onDwell(point) {
   anchor = {
     text: found.word,
     rectOf: () => found.range.getBoundingClientRect(),
-    pointOf: () => rangeEnd(found.range),
+    pointOf: () => rangeAim(found.range),
   };
   shownText = found.word;
   shownWord = found.word;
