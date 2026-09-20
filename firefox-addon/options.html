@@ -12,15 +12,15 @@
 
   <div class="grp">動作</div>
   <table>
-    <tr><td class="k"><label for="enabled">ポップアップ表示</label></td>
+    <tr><td class="k"><label for="enabled">ハイライト翻訳</label></td>
       <td><input type="checkbox" class="sw" id="enabled">
-        <span class="note">切ると、選んでも合わせても吹き出しを出さない。ツールバーの釦でも入切できる</span></td></tr>
+        <span class="note">英文を選ぶと、その場で訳が出る。選ぶ手間がもう掛かっているので待たない</span></td></tr>
     <tr><td class="k"><label for="hover">カーソルタッチ翻訳</label></td>
       <td><input type="checkbox" class="sw" id="hover">
         <span class="note">選ばなくても、英単語の上でカーソルを止めるとその語の意味が出る</span></td></tr>
-    <tr><td class="k"><label for="hover-delay">待機時間</label></td>
+    <tr><td class="k"><label for="hover-delay">タッチ待機時間</label></td>
       <td><input type="range" id="hover-delay" class="bar"> <b id="hover-delay-label" class="val"></b>
-        <span class="note">カーソルを合わせてから、また文を選んでから、訳しに行くまで。0〜5秒。短いほど早く出るが、読んでいるだけで、あるいは選び直している最中にも呼びやすくなる</span></td></tr>
+        <span class="note">カーソルを止めてから訳しに行くまで。0〜5秒。短いほど早く出るが、読んでいるだけでも呼びやすくなる。ハイライト翻訳には掛からない</span></td></tr>
     <tr><td class="k"><label for="trigger">選んだとき</label></td>
       <td><select id="trigger">
           <option value="auto">すぐ訳す</option>
@@ -57,6 +57,11 @@
       <td><input type="range" id="bubble-radius" class="bar" min="0" max="20" step="1"> <b id="bubble-radius-label" class="val"></b></td></tr>
     <tr><td class="k"><label for="bubble-border">枠の太さ</label></td>
       <td><input type="range" id="bubble-border" class="bar" min="0" max="5" step="1"> <b id="bubble-border-label" class="val"></b></td></tr>
+    <tr><td class="k"><label for="bubble-font">文字の大きさ</label></td>
+      <td><input type="range" id="bubble-font" class="bar" min="10" max="24" step="1"> <b id="bubble-font-label" class="val"></b></td></tr>
+    <tr><td class="k"><label for="bubble-width">大きさ（横幅の上限）</label></td>
+      <td><input type="range" id="bubble-width" class="bar" min="160" max="800" step="20"> <b id="bubble-width-label" class="val"></b>
+        <span class="note">訳が短ければ、この幅まで広がらずに縮む</span></td></tr>
     <tr><td class="k"><label for="bubble-custom">色を自分で決める</label></td>
       <td><input type="checkbox" class="sw" id="bubble-custom">
         <span class="note">切っていれば、下の「色」で決めた色味に従う</span></td></tr>

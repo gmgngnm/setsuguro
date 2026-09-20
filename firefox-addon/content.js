@@ -36,6 +36,7 @@ const BUBBLE_CSS = `
   --tail-gap:calc(var(--bw,1px) * 2);
   background:var(--box); color:var(--ink);
   font:13px/1.5 arial,helvetica,"Hiragino Kaku Gothic ProN","Yu Gothic","MS PGothic",sans-serif;
+  font-size:var(--fs,13px);
   text-align:left;
   pointer-events:auto;
 }
@@ -69,11 +70,11 @@ const BUBBLE_CSS = `
 .x{
   position:absolute; top:2px; right:3px;
   padding:0; border:0; background:none;
-  color:var(--soft); font:inherit; font-size:11px; line-height:1; cursor:pointer;
+  color:var(--soft); font:inherit; font-size:calc(var(--fs,13px) - 2px); line-height:1; cursor:pointer;
 }
 .x:hover{color:var(--link-hover);}
 .body{
-  font-size:13px; line-height:1.55;
+  font-size:var(--fs,13px); line-height:1.55;
   white-space:pre-wrap; word-break:break-word;
   max-height:40vh; overflow:auto;
   user-select:text; -moz-user-select:text;
@@ -85,13 +86,13 @@ const BUBBLE_CSS = `
 /* 釦らしくせず、掲示板の [返信] のような括弧付きの字にする */
 .act{
   flex:none; padding:0; border:0; background:none;
-  color:var(--link); font:inherit; font-size:11px; cursor:pointer;
+  color:var(--link); font:inherit; font-size:calc(var(--fs,13px) - 2px); cursor:pointer;
 }
 .act::before{content:"[";}
 .act::after{content:"]";}
 .act:hover{color:var(--link-hover);}
 .act[hidden]{display:none;}
-.note{margin-left:auto; font-size:10px; color:var(--soft); white-space:nowrap;}
+.note{margin-left:auto; font-size:calc(var(--fs,13px) - 3px); color:var(--soft); white-space:nowrap;}
 `;
 
 /* innerHTML は使わない。差し込むのは決め打ちの文字列だけとはいえ、拡張機能では
@@ -158,8 +159,9 @@ loadSettings().then((saved) => {
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   for (const [key, change] of Object.entries(changes)) settings[key] = change.newValue;
-  if (!settings.enabled) hide();
-  /* 合わせて出す方を切ったのに、出たままなのは気味が悪い */
+  /* 札を切ったのに出たままなのは気味が悪い。出ている吹き出しが、切られた方の
+     ものだったときだけ引っ込める */
+  if (!settings.enabled && !hoverSource) hide();
   if (!settings.hover && hoverSource) hide();
   /* 見た目を変えたら、出ている吹き出しもその場で合わせる */
   applyBubbleLook();
@@ -285,6 +287,7 @@ function applyBubbleLook() {
   bubble.dataset.accent = settings.accent || SETTINGS_DEFAULTS.accent;
   bubble.style.setProperty("--radius", `${clampNum(settings.bubbleRadius, 0, 20, SETTINGS_DEFAULTS.bubbleRadius)}px`);
   bubble.style.setProperty("--bw", `${clampNum(settings.bubbleBorder, 0, 5, SETTINGS_DEFAULTS.bubbleBorder)}px`);
+  bubble.style.setProperty("--fs", `${clampNum(settings.bubbleFont, 10, 24, SETTINGS_DEFAULTS.bubbleFont)}px`);
   /* 自分で決めた色は、明暗や色味より後に当てる。切れば元の色味に戻す */
   for (const [prop, value] of [["--box", settings.bubbleBg], ["--line", settings.bubbleLine], ["--ink", settings.bubbleInk]]) {
     if (settings.bubbleCustomColors && value) bubble.style.setProperty(prop, value);
@@ -320,7 +323,8 @@ function place() {
   const bubble = ui.bubble;
   const vw = document.documentElement.clientWidth || window.innerWidth;
   const vh = window.innerHeight;
-  bubble.style.maxWidth = `${Math.max(200, Math.min(380, vw - 16))}px`;
+  const want = clampNum(settings.bubbleWidth, 160, 800, SETTINGS_DEFAULTS.bubbleWidth);
+  bubble.style.maxWidth = `${Math.max(140, Math.min(want, vw - 16))}px`;
 
   const bw = bubble.offsetWidth;
   const bh = bubble.offsetHeight;
@@ -411,8 +415,9 @@ function hide() {
 /* ------------------------------------------------------------------ *
  * 訳を頼む
  * ------------------------------------------------------------------ */
-/* wait は頼むまでに置く間。選んだときは、選び直している最中に投げてしまわない
-   よう待つ。カーソルを合わせたときは、合わせている間にもう待っているので置かない */
+/* wait は頼むまでに置く間。いまは誰も渡していない（カーソルを合わせたときは
+   合わせている間に待ち終えていて、選んだときは待たせない）が、置き場所として
+   残してある */
 async function startTranslate(text, { wait = 0 } = {}) {
   if (!text) return;
   const mine = ++seq;
@@ -502,7 +507,7 @@ function wordAtPoint(x, y) {
 /* 手が止まって一秒 */
 function onDwell(point) {
   hoverTimer = null;
-  if (!settings.enabled || !settings.hover) return;
+  if (!settings.hover) return;
   /* 選んで出した吹き出しが出ているなら、そちらを立てる */
   if (ui && !ui.bubble.hidden && !hoverSource) return;
 
@@ -568,8 +573,8 @@ function handleSelection(target) {
     render({ kind: "ask", message: "" });
     return;
   }
-  /* 単語に合わせたときと同じだけ待ってから頼む */
-  startTranslate(text, { wait: waitMs() });
+  /* 選ぶという手間がもう掛かっているので、ここでは待たせない */
+  startTranslate(text);
 }
 
 /* ページ側が止めてしまう作りでも拾えるよう、降りていく段階（capture）で聞く */
@@ -581,7 +586,7 @@ document.addEventListener("mouseup", (event) => {
 }, true);
 
 document.addEventListener("mousemove", (event) => {
-  if (!settings.enabled || !settings.hover) return;
+  if (!settings.hover) return;
   /* 吹き出しの上に居る間は引っ込めない。中の釦を押しに行けなくなる */
   if (insideUI(event)) {
     clearTimeout(hoverLeaveTimer);

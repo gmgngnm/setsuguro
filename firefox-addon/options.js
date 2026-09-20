@@ -13,6 +13,10 @@ const el = {
   radiusLabel: document.getElementById("bubble-radius-label"),
   border: document.getElementById("bubble-border"),
   borderLabel: document.getElementById("bubble-border-label"),
+  font: document.getElementById("bubble-font"),
+  fontLabel: document.getElementById("bubble-font-label"),
+  width: document.getElementById("bubble-width"),
+  widthLabel: document.getElementById("bubble-width-label"),
   custom: document.getElementById("bubble-custom"),
   bg: document.getElementById("bubble-bg"),
   line: document.getElementById("bubble-line"),
@@ -60,6 +64,8 @@ function drawPreview() {
   const style = el.preview.style;
   style.borderRadius = `${el.radius.value}px`;
   style.borderWidth = `${el.border.value}px`;
+  style.fontSize = `${el.font.value}px`;
+  style.maxWidth = `${el.width.value}px`;
   if (el.custom.checked) {
     style.background = el.bg.value;
     style.borderColor = el.line.value;
@@ -71,6 +77,8 @@ function drawPreview() {
   }
   el.radiusLabel.textContent = `${el.radius.value}px`;
   el.borderLabel.textContent = `${el.border.value}px`;
+  el.fontLabel.textContent = `${el.font.value}px`;
+  el.widthLabel.textContent = `${el.width.value}px`;
   for (const row of document.querySelectorAll("[data-custom]")) row.hidden = !el.custom.checked;
 }
 
@@ -107,6 +115,8 @@ async function init() {
   el.model.value = settings.model;
   el.radius.value = String(clampNum(settings.bubbleRadius, 0, 20, SETTINGS_DEFAULTS.bubbleRadius));
   el.border.value = String(clampNum(settings.bubbleBorder, 0, 5, SETTINGS_DEFAULTS.bubbleBorder));
+  el.font.value = String(clampNum(settings.bubbleFont, 10, 24, SETTINGS_DEFAULTS.bubbleFont));
+  el.width.value = String(clampNum(settings.bubbleWidth, 160, 800, SETTINGS_DEFAULTS.bubbleWidth));
   el.custom.checked = Boolean(settings.bubbleCustomColors);
   el.bg.value = settings.bubbleBg;
   el.line.value = settings.bubbleLine;
@@ -159,7 +169,10 @@ el.model.addEventListener("input", () => {
   saveSoon({ model: el.model.value.trim() || SETTINGS_DEFAULTS.model });
 });
 
-for (const [input, key] of [[el.radius, "bubbleRadius"], [el.border, "bubbleBorder"]]) {
+for (const [input, key] of [
+  [el.radius, "bubbleRadius"], [el.border, "bubbleBorder"],
+  [el.font, "bubbleFont"], [el.width, "bubbleWidth"],
+]) {
   input.addEventListener("input", drawPreview);
   input.addEventListener("change", () => saveSoon({ [key]: Number(input.value) }, 0));
 }
