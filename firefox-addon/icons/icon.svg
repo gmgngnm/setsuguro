@@ -1,11 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
-  <!-- 青く選ばれた英文と、その下に出てくる訳の吹き出し -->
-  <rect width="96" height="96" rx="22" fill="#1F6F63"/>
-  <rect x="16" y="20" width="64" height="16" rx="5" fill="#2F6FED"/>
-  <rect x="21" y="26" width="32" height="5" rx="2.5" fill="#FFFFFF"/>
-  <rect x="57" y="26" width="18" height="5" rx="2.5" fill="#FFFFFF"/>
-  <path d="M22 76h6v12z" fill="#F1F3EE"/>
-  <rect x="14" y="46" width="68" height="30" rx="9" fill="#F1F3EE"/>
-  <rect x="23" y="55" width="42" height="5" rx="2.5" fill="#1F6F63"/>
-  <rect x="23" y="65" width="26" height="5" rx="2.5" fill="#1F6F63" opacity=".5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- 黒地に白いT。16pxのツールバーで潰れないよう、字ではなく形で描いてある
+       （字にすると入っている書体次第で太さが変わる） -->
+  <rect width="64" height="64" fill="#101114"/>
+  <g fill="#FFFFFF">
+    <rect x="11" y="13" width="42" height="11"/>
+    <rect x="11" y="13" width="5" height="7"/>
+    <rect x="48" y="13" width="5" height="7"/>
+    <rect x="27.5" y="13" width="9" height="33"/>
+    <rect x="20" y="45" width="24" height="6"/>
+  </g>
 </svg>

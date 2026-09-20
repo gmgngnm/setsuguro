@@ -21,6 +21,9 @@ const SETTINGS_DEFAULTS = {
   /* カーソルを英単語に1秒あわせたら、その語の意味を出す。選ぶ手間が要らない
      代わりに、読んでいるだけで呼ぶことになるので、切れるようにしてある */
   hover: true,
+  /* 合わせてから意味を出すまでの間。短いと読んでいるだけで出てしまい、長いと
+     待たされる。好みが割れるので選べるようにした */
+  hoverDelay: 1000,
   enabled: true,
   /* 単語を一語だけ選んだときに出る「EnGoloydで開く」の飛び先。既定は
      GitHub Pages に置いてある本体アプリ。自分で配る場所が違う人もいるので
@@ -34,6 +37,42 @@ const ENGINES_INFO = [
   { id: "deepl", label: "DeepL", keyField: "deeplKey", inputId: "deepl-key" },
   { id: "google", label: "Google翻訳", keyField: "googleKey", inputId: "google-key" },
 ];
+
+/* 出すまでの間の選択肢。板と設定画面で同じ並びを出す */
+const HOVER_DELAYS = [
+  { ms: 300, label: "0.3秒" },
+  { ms: 500, label: "0.5秒" },
+  { ms: 1000, label: "1秒" },
+  { ms: 1500, label: "1.5秒" },
+  { ms: 2000, label: "2秒" },
+  { ms: 3000, label: "3秒" },
+];
+
+function fillDelaySelect(select, value) {
+  select.replaceChildren(
+    ...HOVER_DELAYS.map((choice) => {
+      const option = document.createElement("option");
+      option.value = String(choice.ms);
+      option.textContent = choice.label;
+      return option;
+    })
+  );
+  select.value = String(value);
+  /* 覚えている値が並びに無ければ、既定に寄せる（空欄のままにしない） */
+  if (!select.value) select.value = String(SETTINGS_DEFAULTS.hoverDelay);
+}
+
+function fillEngineSelect(select, value) {
+  select.replaceChildren(
+    ...ENGINES_INFO.map((info) => {
+      const option = document.createElement("option");
+      option.value = info.id;
+      option.textContent = info.label;
+      return option;
+    })
+  );
+  select.value = value;
+}
 
 function engineInfo(id) {
   return ENGINES_INFO.find((e) => e.id === id) || ENGINES_INFO[0];

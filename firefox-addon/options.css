@@ -1,30 +1,34 @@
-/* 掲示板くらいの素っ気なさで足りる。角丸・影・動き・飾りの色は使わず、
-   釦や入力欄もブラウザの見た目のままに近づけている。読む物ではなく
-   触って閉じる画面なので、飾るほど探しにくくなる */
+/* 見た目は掲示板くらいの素っ気なさで足りる。角丸も影も動きも付けず、入力欄や
+   釦はブラウザの見た目のまま。触って閉じる画面なので、飾るほど探しにくくなる。
+   設定画面と板で同じ一枚を使う */
 :root{
   --bg:#EEF2FF;
   --box:#D6DAF0;
   --ink:#000000;
-  --ink-soft:#707070;
+  --soft:#707070;
   --line:#B7C5D9;
   --link:#34345C;
   --link-hover:#DD0000;
   --title:#0F0C5D;
   --danger:#AF0A0F;
   --field:#FFFFFF;
+  --on:#2A6B2A;
+  --off:#9AA3B8;
 }
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#1D1F21;
     --box:#282A2E;
     --ink:#C5C8C6;
-    --ink-soft:#969896;
+    --soft:#969896;
     --line:#3F4247;
     --link:#81A2BE;
     --link-hover:#5F89AC;
     --title:#B294BB;
     --danger:#CC6666;
     --field:#1D1F21;
+    --on:#7FA87F;
+    --off:#55585C;
   }
 }
 *{box-sizing:border-box;}
@@ -33,41 +37,68 @@ body{
   background:var(--bg); color:var(--ink);
   font:13px/1.5 arial,helvetica,"Hiragino Kaku Gothic ProN","Yu Gothic","MS PGothic",sans-serif;
 }
-.wrap{max-width:560px;}
-h1{margin:0 0 2px; font-size:15px; color:var(--title);}
-.ver{color:var(--ink-soft); font-size:11px; font-weight:normal;}
-.lead{margin:0 0 10px; color:var(--ink-soft); font-size:11px;}
-fieldset{
-  margin:0 0 8px; padding:5px 8px 7px;
-  border:1px solid var(--line); background:var(--box);
-}
-fieldset[hidden]{display:none;}
-legend{padding:0 3px; color:var(--title); font-weight:bold; font-size:12px;}
-.note{display:block; margin:0 0 5px; color:var(--ink-soft); font-size:11px;}
-label.row{display:block; margin:1px 0;}
-label.row .sub{color:var(--ink-soft); font-size:11px;}
+.wrap{max-width:620px;}
+h1{margin:0 0 1px; font-size:15px; color:var(--title);}
+.ver{color:var(--soft); font-size:11px; font-weight:normal;}
+.lead{margin:0 0 10px; color:var(--soft); font-size:11px;}
 a{color:var(--link);}
 a:hover{color:var(--link-hover);}
-input[type="text"],input[type="password"],select{
+hr{border:0; border-top:1px solid var(--line); margin:5px 0;}
+
+/* 入切の札。チェックの箱をそのまま横長の板にしている（別の要素を重ねると
+   キーボードや読み上げから外れるため） */
+input.sw{
+  appearance:none; -moz-appearance:none;
+  position:relative; vertical-align:middle;
+  width:30px; height:15px; margin:0; padding:0;
+  border:1px solid var(--line); background:var(--off);
+  cursor:pointer;
+}
+input.sw::after{
+  content:""; position:absolute; top:0; left:0;
+  width:12px; height:100%; background:var(--field);
+}
+input.sw:checked{background:var(--on); border-color:var(--on);}
+input.sw:checked::after{left:auto; right:0;}
+
+select,input[type="text"],input[type="password"]{
   border:1px solid var(--line); background:var(--field); color:var(--ink);
   font:inherit; font-size:12px; padding:1px 3px;
 }
-input[type="text"],input[type="password"]{width:70%;}
 button{font:inherit; font-size:12px;}
-.result{margin:5px 0 0; font-size:12px; white-space:pre-wrap; color:var(--ink-soft);}
+.gear{
+  float:right; padding:0; border:0; background:none;
+  color:var(--link); line-height:0; cursor:pointer;
+}
+.gear:hover{color:var(--link-hover);}
+
+/* 設定画面：左にラベル・右に操作の表 */
+.grp{
+  margin:10px 0 0; padding:2px 4px;
+  background:var(--box); border:1px solid var(--line); border-bottom:0;
+  color:var(--title); font-weight:bold; font-size:11px;
+}
+table{width:100%; border-collapse:collapse; border:1px solid var(--line);}
+td{padding:4px 5px; border-bottom:1px solid var(--line); font-size:12px; vertical-align:top;}
+tr:last-child td{border-bottom:0;}
+td.k{width:38%; color:var(--title);}
+tr[hidden]{display:none;}
+td .note{display:block; margin-top:2px; color:var(--soft); font-size:10px; line-height:1.4;}
+td input[type="text"],td input[type="password"]{width:78%;}
+.result{display:block; margin-top:3px; font-size:12px; white-space:pre-wrap;}
 .result.err{color:var(--danger);}
-.status{min-height:1.4em; margin:2px 0 0; color:var(--ink-soft); font-size:11px; visibility:hidden;}
+.status{min-height:1.4em; margin:3px 0 0; color:var(--soft); font-size:11px; visibility:hidden;}
 .status.on{visibility:visible;}
 
-/* ツールバーの釦から出る板。同じ作りのまま幅だけ詰める */
-body.popup{width:250px; padding:8px;}
-body.popup h1{display:inline;}
-body.popup input[type="text"],body.popup input[type="password"]{width:62%;}
-body.popup select{width:100%; margin-bottom:6px;}
-.pop-head{margin-bottom:6px;}
-.pop-switch{float:right; font-size:11px; color:var(--ink-soft);}
-.pop-check{display:block; margin:0 0 6px; font-size:11px;}
-.pop-label{display:block; margin:0 0 2px; color:var(--title); font-size:11px; font-weight:bold;}
-body.popup .note{margin:4px 0 0;}
-body.popup .note.bad{color:var(--danger);}
-.wide{display:block; width:100%; margin-top:8px;}
+/* 板：ラベル左・操作右で一行ずつ */
+body.popup{width:230px; padding:8px;}
+body.popup h1{display:inline; font-size:13px;}
+.pop-head{margin-bottom:2px;}
+.prow{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:3px 0; font-size:12px; cursor:pointer;
+}
+.prow select{cursor:pointer;}
+.note{color:var(--soft); font-size:10px;}
+.note.bad{color:var(--danger);}
+body.popup .note{display:block; margin:4px 0 0; line-height:1.4;}

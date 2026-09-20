@@ -29,11 +29,10 @@ git fetch origin main && git checkout -B <枝> origin/main
 Service Worker はシェル（index.html / app.js / styles.css など）をHTTPキャッシュを
 通さずに取りに行く。キャッシュの持ち方を変えたときは `sw.js` の `CACHE` 名も上げる。
 
-## Firefox アドオン（`firefox-addon/`）
+## Firefox アドオン（`firefox-addon/`）— Cursor Translator
 
-ページの英文を選ぶ、または英単語にカーソルを1秒あわせると、その場に日本語訳を
-出す拡張機能。PWA とは別物で、置き場所を
-同じリポジトリにしているだけ。訳す相手は Gemini / DeepL / Google翻訳 から選べて、
+ページの英文を選ぶ、または英単語にカーソルを合わせると、その場に日本語訳を
+出す拡張機能。PWA とは別物で、置き場所を同じリポジトリにしているだけ。訳す相手は Gemini / DeepL / Google翻訳 から選べて、
 APIキーも拡張機能側で別に持つ。入れ方と中身は `firefox-addon/README.md` に書いてある。
 
 直しながら試すときは `npx web-ext run --source-dir firefox-addon`。
