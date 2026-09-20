@@ -368,15 +368,13 @@ browser.runtime.onInstalled.addListener(async () => {
   }
 });
 
-/* ツールバーの釦を押すと出る板に入切がある。止めているのが見て分かるよう印を付ける。
-   印を出すのは両方とも切っているときだけ。片方でも動いていれば止まってはいない */
-async function applyBadge() {
+/* 止めているのが見て分かるよう、アイコンそのものを差し替える。動いていれば
+   白地、両方とも切っていれば黒地。片方でも動いていれば止まってはいない。
+   小さな札は重ねない（アイコンで分かるものを二重に言わない） */
+async function applyToolbar() {
   const { enabled, hover } = await loadSettings();
   const off = !enabled && !hover;
-  /* 動いていれば白地、止めていれば黒地。ツールバーを見ただけで分かるように */
   await browser.browserAction.setIcon({ path: off ? "icons/icon-off.svg" : "icons/icon.svg" });
-  await browser.browserAction.setBadgeText({ text: off ? "切" : "" });
-  await browser.browserAction.setBadgeBackgroundColor({ color: "#C74B3F" });
   /* 釦を押すと板が出るので、押して何が起きるかではなく、いまの状態を書く */
   await browser.browserAction.setTitle({
     title: off ? "Cursor Translator（停止中）— 押して札を入れる" : "Cursor Translator（動作中）",
@@ -384,7 +382,7 @@ async function applyBadge() {
 }
 
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.enabled || changes.hover)) applyBadge();
+  if (area === "local" && (changes.enabled || changes.hover)) applyToolbar();
 });
 
-applyBadge();
+applyToolbar();
