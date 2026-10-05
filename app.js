@@ -11469,15 +11469,15 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "241";
+const APP_BUILD = "242";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
   if (el) el.textContent = `#${APP_BUILD}`;
 }
 
-/* Firefoxアドオン「選んで訳す」から ?w=単語 で開かれる。開いた勢いのまま
-   分解に入れるようにしておく */
+/* Firefoxアドオン Cursor Translator（別リポジトリ gmgngnm/cursor-translator）
+   から ?w=単語 で開かれる。開いた勢いのまま分解に入れるようにしておく */
 function startDecomposeFromQuery() {
   const word = new URLSearchParams(location.search).get("w");
   if (!word) return;

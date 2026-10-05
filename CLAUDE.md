@@ -29,21 +29,15 @@ git fetch origin main && git checkout -B <枝> origin/main
 Service Worker はシェル（index.html / app.js / styles.css など）をHTTPキャッシュを
 通さずに取りに行く。キャッシュの持ち方を変えたときは `sw.js` の `CACHE` 名も上げる。
 
-## Firefox アドオン（`firefox-addon/`）— Cursor Translator
+## Firefox アドオン（Cursor Translator）は別のリポジトリ
 
-ページの英文を選ぶ、または英単語にカーソルを合わせると、その場に日本語訳を
-出す拡張機能。PWA とは別物で、置き場所を同じリポジトリにしているだけ。訳す相手は Gemini / DeepL / Google翻訳 から選べて、
-APIキーも拡張機能側で別に持つ。入れ方と中身は `firefox-addon/README.md` に書いてある。
+ページの英文に日本語訳を出す拡張機能は、ここの `firefox-addon/` に間借りして
+いたが、2026-10-05 に [gmgngnm/cursor-translator](https://github.com/gmgngnm/cursor-translator)
+へ移した。**こちらにはもう無い**ので、アドオンを直すときは向こうで。
 
-直しながら試すときは `npx web-ext run --source-dir firefox-addon`。
-保存するたびに読み込み直すので、`about:debugging` を触らなくてよい。
-
-直したら `manifest.json` の `version` を上げる。ビルド番号のような表示は無いので、
-`about:debugging` で読み込み直したものかどうかはここで見分ける。
-
-アドオンは英単語を一語だけ選んだとき `index.html?w=単語` で本体アプリを開く。
-それを受ける口が `app.js` の `startDecomposeFromQuery`。アドオン側の唯一の
-繋ぎ目なので、消すなら向こうの「EnGoloydで開く」も一緒に外すこと。
+繋ぎ目は一つだけ残っている。アドオンは英単語を一語だけ選んだとき
+`index.html?w=単語` でこの本体アプリを開く。それを受ける口が `app.js` の
+`startDecomposeFromQuery`。消すなら向こうの「EnGoloydで開く」も一緒に外すこと。
 
 ## 確認のしかた
 
@@ -55,10 +49,6 @@ APIキーも拡張機能側で別に持つ。入れ方と中身は `firefox-addo
 - 配信: プロジェクト直下で `python3 -m http.server 8940`
   （`setsid nohup ... </dev/null &` で起こすこと）
 - Gemini API は `page.route` で差し替える。実際には呼ばない
-- Firefox の内蔵PDFビューアは `resource://` のページで、拡張機能は差し込めない
-  （Firefox 本体の PdfStreamConverter.sys.mjs で確認済み）。そのため pdf.js を
-  同梱した自前のビューアを `firefox-addon/pdf/` に持っている。テストは本物のPDFを
-  その自前ビューアに描かせて確かめる（`viewer.test.js`）
 
 見た目を変えたときは、明るいテーマと暗いテーマの両方を撮って確かめる。
 時間や見え方の主張は、測らずに書かないこと。
