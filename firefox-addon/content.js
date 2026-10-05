@@ -234,10 +234,47 @@ function readSelection(target) {
 
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
-  const text = selection.toString();
-  if (!text.trim()) return null;
   const range = selection.getRangeAt(0).cloneRange();
+  const text = textOfRange(range);
+  if (!text.trim()) return null;
   return { text, rectOf: () => range.getBoundingClientRect(), pointOf: () => rangeAim(range) };
+}
+
+/* 選んだ範囲の字を取り出す。PDFビューア（pdf.js）は行ごとに別の箱へ字を置き、
+   箱と箱の間に空白が無い。そのまま繋ぐと行の終わりと次の行の頭がくっついて
+   「walkedhome」になるので、行が変わったところには空白を入れる。行末で語が
+   切られていれば（reserva- / tion）、ハイフンを落として繋ぐ */
+function textOfRange(range) {
+  /* 一つの箱の中だけで閉じている選択は、そのまま読めばよい */
+  if (range.commonAncestorContainer.nodeType === Node.TEXT_NODE) return range.toString();
+
+  const pieces = [];
+  const walker = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!range.intersectsNode(node)) continue;
+    const piece = range.cloneRange();
+    piece.setStart(node, node === range.startContainer ? range.startOffset : 0);
+    piece.setEnd(node, node === range.endContainer ? range.endOffset : (node.nodeValue || "").length);
+    const text = piece.toString();
+    if (!text) continue;
+    const rect = piece.getBoundingClientRect();
+    /* 見えていない字（隠された箱の中など）は選んだうちに入らない */
+    if (!rect.width && !rect.height) continue;
+    pieces.push({ text, top: rect.top });
+  }
+  if (!pieces.length) return range.toString();
+
+  let out = "";
+  let prevTop = null;
+  for (const piece of pieces) {
+    if (out && prevTop !== null && Math.abs(piece.top - prevTop) > 1) {
+      if (/[A-Za-z]-$/.test(out) && /^[a-z]/.test(piece.text)) out = out.slice(0, -1);
+      else if (!/\s$/.test(out) && !/^\s/.test(piece.text)) out += " ";
+    }
+    out += piece.text;
+    prevTop = piece.top;
+  }
+  return out;
 }
 
 /* しっぽが指す先は、語や選んだ範囲の「真ん中」。何行にもまたがるときは、
