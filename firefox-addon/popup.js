@@ -11,6 +11,7 @@ const el = {
   delayLabel: document.getElementById("hover-delay-label"),
   engine: document.getElementById("engine"),
   note: document.getElementById("key-note"),
+  pdf: document.getElementById("pdf"),
 };
 
 let settings = { ...SETTINGS_DEFAULTS };
@@ -23,6 +24,21 @@ function showKeyState() {
   el.note.classList.toggle("bad", !has);
 }
 
+/* いま見ているページがPDFなら、それを自前のビューアで開き直す。Firefox の
+   内蔵ビューアは resource:// のページで、そこには差し込めないため */
+function isPdfUrl(url) {
+  return /^https?:\/\/|^file:\/\//.test(url || "") && /\.pdf(\?|#|$)/i.test(url || "");
+}
+
+async function currentTab() {
+  try {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    return tab || null;
+  } catch {
+    return null;
+  }
+}
+
 async function init() {
   showVersion();
   settings = await loadSettings();
@@ -33,6 +49,12 @@ async function init() {
   el.delayLabel.textContent = delayLabel(el.delay.value);
   fillEngineSelect(el.engine, settings.engine);
   showKeyState();
+
+  const tab = await currentTab();
+  if (tab && isPdfUrl(tab.url)) {
+    el.pdf.textContent = "このPDFをここで開く";
+    el.pdf.dataset.url = tab.url;
+  }
 }
 
 el.enabled.addEventListener("change", () => {
@@ -56,6 +78,13 @@ el.engine.addEventListener("change", () => {
   settings.engine = el.engine.value;
   browser.storage.local.set({ engine: el.engine.value });
   showKeyState();
+});
+
+el.pdf.addEventListener("click", async () => {
+  const url = el.pdf.dataset.url;
+  const page = url ? `pdf/viewer.html?file=${encodeURIComponent(url)}` : "pdf/viewer.html";
+  await browser.tabs.create({ url: browser.runtime.getURL(page) });
+  window.close();
 });
 
 el.gear.addEventListener("click", () => {

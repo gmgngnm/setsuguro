@@ -1,0 +1,26 @@
+/* 自前のPDFビューア。Firefox の内蔵ビューアは resource:// のページなので、
+   拡張機能が中に入れない。訳を出すには自分のページで開くしかない */
+body.pdfpage{margin:0; padding:0; overflow:hidden; background:var(--box);}
+.pdfbar{
+  position:fixed; inset:0 0 auto 0; z-index:2;
+  display:flex; align-items:center; gap:10px;
+  padding:5px 8px;
+  background:var(--bg); border-bottom:1px solid var(--line);
+  font-size:12px;
+}
+.pdfbar b{color:var(--title);}
+.pdfname{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--soft); font-size:11px;}
+.pdfzoom{display:flex; align-items:center; gap:4px;}
+.pdfzoom .val{min-width:3.4em; text-align:center;}
+.pdfnote{
+  position:fixed; inset:31px 0 auto 0; z-index:2; margin:0;
+  padding:4px 8px; background:var(--box); border-bottom:1px solid var(--line);
+  color:var(--danger); font-size:11px;
+}
+.pdfnote:empty{display:none;}
+#viewerContainer{
+  position:absolute; inset:31px 0 0 0;
+  overflow:auto; background:var(--box);
+}
+/* pdf.js が描く紙。影は付けず、枠だけで区切る */
+.pdfViewer .page{border:1px solid var(--line); margin:8px auto; background:#fff;}

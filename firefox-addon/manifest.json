@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Cursor Translator",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "ページの英文をマウスで選ぶと、その場に日本語訳を出す。訳は Gemini・DeepL・Google翻訳から選べる",
   "browser_specific_settings": {
     "gecko": {
@@ -20,6 +20,7 @@
   },
   "permissions": [
     "storage",
+    "<all_urls>",
     "https://generativelanguage.googleapis.com/*",
     "https://api.deepl.com/*",
     "https://api-free.deepl.com/*",
