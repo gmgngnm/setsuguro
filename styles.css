@@ -652,6 +652,9 @@ button{font-family:inherit;cursor:pointer;}
   font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;flex-shrink:0;
 }
 .deck-pick .deck-select{max-width:none;flex:1;}
+/* 結果画面では、保存ボタンのすぐ上に置いて行き先が見えるようにする */
+.deck-pick-save{justify-content:flex-end;flex:0 1 auto;}
+.deck-pick-save .deck-select{flex:0 1 220px;}
 .deck-move-list{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow-y:auto;}
 
 /* 単語帳を選ぶ画面。1冊ずつをそのまま押せる大きさの札にする */
@@ -673,6 +676,16 @@ button{font-family:inherit;cursor:pointer;}
   border-color:var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 .deck-card:active{transform:scale(.98);}
+
+/* 単語帳の名前を入れる欄 */
+.deck-name-input{
+  width:100%;background:var(--surface-2);color:var(--ink);
+  border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;
+  font-size:15px;font-family:'Zen Kaku Gothic New',sans-serif;outline:none;
+}
+.deck-name-input:focus{border-color:var(--accent);}
+.deck-name-error{font-size:12px;color:var(--danger);text-align:center;}
+.deck-name-error[hidden]{display:none;}
 @media (prefers-reduced-motion: reduce){ .deck-card{transition:none;} }
 .memorize-entry-btn{
   align-self:stretch;background:var(--accent);color:#fff;border:none;border-radius:12px;
