@@ -126,6 +126,9 @@ select:disabled{opacity:.5;cursor:default;}
 .icon-btn:active{transform:scale(.94);}
 /* display を指定しているぶん、hidden だけでは消えない */
 .icon-btn[hidden]{display:none;}
+/* 押しても何も起きないボタンは、押せないと見て分かるようにする */
+.icon-btn:disabled{opacity:.38;}
+.icon-btn:disabled:active{transform:none;}
 .icon-svg{display:block;flex-shrink:0;}
 .icon-svg-settings{color:var(--ink-soft);}
 .icon-svg-book{color:var(--brand-blue);}
@@ -137,6 +140,8 @@ select:disabled{opacity:.5;cursor:default;}
 .icon-svg-eye{color:var(--accent);}
 .icon-svg-mic{color:var(--brand-purple);}
 .icon-svg-back{color:var(--ink-soft);}
+.icon-svg-pick{color:var(--ink-soft);}
+.icon-svg-edit{color:var(--ink-soft);}
 .icon-svg-csv{color:var(--accent-2);}
 
 #screen-result .appbar{opacity:.5; transition:opacity .2s ease;}
@@ -696,12 +701,19 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .deck-card:active{transform:scale(.98);}
 
-/* 単語帳の名前を入れる欄 */
+/* 単語帳の名前を入れる欄。押す言葉は欄の右横に並べる */
+.deck-name-row{display:flex;align-items:stretch;gap:8px;}
 .deck-name-input{
-  width:100%;background:var(--surface-2);color:var(--ink);
+  flex:1 1 auto;min-width:0;background:var(--surface-2);color:var(--ink);
   border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;
   font-size:15px;font-family:'Zen Kaku Gothic New',sans-serif;outline:none;
 }
+.deck-name-ok{
+  flex:0 0 auto;background:var(--accent);color:#fff;border:none;border-radius:12px;
+  padding:0 20px;font-size:14px;font-weight:700;
+  font-family:'Zen Kaku Gothic New',sans-serif;white-space:nowrap;
+}
+.deck-name-ok:active{transform:scale(.97);}
 .deck-name-input:focus{border-color:var(--accent);}
 .deck-name-error{font-size:12px;color:var(--danger);text-align:center;}
 .deck-name-error[hidden]{display:none;}
