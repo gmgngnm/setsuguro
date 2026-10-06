@@ -8640,9 +8640,32 @@ let batchDeck = DEFAULT_DECK;
 /* 調べた単語を保存する先。まとめて登録の追加先とは別に覚える */
 let resultDeck = DEFAULT_DECK;
 
+/* タグは単語帳をまとめる分類。「英語/TOEIC単語帳」のように、冊の値に
+   区切り文字で同居させてある。タグだけ別に持つと、冊そのものは単語に
+   乗って同期されるのにタグだけ端末に取り残されるため */
+const DECK_TAG_SEP = "/";
+
 function deckOf(record) {
   const name = String(record?.deck || "").trim();
   return name || DEFAULT_DECK;
+}
+
+/* 「英語/TOEIC単語帳」→ タグ「英語」、名前「TOEIC単語帳」。
+   区切りが無ければタグ無し */
+function splitDeck(deck) {
+  const raw = String(deck || "");
+  const at = raw.indexOf(DECK_TAG_SEP);
+  if (at < 0) return { tag: "", name: raw };
+  return { tag: raw.slice(0, at).trim(), name: raw.slice(at + 1).trim() };
+}
+const deckTagOf = (deck) => splitDeck(deck).tag;
+const deckNameOf = (deck) => splitDeck(deck).name || String(deck || "");
+const deckKey = (tag, name) => (tag ? `${tag}${DECK_TAG_SEP}${name}` : name);
+
+/* いま使われているタグ。新しく付けるときの候補に出す */
+async function listDeckTags() {
+  const decks = await listDecks();
+  return [...new Set(decks.map(deckTagOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
 async function loadDeckState() {
@@ -8658,7 +8681,16 @@ async function loadDeckState() {
 async function listDecks() {
   const rows = await idbGetAll("words");
   const names = new Set([DEFAULT_DECK, ...deckShelf, ...rows.map(deckOf)]);
-  return [...names].sort((a, b) => a.localeCompare(b, "ja"));
+  /* タグ無しを先に、そのあとタグごとにまとめて並べる */
+  return [...names].sort((a, b) => {
+    const x = splitDeck(a), y = splitDeck(b);
+    if (x.tag !== y.tag) {
+      if (!x.tag) return -1;
+      if (!y.tag) return 1;
+      return x.tag.localeCompare(y.tag, "ja");
+    }
+    return x.name.localeCompare(y.name, "ja");
+  });
 }
 
 async function rememberDeck(name) {
@@ -8679,8 +8711,18 @@ function fillDeckSelect(select, decks, selected, { withAll = false, withManage =
   if (!select) return;
   const opts = [];
   if (withAll) opts.push(`<option value="${escapeHtml(DECK_ALL)}">すべての単語帳</option>`);
-  opts.push(...decks.map((name) =>
-    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`));
+  /* タグの付いた冊は、そのタグの見出しの下にまとめる */
+  let openTag = null;
+  decks.forEach((deck) => {
+    const { tag, name } = splitDeck(deck);
+    if (tag !== openTag) {
+      if (openTag) opts.push("</optgroup>");
+      if (tag) opts.push(`<optgroup label="${escapeHtml(tag)}">`);
+      openTag = tag;
+    }
+    opts.push(`<option value="${escapeHtml(deck)}">${escapeHtml(name)}</option>`);
+  });
+  if (openTag) opts.push("</optgroup>");
   if (withManage) opts.push(`<option value="${escapeHtml(DECK_MANAGE)}">＋ 単語帳を整理…</option>`);
   select.innerHTML = opts.join("");
   select.value = selected;
@@ -8795,16 +8837,16 @@ async function renderDeckPicker() {
   const rows = await idbGetAll("words");
   const decks = await listDecks();
 
-  const card = (name, label, count, memorized) => {
+  const card = (deck, label, count, memorized) => {
     const btn = document.createElement("button");
-    btn.className = "deck-card" + (name === currentDeck ? " current" : "");
+    btn.className = "deck-card" + (deck === currentDeck ? " current" : "");
     btn.type = "button";
-    btn.dataset.deck = name;
+    btn.dataset.deck = deck;
     const pct = count ? Math.round((memorized / count) * 100) : 0;
     btn.innerHTML = `<span class="n">${escapeHtml(label)}</span>`
       + `<span class="c">${count}語・暗記済${pct}%</span>`;
     btn.addEventListener("click", async () => {
-      currentDeck = name;
+      currentDeck = deck;
       await kvSet("current_deck", currentDeck);
       clearBookSelection();
       showScreen("screen-book");
@@ -8817,9 +8859,21 @@ async function renderDeckPicker() {
 
   listEl.innerHTML = "";
   listEl.appendChild(card(DECK_ALL, "すべての単語帳", rows.length, rows.filter((r) => r.memorized).length));
-  decks.forEach((name) => {
-    const mine = rows.filter((r) => deckOf(r) === name);
-    listEl.appendChild(card(name, name, mine.length, mine.filter((r) => r.memorized).length));
+  /* タグの付いた冊は、そのタグの見出しの下にまとめて並べる */
+  let openTag = null;
+  decks.forEach((deck) => {
+    const { tag, name } = splitDeck(deck);
+    if (tag !== openTag) {
+      if (tag) {
+        const head = document.createElement("div");
+        head.className = "deck-group";
+        head.textContent = tag;
+        listEl.appendChild(head);
+      }
+      openTag = tag;
+    }
+    const mine = rows.filter((r) => deckOf(r) === deck);
+    listEl.appendChild(card(deck, name, mine.length, mine.filter((r) => r.memorized).length));
   });
 }
 
@@ -8829,6 +8883,7 @@ async function renderDeckPicker() {
 const DECK_NAME_MAX = 24;
 const deckNameSheet = document.getElementById("deck-name-sheet");
 const deckNameInput = document.getElementById("deck-name-input");
+const deckTagInput = document.getElementById("deck-tag-input");
 const deckNameError = document.getElementById("deck-name-error");
 /* 入れ終わったときに呼ぶ相手。作るのか名前を変えるのかで変わる */
 let deckNameDone = null;
@@ -8844,11 +8899,16 @@ function closeDeckNameSheet() {
   showDeckNameError("");
 }
 
-function openDeckNameSheet({ hint, value = "", okLabel, onDone }) {
+async function openDeckNameSheet({ hint, value = "", tag = "", okLabel, onDone }) {
   deckNameDone = onDone;
   document.getElementById("deck-name-hint").textContent = hint;
   document.getElementById("deck-name-ok").textContent = okLabel;
   deckNameInput.value = value;
+  deckTagInput.value = tag;
+  /* すでに使っているタグを候補に出す。同じ分類に別名を付けてしまうのを防ぐ */
+  const tags = await listDeckTags();
+  document.getElementById("deck-tag-options").innerHTML =
+    tags.map((t) => `<option value="${escapeHtml(t)}"></option>`).join("");
   showDeckNameError("");
   deckNameSheet.style.display = "flex";
   deckNameInput.focus();
@@ -8856,39 +8916,50 @@ function openDeckNameSheet({ hint, value = "", okLabel, onDone }) {
 }
 
 /* 使えない名前なら、その理由を返す。使えるなら空文字 */
-async function deckNameProblem(name, { allow = "" } = {}) {
+async function deckNameProblem(deck, { allow = "" } = {}) {
+  const { tag, name } = splitDeck(deck);
   if (!name) return "名前を入れてください";
-  if (name.length > DECK_NAME_MAX) return `${DECK_NAME_MAX}文字までにしてください`;
-  if (name === DECK_ALL || name === DECK_MANAGE) return "その名前は使えません";
-  if (name === allow) return "";
+  if (name.length > DECK_NAME_MAX) return `名前は${DECK_NAME_MAX}文字までにしてください`;
+  if (tag.length > DECK_NAME_MAX) return `タグは${DECK_NAME_MAX}文字までにしてください`;
+  if (deck === DECK_ALL || deck === DECK_MANAGE) return "その名前は使えません";
+  if (deck === allow) return "";
   const decks = await listDecks();
-  if (decks.includes(name)) return `「${name}」はすでにあります`;
+  if (decks.includes(deck)) {
+    return tag ? `「${tag}」に「${name}」はすでにあります` : `「${name}」はすでにあります`;
+  }
   return "";
 }
 
 async function submitDeckName() {
   if (!deckNameDone) return;
-  const name = deckNameInput.value.trim();
-  const problem = await deckNameProblem(name, { allow: deckNameDone.allow || "" });
+  /* 区切り文字はタグと名前を分けるために使っているので、どちらにも入れさせない */
+  const name = deckNameInput.value.trim().split(DECK_TAG_SEP).join("");
+  const tag = deckTagInput.value.trim().split(DECK_TAG_SEP).join("");
+  const deck = deckKey(tag, name);
+  const problem = await deckNameProblem(deck, { allow: deckNameDone.allow || "" });
   if (problem) { showDeckNameError(problem); return; }
   const done = deckNameDone.run;
   closeDeckNameSheet();
-  await done(name);
+  await done(deck);
 }
 
 document.getElementById("deck-name-ok").addEventListener("click", submitDeckName);
 document.getElementById("deck-name-cancel").addEventListener("click", closeDeckNameSheet);
-deckNameInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); submitDeckName(); }
-  if (e.key === "Escape") closeDeckNameSheet();
+[deckNameInput, deckTagInput].forEach((el) => {
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submitDeckName(); }
+    if (e.key === "Escape") closeDeckNameSheet();
+  });
+  /* 打ち直したら、前の指摘は消す */
+  el.addEventListener("input", () => showDeckNameError(""));
 });
-/* 打ち直したら、前の指摘は消す */
-deckNameInput.addEventListener("input", () => showDeckNameError(""));
 
 /* 新しい冊を作って、そのまま開く */
 async function createDeckFlow() {
-  openDeckNameSheet({
+  /* いま見ている冊にタグが付いていれば、その分類の続きを作ることが多い */
+  await openDeckNameSheet({
     hint: "新しい単語帳",
+    tag: currentDeck === DECK_ALL ? "" : deckTagOf(currentDeck),
     okLabel: "作る",
     onDone: { run: async (name) => {
       await rememberDeck(name);
@@ -8900,7 +8971,7 @@ async function createDeckFlow() {
       } else {
         await renderBookList();
       }
-      toast(`「${name}」を作りました`);
+      toast(`「${deckNameOf(name)}」を作りました`);
     } },
   });
 }
@@ -8933,13 +9004,14 @@ document.getElementById("deck-create-btn").addEventListener("click", () => {
   createDeckFlow();
 });
 
-document.getElementById("deck-rename-btn").addEventListener("click", () => {
+document.getElementById("deck-rename-btn").addEventListener("click", async () => {
   deckManageSheet.style.display = "none";
   if (currentDeck === DECK_ALL) { toast("名前を変える単語帳を選んでください"); return; }
   const from = currentDeck;
-  openDeckNameSheet({
-    hint: `「${from}」の名前を変える`,
-    value: from,
+  await openDeckNameSheet({
+    hint: `「${deckNameOf(from)}」を直す`,
+    value: deckNameOf(from),
+    tag: deckTagOf(from),
     okLabel: "変える",
     /* 自分と同じ名前は「すでにある」ではないので、ここだけ通す */
     onDone: { allow: from, run: async (name) => {
@@ -8954,7 +9026,7 @@ document.getElementById("deck-rename-btn").addEventListener("click", () => {
       await kvSet("current_deck", currentDeck);
       await refreshDeckSelects();
       await renderBookList();
-      toast(`「${name}」に変えました`);
+      toast(`「${deckNameOf(name)}」に変えました`);
     } },
   });
 });
@@ -8965,8 +9037,8 @@ document.getElementById("deck-delete-btn").addEventListener("click", async () =>
   if (currentDeck === DEFAULT_DECK) { toast(`「${DEFAULT_DECK}」はたためません`); return; }
   const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === currentDeck);
   const ask = rows.length
-    ? `「${currentDeck}」をたたみます。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
-    : `「${currentDeck}」をたたみます。よろしいですか？`;
+    ? `「${deckNameOf(currentDeck)}」をたたみます。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
+    : `「${deckNameOf(currentDeck)}」をたたみます。よろしいですか？`;
   if (!confirm(ask)) return;
   /* 単語ごと消してしまわないよう、中身は既定の冊へ移してからたたむ */
   for (const r of rows) await saveWordRecord({ ...r, deck: DEFAULT_DECK });
@@ -8977,7 +9049,8 @@ document.getElementById("deck-delete-btn").addEventListener("click", async () =>
   await kvSet("current_deck", currentDeck);
   await refreshDeckSelects();
   await renderBookList();
-  toast(rows.length ? `「${folded}」をたたみ、${rows.length}語を移しました` : `「${folded}」をたたみました`);
+  const foldedName = deckNameOf(folded);
+  toast(rows.length ? `「${foldedName}」をたたみ、${rows.length}語を移しました` : `「${foldedName}」をたたみました`);
 });
 
 /* ---- 選んだ単語を別の冊へ移す ---- */
@@ -8990,22 +9063,34 @@ document.getElementById("book-select-move-btn").addEventListener("click", async 
   const decks = await listDecks();
   const list = document.getElementById("deck-move-list");
   list.innerHTML = "";
-  decks.forEach((name) => {
+  let openTag = null;
+  decks.forEach((deck) => {
+    const { tag, name } = splitDeck(deck);
+    if (tag !== openTag) {
+      if (tag) {
+        const head = document.createElement("div");
+        head.className = "deck-group";
+        head.textContent = tag;
+        list.appendChild(head);
+      }
+      openTag = tag;
+    }
     const btn = document.createElement("button");
     btn.className = "memorize-mode-btn";
     btn.type = "button";
     btn.textContent = `📘 ${name}`;
-    btn.addEventListener("click", () => moveSelectionToDeck(name));
+    btn.addEventListener("click", () => moveSelectionToDeck(deck));
     list.appendChild(btn);
   });
   const fresh = document.createElement("button");
   fresh.className = "memorize-mode-btn";
   fresh.type = "button";
   fresh.textContent = "📕 新しい単語帳へ";
-  fresh.addEventListener("click", () => {
+  fresh.addEventListener("click", async () => {
     deckMoveSheet.style.display = "none";
-    openDeckNameSheet({
+    await openDeckNameSheet({
       hint: "新しい単語帳へ移す",
+      tag: currentDeck === DECK_ALL ? "" : deckTagOf(currentDeck),
       okLabel: "作って移す",
       onDone: { run: async (name) => {
         await rememberDeck(name);
@@ -9028,7 +9113,7 @@ async function moveSelectionToDeck(name) {
   bookSelection.clear();
   await refreshDeckSelects();
   await renderBookList();
-  toast(`${ids.length}語を「${name}」へ移しました`);
+  toast(`${ids.length}語を「${deckNameOf(name)}」へ移しました`);
 }
 
 document.getElementById("batch-deck-select").addEventListener("change", async (e) => {
@@ -9044,7 +9129,7 @@ document.getElementById("result-deck-select").addEventListener("change", async (
   const existing = await idbGet("words", currentWordRecordId());
   if (existing && deckOf(existing) !== resultDeck) {
     await saveWordRecord({ ...existing, deck: resultDeck });
-    toast(`「${resultDeck}」へ移しました`);
+    toast(`「${deckNameOf(resultDeck)}」へ移しました`);
   }
 });
 
@@ -11846,7 +11931,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "246";
+const APP_BUILD = "247";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
