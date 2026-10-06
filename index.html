@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#244</span>
+        <span class="build-tag" id="build-tag">#245</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -97,6 +97,9 @@
       <input id="add-goro-input" type="text" placeholder="自分で考えた語呂合わせを入力" autocomplete="off">
       <button id="add-goro-submit" class="btn-solid">追加</button>
     </div>
+    <label class="deck-pick deck-pick-save" for="result-deck-select"><span class="deck-pick-label">保存先</span>
+      <select class="deck-select" id="result-deck-select" aria-label="保存先の単語帳"></select>
+    </label>
     <div class="bottom-actions" id="result-bottom-actions">
       <button class="bottom-back-btn" data-nav="home" title="ホームへ戻る" aria-label="ホームへ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
       <button class="save-word-btn" id="save-word-btn">💾 単語を保存</button>
@@ -109,6 +112,9 @@
       <div class="appbar-lead">
         <button class="icon-btn" data-nav="home" title="ホームへ戻る" aria-label="ホームへ戻る"><svg class="icon-svg icon-svg-back" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
         <span class="logo">単語帳</span>
+      </div>
+      <div class="nav-icons">
+        <button class="icon-btn" id="deck-new-btn" type="button" title="新しい単語帳を作る" aria-label="新しい単語帳を作る"><svg class="icon-svg icon-svg-add" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
     </div>
     <div class="deck-pick-list" id="deck-pick-list"></div>
@@ -395,6 +401,17 @@
   </section>
 
   <div id="toast"></div>
+</div>
+
+<!-- 単語帳の名前を入れるシート。画面(.screen)の中に置くと、その画面が
+     隠れているときに出せなくなるので、画面の外に置いてある -->
+<div class="memorize-mode-sheet" id="deck-name-sheet" style="display:none;">
+  <div class="memorize-mode-hint" id="deck-name-hint">新しい単語帳</div>
+  <input class="deck-name-input" id="deck-name-input" type="text" maxlength="24"
+    placeholder="例: 英検1級" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <div class="deck-name-error" id="deck-name-error" hidden></div>
+  <button class="memorize-mode-btn" id="deck-name-ok" type="button">作る</button>
+  <button class="memorize-mode-close" id="deck-name-cancel" type="button">✕ やめる</button>
 </div>
 
 <script src="app.js"></script>
