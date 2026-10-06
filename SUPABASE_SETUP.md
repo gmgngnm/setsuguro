@@ -134,6 +134,29 @@ alter table public.words
 notify pgrst, 'reload schema';
 ```
 
+### 既存プロジェクトへの追加（decks テーブル・任意）
+
+単語の入っている単語帳は、どの冊かが単語そのものに乗っているので放って
+おいても同期される。同期されないのは**中身が空の単語帳**だけなので、その
+名前の一覧をこの表で持つ。作ってすぐの単語帳を他の端末でも見たい場合に
+だけ要る。無くてもアプリは止まらない（空の冊がその端末に留まるだけ）。
+
+```sql
+create table if not exists public.decks (
+  user_id uuid primary key references auth.users on delete cascade,
+  names jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.decks enable row level security;
+
+drop policy if exists "decks are mine" on public.decks;
+create policy "decks are mine" on public.decks
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+notify pgrst, 'reload schema';
+```
+
 ### 分解結果の共有（decompositions テーブル・任意）
 
 ある単語をどう接辞に分けるかは誰が引いても同じ結果になるので、サインイン
