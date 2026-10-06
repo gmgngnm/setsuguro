@@ -408,7 +408,10 @@
 <div class="memorize-mode-sheet" id="deck-name-sheet" style="display:none;">
   <div class="memorize-mode-hint" id="deck-name-hint">新しい単語帳</div>
   <input class="deck-name-input" id="deck-name-input" type="text" maxlength="24"
-    placeholder="例: 英検1級" autocomplete="off" autocapitalize="off" spellcheck="false">
+    placeholder="名前（例: TOEIC単語帳）" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <input class="deck-name-input" id="deck-tag-input" type="text" maxlength="24" list="deck-tag-options"
+    placeholder="タグ（例: 英語）／なくてもよい" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <datalist id="deck-tag-options"></datalist>
   <div class="deck-name-error" id="deck-name-error" hidden></div>
   <button class="memorize-mode-btn" id="deck-name-ok" type="button">作る</button>
   <button class="memorize-mode-close" id="deck-name-cancel" type="button">✕ やめる</button>
