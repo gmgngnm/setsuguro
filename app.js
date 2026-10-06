@@ -3362,6 +3362,7 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
          テキストボックスの自動フォーカスはPC版のみで行う */
       if (window.innerWidth >= 860) document.getElementById("word-input").focus();
     }
+    if (target === "decks") { showScreen("screen-decks"); renderDeckPicker(); }
     if (target === "book") {
       clearBookSelection();
       showScreen("screen-book");
@@ -8773,6 +8774,43 @@ async function renderBookList() {
   syncBookSelectionUi();
 }
 
+/* ---- どの単語帳を開くかを選ぶ画面 ---- */
+/* ホームから単語帳へ入るときは、いきなり前回の冊を開かずここを挟む。
+   冊が増えると、どれを開くのか選べたほうが早い */
+async function renderDeckPicker() {
+  const listEl = document.getElementById("deck-pick-list");
+  if (!listEl) return;
+  const rows = await idbGetAll("words");
+  const decks = await listDecks();
+
+  const card = (name, label, count, memorized) => {
+    const btn = document.createElement("button");
+    btn.className = "deck-card" + (name === currentDeck ? " current" : "");
+    btn.type = "button";
+    btn.dataset.deck = name;
+    const pct = count ? Math.round((memorized / count) * 100) : 0;
+    btn.innerHTML = `<span class="n">${escapeHtml(label)}</span>`
+      + `<span class="c">${count}語・暗記済${pct}%</span>`;
+    btn.addEventListener("click", async () => {
+      currentDeck = name;
+      await kvSet("current_deck", currentDeck);
+      clearBookSelection();
+      showScreen("screen-book");
+      await refreshDeckSelects();
+      await renderBookList();
+      syncBookOnOpen();
+    });
+    return btn;
+  };
+
+  listEl.innerHTML = "";
+  listEl.appendChild(card(DECK_ALL, "すべての単語帳", rows.length, rows.filter((r) => r.memorized).length));
+  decks.forEach((name) => {
+    const mine = rows.filter((r) => deckOf(r) === name);
+    listEl.appendChild(card(name, name, mine.length, mine.filter((r) => r.memorized).length));
+  });
+}
+
 /* ---- 単語帳の切り替えと整理 ---- */
 const deckManageSheet = document.getElementById("deck-manage-sheet");
 const deckMoveSheet = document.getElementById("deck-move-sheet");
@@ -11702,7 +11740,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "243";
+const APP_BUILD = "244";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
