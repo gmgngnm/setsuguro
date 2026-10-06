@@ -120,6 +120,20 @@ alter table public.words
 notify pgrst, 'reload schema';
 ```
 
+### 既存プロジェクトへの追加（deck 列）
+
+単語をいくつかの単語帳に分けられるようにしたため、どの単語帳に入っている
+かを持つ `deck` 列が要る。無くてもローカルでは動くが、その端末で分けた
+単語帳は同期されず、他の端末では全部が既定の単語帳に見える。SQL Editorで
+以下を一度だけ実行する。
+
+```sql
+alter table public.words
+  add column if not exists deck text not null default '単語帳';
+
+notify pgrst, 'reload schema';
+```
+
 ### 分解結果の共有（decompositions テーブル・任意）
 
 ある単語をどう接辞に分けるかは誰が引いても同じ結果になるので、サインイン

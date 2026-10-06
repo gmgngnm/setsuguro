@@ -3362,7 +3362,12 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
          テキストボックスの自動フォーカスはPC版のみで行う */
       if (window.innerWidth >= 860) document.getElementById("word-input").focus();
     }
-    if (target === "book") { clearBookSelection(); showScreen("screen-book"); renderBookList(); syncBookOnOpen(); }
+    if (target === "book") {
+      clearBookSelection();
+      showScreen("screen-book");
+      refreshDeckSelects().then(renderBookList);
+      syncBookOnOpen();
+    }
     if (target === "settings") { showScreen("screen-settings"); refreshUsageDisplay(); }
   });
 });
@@ -8542,6 +8547,8 @@ async function toggleSaveWord() {
       goro_text: newGoroText,
       goro_highlight: c ? c.highlight : [],
       provider,
+      /* すでにある語は、入っている冊をそのままにする */
+      deck: existing ? deckOf(existing) : deckForNewWord(),
       memorized: existing ? existing.memorized : false,
       created_at: existing ? existing.created_at : Date.now(),
     });
@@ -8606,6 +8613,83 @@ addGoroInput.addEventListener("keydown", (e) => {
 /* ------------------------------------------------------------------ *
  * 10. 単語帳（単語 / 接辞）
  * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ *
+ * 単語帳の仕分け
+ *    単語は1冊だけに属する。どの冊かは単語そのものに名前で持たせてある。
+ *    idではなく名前にしてあるのは、冊の一覧を別に同期しなくても、
+ *    単語が届けばその冊も一緒に届くようにするため（端末をまたいでも
+ *    冊が消えない）。中身が空の冊だけは手元に控えておく。
+ * ------------------------------------------------------------------ */
+const DEFAULT_DECK = "単語帳";
+/* すべての冊をまとめて見るときの印。冊の名前と衝突しないものにしてある */
+const DECK_ALL = "\u0000すべて";
+const DECK_MANAGE = "\u0000整理";
+
+/* 中身が空になっても消えないよう、作った冊の名前を控えておく */
+let deckShelf = [];
+let currentDeck = DECK_ALL;
+let batchDeck = DEFAULT_DECK;
+
+function deckOf(record) {
+  const name = String(record?.deck || "").trim();
+  return name || DEFAULT_DECK;
+}
+
+async function loadDeckState() {
+  const shelf = await kvGet("deck_shelf", []);
+  deckShelf = Array.isArray(shelf) ? shelf.filter((n) => typeof n === "string" && n.trim()) : [];
+  currentDeck = await kvGet("current_deck", DECK_ALL);
+  batchDeck = await kvGet("batch_deck", DEFAULT_DECK);
+}
+
+/* 実際に単語が入っている冊と、控えてある空の冊を合わせた一覧。
+   既定の冊は、1語も無くても必ず出す（行き先が1つも無い状態を作らない） */
+async function listDecks() {
+  const rows = await idbGetAll("words");
+  const names = new Set([DEFAULT_DECK, ...deckShelf, ...rows.map(deckOf)]);
+  return [...names].sort((a, b) => a.localeCompare(b, "ja"));
+}
+
+async function rememberDeck(name) {
+  const clean = String(name || "").trim();
+  if (!clean || deckShelf.includes(clean)) return clean;
+  deckShelf = [...deckShelf, clean];
+  await kvSet("deck_shelf", deckShelf);
+  return clean;
+}
+
+async function forgetDeck(name) {
+  deckShelf = deckShelf.filter((n) => n !== name);
+  await kvSet("deck_shelf", deckShelf);
+}
+
+/* 冊を選ぶプルダウンの中身。単語帳の画面では「すべて」と整理の入口も出す */
+function fillDeckSelect(select, decks, selected, { withAll = false, withManage = false } = {}) {
+  if (!select) return;
+  const opts = [];
+  if (withAll) opts.push(`<option value="${escapeHtml(DECK_ALL)}">すべての単語帳</option>`);
+  opts.push(...decks.map((name) =>
+    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`));
+  if (withManage) opts.push(`<option value="${escapeHtml(DECK_MANAGE)}">＋ 単語帳を整理…</option>`);
+  select.innerHTML = opts.join("");
+  select.value = selected;
+  /* 控えから消えた冊を選んでいた場合に、空欄のままにしない */
+  if (!select.value) select.value = withAll ? DECK_ALL : (decks[0] || DEFAULT_DECK);
+}
+
+async function refreshDeckSelects() {
+  const decks = await listDecks();
+  fillDeckSelect(document.getElementById("deck-select"), decks, currentDeck,
+    { withAll: true, withManage: true });
+  fillDeckSelect(document.getElementById("batch-deck-select"), decks, batchDeck);
+  batchDeck = document.getElementById("batch-deck-select")?.value || DEFAULT_DECK;
+}
+
+/* いま単語を入れるべき冊。「すべて」を見ているときは既定の冊へ入れる */
+function deckForNewWord() {
+  return currentDeck === DECK_ALL ? DEFAULT_DECK : currentDeck;
+}
+
 /* 選んでいる単語。選ぶ状態に入っているかは、1つでも選ばれているかで決まる
    （最後の1つを外したらそのまま抜ける） */
 let bookSelection = new Set();
@@ -8619,13 +8703,18 @@ function syncBookSelectionUi() {
   const cancel = document.getElementById("book-select-cancel-btn");
   const add = document.getElementById("batch-entry-btn");
   const del = document.getElementById("book-select-delete-btn");
-  if (!stats || !back || !cancel || !add || !del) return;
+  const move = document.getElementById("book-select-move-btn");
+  const deck = document.getElementById("deck-select");
+  if (!stats || !back || !cancel || !add || !del || !move || !deck) return;
 
   /* 上の帯は1行のまま。選んでいる間だけ、戻る→やめる、追加→削除に入れ替える */
   back.hidden = selecting;
   cancel.hidden = !selecting;
   add.hidden = selecting;
   del.hidden = !selecting;
+  move.hidden = !selecting;
+  /* 選んでいる間に冊を切り替えられると、選んだものが見えなくなる */
+  deck.hidden = selecting;
   stats.textContent = selecting ? `${bookSelection.size}語を選択中` : bookStatsText;
   stats.classList.toggle("selecting", selecting);
 
@@ -8651,6 +8740,7 @@ async function renderBookList() {
   listEl.innerHTML = "";
 
   let rows = await idbGetAll("words");
+  if (currentDeck !== DECK_ALL) rows = rows.filter((r) => deckOf(r) === currentDeck);
   rows.sort((a, b) => b.created_at - a.created_at);
 
   const memorizedCount = rows.filter((r) => r.memorized).length;
@@ -8664,7 +8754,8 @@ async function renderBookList() {
   [...bookSelection].forEach((id) => { if (!alive.has(id)) bookSelection.delete(id); });
 
   if (!rows.length) {
-    listEl.innerHTML = `<div class="empty-note">まだ記録がありません</div>`;
+    listEl.innerHTML = `<div class="empty-note">${currentDeck === DECK_ALL
+      ? "まだ記録がありません" : "この単語帳はまだ空です"}</div>`;
     syncBookSelectionUi();
     return;
   }
@@ -8682,6 +8773,137 @@ async function renderBookList() {
   syncBookSelectionUi();
 }
 
+/* ---- 単語帳の切り替えと整理 ---- */
+const deckManageSheet = document.getElementById("deck-manage-sheet");
+const deckMoveSheet = document.getElementById("deck-move-sheet");
+
+document.getElementById("deck-select").addEventListener("change", async (e) => {
+  if (e.target.value === DECK_MANAGE) {
+    /* 整理は選ぶものではないので、見ている冊に戻してからシートを出す */
+    e.target.value = currentDeck;
+    deckManageSheet.style.display = "flex";
+    return;
+  }
+  currentDeck = e.target.value;
+  await kvSet("current_deck", currentDeck);
+  clearBookSelection();
+  await renderBookList();
+});
+
+document.getElementById("deck-manage-close").addEventListener("click", () => {
+  deckManageSheet.style.display = "none";
+});
+
+document.getElementById("deck-create-btn").addEventListener("click", async () => {
+  deckManageSheet.style.display = "none";
+  const name = (prompt("新しい単語帳の名前") || "").trim();
+  if (!name) return;
+  if (name === DECK_ALL || name === DECK_MANAGE) { toast("その名前は使えません"); return; }
+  const decks = await listDecks();
+  if (decks.includes(name)) { toast(`「${name}」はすでにあります`); return; }
+  await rememberDeck(name);
+  currentDeck = name;
+  await kvSet("current_deck", currentDeck);
+  await refreshDeckSelects();
+  await renderBookList();
+  toast(`「${name}」を作りました`);
+});
+
+document.getElementById("deck-rename-btn").addEventListener("click", async () => {
+  deckManageSheet.style.display = "none";
+  if (currentDeck === DECK_ALL) { toast("名前を変える単語帳を選んでください"); return; }
+  const name = (prompt("新しい名前", currentDeck) || "").trim();
+  if (!name || name === currentDeck) return;
+  if (name === DECK_ALL || name === DECK_MANAGE) { toast("その名前は使えません"); return; }
+  const decks = await listDecks();
+  if (decks.includes(name)) { toast(`「${name}」はすでにあります`); return; }
+
+  /* 冊の名前は単語そのものが持っているので、入っている単語をすべて書き換える */
+  const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === currentDeck);
+  for (const r of rows) await saveWordRecord({ ...r, deck: name });
+  await forgetDeck(currentDeck);
+  await rememberDeck(name);
+  if (batchDeck === currentDeck) { batchDeck = name; await kvSet("batch_deck", batchDeck); }
+  currentDeck = name;
+  await kvSet("current_deck", currentDeck);
+  await refreshDeckSelects();
+  await renderBookList();
+  toast(`「${name}」に変えました`);
+});
+
+document.getElementById("deck-delete-btn").addEventListener("click", async () => {
+  deckManageSheet.style.display = "none";
+  if (currentDeck === DECK_ALL) { toast("たたむ単語帳を選んでください"); return; }
+  if (currentDeck === DEFAULT_DECK) { toast(`「${DEFAULT_DECK}」はたためません`); return; }
+  const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === currentDeck);
+  const ask = rows.length
+    ? `「${currentDeck}」をたたみます。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
+    : `「${currentDeck}」をたたみます。よろしいですか？`;
+  if (!confirm(ask)) return;
+  /* 単語ごと消してしまわないよう、中身は既定の冊へ移してからたたむ */
+  for (const r of rows) await saveWordRecord({ ...r, deck: DEFAULT_DECK });
+  await forgetDeck(currentDeck);
+  if (batchDeck === currentDeck) { batchDeck = DEFAULT_DECK; await kvSet("batch_deck", batchDeck); }
+  const folded = currentDeck;
+  currentDeck = DECK_ALL;
+  await kvSet("current_deck", currentDeck);
+  await refreshDeckSelects();
+  await renderBookList();
+  toast(rows.length ? `「${folded}」をたたみ、${rows.length}語を移しました` : `「${folded}」をたたみました`);
+});
+
+/* ---- 選んだ単語を別の冊へ移す ---- */
+document.getElementById("deck-move-close").addEventListener("click", () => {
+  deckMoveSheet.style.display = "none";
+});
+
+document.getElementById("book-select-move-btn").addEventListener("click", async () => {
+  if (!bookSelection.size) return;
+  const decks = await listDecks();
+  const list = document.getElementById("deck-move-list");
+  list.innerHTML = "";
+  decks.forEach((name) => {
+    const btn = document.createElement("button");
+    btn.className = "memorize-mode-btn";
+    btn.type = "button";
+    btn.textContent = `📘 ${name}`;
+    btn.addEventListener("click", () => moveSelectionToDeck(name));
+    list.appendChild(btn);
+  });
+  const fresh = document.createElement("button");
+  fresh.className = "memorize-mode-btn";
+  fresh.type = "button";
+  fresh.textContent = "📕 新しい単語帳へ";
+  fresh.addEventListener("click", async () => {
+    const name = (prompt("新しい単語帳の名前") || "").trim();
+    if (!name) return;
+    if (name === DECK_ALL || name === DECK_MANAGE) { toast("その名前は使えません"); return; }
+    await rememberDeck(name);
+    await moveSelectionToDeck(name);
+  });
+  list.appendChild(fresh);
+  deckMoveSheet.style.display = "flex";
+});
+
+async function moveSelectionToDeck(name) {
+  deckMoveSheet.style.display = "none";
+  const ids = [...bookSelection];
+  if (!ids.length) return;
+  for (const id of ids) {
+    const r = await idbGet("words", id);
+    if (r) await saveWordRecord({ ...r, deck: name });
+  }
+  bookSelection.clear();
+  await refreshDeckSelects();
+  await renderBookList();
+  toast(`${ids.length}語を「${name}」へ移しました`);
+}
+
+document.getElementById("batch-deck-select").addEventListener("change", async (e) => {
+  batchDeck = e.target.value;
+  await kvSet("batch_deck", batchDeck);
+});
+
 document.getElementById("book-select-cancel-btn").addEventListener("click", clearBookSelection);
 
 document.getElementById("book-select-delete-btn").addEventListener("click", async () => {
@@ -8697,7 +8919,7 @@ document.getElementById("book-select-delete-btn").addEventListener("click", asyn
 /* --- CSV出力 / 読み込み（単語帳） --- */
 const CSV_COLUMNS = [
   "id", "word", "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
-  "goro_text", "goro_highlight", "provider", "memorized", "created_at",
+  "goro_text", "goro_highlight", "provider", "deck", "memorized", "created_at",
 ];
 
 function csvField(value) {
@@ -8731,6 +8953,7 @@ function wordsToCSV(records) {
       r.goro_text || "",
       JSON.stringify(r.goro_highlight || []),
       r.provider || "",
+      deckOf(r),
       r.memorized ? "1" : "0",
       r.created_at || "",
     ].map(csvField).join(","));
@@ -8794,6 +9017,8 @@ function csvToWords(text) {
       goro_text: get(row, "goro_text"),
       goro_highlight: goroHighlight,
       provider: get(row, "provider"),
+      /* deck列が無い古いCSVは、既定の冊へ入れる */
+      deck: get(row, "deck").trim() || DEFAULT_DECK,
       memorized: memorizedRaw === "1" || memorizedRaw === "true",
       created_at: Number(get(row, "created_at")) || Date.now(),
     });
@@ -9400,14 +9625,17 @@ function clearMemorizeAutoTimer() {
 }
 
 async function startMemorizeMode(mode = "all") {
-  const words = await idbGetAll("words");
+  let words = await idbGetAll("words");
+  /* 単語帳の画面で見ている冊だけを出す。別の冊の語が混ざると、
+     冊に分けた意味が無くなる */
+  if (currentDeck !== DECK_ALL) words = words.filter((w) => deckOf(w) === currentDeck);
   const pool = mode === "unlearned" ? words.filter((w) => !w.memorized) : words;
   memorizeQueue = memorizeRandomOrder ? pool.sort(() => Math.random() - 0.5) : pool.sort((a, b) => b.created_at - a.created_at);
   memorizeIndex = 0;
   memorizeAutoPlay = mode === "auto";
   memorizeEmptyMessage = mode === "unlearned"
     ? "未学習のカードはありません"
-    : "保存された単語がまだありません";
+    : (currentDeck === DECK_ALL ? "保存された単語がまだありません" : "この単語帳はまだ空です");
   memorizeSpeechOn = await kvGet("memorize_speech_on", true);
   renderMemorizeSpeechToggle();
   showScreen("screen-memorize");
@@ -10310,7 +10538,7 @@ async function withCloudRetry(fn, attempts = 3) {
 const CLOUD_WORD_OPTIONAL_COLUMNS = [
   "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
   "synonyms", "antonyms", "goro_text", "goro_highlight", "provider",
-  "memorized", "deleted", "created_at", "updated_at",
+  "memorized", "deck", "deleted", "created_at", "updated_at",
 ];
 
 /* 送っても弾かれると分かった列。1回の応答では1列しか分からないので、
@@ -10346,7 +10574,7 @@ function localWordToCloudRow(w, deleted = false) {
     word_phonetic: w.word_phonetic || "", word_memory_tip: w.word_memory_tip || "",
     morphemes: w.morphemes || [], synonyms: w.synonyms || [], antonyms: w.antonyms || [],
     goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
-    provider: w.provider || "", memorized: !!w.memorized, deleted,
+    provider: w.provider || "", memorized: !!w.memorized, deck: deckOf(w), deleted,
     created_at: w.created_at || Date.now(), updated_at: w.updated_at || Date.now(),
   };
   for (const name of cloudMissingColumns) delete row[name];
@@ -10367,6 +10595,7 @@ function cloudRowToLocalWord(r) {
   return {
     id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
     word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [],
+    deck: r.deck || DEFAULT_DECK,
     synonyms: r.synonyms || [], antonyms: r.antonyms || [],
     goro_text: r.goro_text || "", goro_highlight: r.goro_highlight || [], provider: r.provider || "",
     memorized: !!r.memorized, created_at: r.created_at || Date.now(), updated_at: r.updated_at || Date.now(),
@@ -10979,6 +11208,7 @@ function batchRowToWordRecord(row, existing) {
     goro_text: row.result.goro_text,
     goro_highlight: row.result.goro_highlight,
     provider: row.result.provider,
+    deck: existing ? deckOf(existing) : (row.deck || DEFAULT_DECK),
     memorized: existing ? existing.memorized : false,
     created_at: existing ? existing.created_at : Date.now(),
   };
@@ -10993,7 +11223,9 @@ async function addBatchWords(words) {
   for (const word of words) {
     const id = wordCardId(word);
     if (queued.has(id) || saved.has(id)) { skipped++; continue; }
-    await putBatchRow({ id, word, status: "pending", error: "", result: null, created_at: Date.now() });
+    /* 追加した時点の行き先を覚えておく。生成を待つ間に追加先を変えても、
+       先に積んだぶんは積んだときの冊へ入る */
+    await putBatchRow({ id, word, deck: batchDeck, status: "pending", error: "", result: null, created_at: Date.now() });
     added++;
   }
   toast(skipped ? `${added}語を追加（${skipped}語は登録済みのため除外）` : `${added}語を追加しました`);
@@ -11247,6 +11479,7 @@ async function flushPendingReviewRows() {
 
 async function openBatchScreen() {
   showScreen("screen-batch");
+  await refreshDeckSelects();
   refreshGeminiKeyAvailability();
   /* 画面を離れている間も生成は続いている。戻ってきたときに、
      進行中なら進捗表示をそのまま復元する */
@@ -11469,7 +11702,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "242";
+const APP_BUILD = "243";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -11500,6 +11733,8 @@ refreshBuildTag();
 refreshGeminiKeyAvailability();
 refreshTtsAvailability();
 refreshGoroButtonSetting();
+/* 冊の選択は、一覧やプルダウンを描くより先に読んでおく */
+loadDeckState().then(refreshDeckSelects);
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
