@@ -8631,7 +8631,7 @@ addGoroInput.addEventListener("keydown", (e) => {
 const DEFAULT_DECK = "単語帳";
 /* すべての冊をまとめて見るときの印。冊の名前と衝突しないものにしてある */
 const DECK_ALL = "\u0000すべて";
-const DECK_MANAGE = "\u0000整理";
+/* 整理は、選ぶ画面で冊を長押ししたときに開く */
 
 /* 中身が空になっても消えないよう、作った冊の名前を控えておく */
 let deckShelf = [];
@@ -8640,32 +8640,9 @@ let batchDeck = DEFAULT_DECK;
 /* 調べた単語を保存する先。まとめて登録の追加先とは別に覚える */
 let resultDeck = DEFAULT_DECK;
 
-/* タグは単語帳をまとめる分類。「英語/TOEIC単語帳」のように、冊の値に
-   区切り文字で同居させてある。タグだけ別に持つと、冊そのものは単語に
-   乗って同期されるのにタグだけ端末に取り残されるため */
-const DECK_TAG_SEP = "/";
-
 function deckOf(record) {
   const name = String(record?.deck || "").trim();
   return name || DEFAULT_DECK;
-}
-
-/* 「英語/TOEIC単語帳」→ タグ「英語」、名前「TOEIC単語帳」。
-   区切りが無ければタグ無し */
-function splitDeck(deck) {
-  const raw = String(deck || "");
-  const at = raw.indexOf(DECK_TAG_SEP);
-  if (at < 0) return { tag: "", name: raw };
-  return { tag: raw.slice(0, at).trim(), name: raw.slice(at + 1).trim() };
-}
-const deckTagOf = (deck) => splitDeck(deck).tag;
-const deckNameOf = (deck) => splitDeck(deck).name || String(deck || "");
-const deckKey = (tag, name) => (tag ? `${tag}${DECK_TAG_SEP}${name}` : name);
-
-/* いま使われているタグ。新しく付けるときの候補に出す */
-async function listDeckTags() {
-  const decks = await listDecks();
-  return [...new Set(decks.map(deckTagOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
 async function loadDeckState() {
@@ -8681,16 +8658,7 @@ async function loadDeckState() {
 async function listDecks() {
   const rows = await idbGetAll("words");
   const names = new Set([DEFAULT_DECK, ...deckShelf, ...rows.map(deckOf)]);
-  /* タグ無しを先に、そのあとタグごとにまとめて並べる */
-  return [...names].sort((a, b) => {
-    const x = splitDeck(a), y = splitDeck(b);
-    if (x.tag !== y.tag) {
-      if (!x.tag) return -1;
-      if (!y.tag) return 1;
-      return x.tag.localeCompare(y.tag, "ja");
-    }
-    return x.name.localeCompare(y.name, "ja");
-  });
+  return [...names].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
 async function rememberDeck(name) {
@@ -8698,32 +8666,23 @@ async function rememberDeck(name) {
   if (!clean || deckShelf.includes(clean)) return clean;
   deckShelf = [...deckShelf, clean];
   await kvSet("deck_shelf", deckShelf);
+  pushDeckShelf();
   return clean;
 }
 
 async function forgetDeck(name) {
   deckShelf = deckShelf.filter((n) => n !== name);
   await kvSet("deck_shelf", deckShelf);
+  pushDeckShelf();
 }
 
 /* 冊を選ぶプルダウンの中身。単語帳の画面では「すべて」と整理の入口も出す */
-function fillDeckSelect(select, decks, selected, { withAll = false, withManage = false } = {}) {
+function fillDeckSelect(select, decks, selected, { withAll = false } = {}) {
   if (!select) return;
   const opts = [];
   if (withAll) opts.push(`<option value="${escapeHtml(DECK_ALL)}">すべての単語帳</option>`);
-  /* タグの付いた冊は、そのタグの見出しの下にまとめる */
-  let openTag = null;
-  decks.forEach((deck) => {
-    const { tag, name } = splitDeck(deck);
-    if (tag !== openTag) {
-      if (openTag) opts.push("</optgroup>");
-      if (tag) opts.push(`<optgroup label="${escapeHtml(tag)}">`);
-      openTag = tag;
-    }
-    opts.push(`<option value="${escapeHtml(deck)}">${escapeHtml(name)}</option>`);
-  });
-  if (openTag) opts.push("</optgroup>");
-  if (withManage) opts.push(`<option value="${escapeHtml(DECK_MANAGE)}">＋ 単語帳を整理…</option>`);
+  opts.push(...decks.map((name) =>
+    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`));
   select.innerHTML = opts.join("");
   select.value = selected;
   /* 控えから消えた冊を選んでいた場合に、空欄のままにしない */
@@ -8732,8 +8691,6 @@ function fillDeckSelect(select, decks, selected, { withAll = false, withManage =
 
 async function refreshDeckSelects() {
   const decks = await listDecks();
-  fillDeckSelect(document.getElementById("deck-select"), decks, currentDeck,
-    { withAll: true, withManage: true });
   fillDeckSelect(document.getElementById("batch-deck-select"), decks, batchDeck);
   batchDeck = document.getElementById("batch-deck-select")?.value || DEFAULT_DECK;
   fillDeckSelect(document.getElementById("result-deck-select"), decks, resultDeck);
@@ -8759,8 +8716,7 @@ function syncBookSelectionUi() {
   const add = document.getElementById("batch-entry-btn");
   const del = document.getElementById("book-select-delete-btn");
   const move = document.getElementById("book-select-move-btn");
-  const deck = document.getElementById("deck-select");
-  if (!stats || !back || !cancel || !add || !del || !move || !deck) return;
+  if (!stats || !back || !cancel || !add || !del || !move) return;
 
   /* 上の帯は1行のまま。選んでいる間だけ、戻る→やめる、追加→削除に入れ替える */
   back.hidden = selecting;
@@ -8768,8 +8724,6 @@ function syncBookSelectionUi() {
   add.hidden = selecting;
   del.hidden = !selecting;
   move.hidden = !selecting;
-  /* 選んでいる間に冊を切り替えられると、選んだものが見えなくなる */
-  deck.hidden = selecting;
   stats.textContent = selecting ? `${bookSelection.size}語を選択中` : bookStatsText;
   stats.classList.toggle("selecting", selecting);
 
@@ -8837,16 +8791,18 @@ async function renderDeckPicker() {
   const rows = await idbGetAll("words");
   const decks = await listDecks();
 
-  const card = (deck, label, count, memorized) => {
+  const card = (name, label, count, memorized) => {
     const btn = document.createElement("button");
-    btn.className = "deck-card" + (deck === currentDeck ? " current" : "");
+    btn.className = "deck-card" + (name === currentDeck ? " current" : "");
     btn.type = "button";
-    btn.dataset.deck = deck;
+    btn.dataset.deck = name;
     const pct = count ? Math.round((memorized / count) * 100) : 0;
     btn.innerHTML = `<span class="n">${escapeHtml(label)}</span>`
       + `<span class="c">${count}語・暗記済${pct}%</span>`;
     btn.addEventListener("click", async () => {
-      currentDeck = deck;
+      /* 長押しで整理を開いた直後の指離しを、冊を開く操作にしない */
+      if (btn.dataset.held === "1") { btn.dataset.held = ""; return; }
+      currentDeck = name;
       await kvSet("current_deck", currentDeck);
       clearBookSelection();
       showScreen("screen-book");
@@ -8854,26 +8810,17 @@ async function renderDeckPicker() {
       await renderBookList();
       syncBookOnOpen();
     });
+
+    /* 「すべての単語帳」は名前を変えようもたたみようもない */
+    if (name !== DECK_ALL) bindDeckCardLongPress(btn, name);
     return btn;
   };
 
   listEl.innerHTML = "";
   listEl.appendChild(card(DECK_ALL, "すべての単語帳", rows.length, rows.filter((r) => r.memorized).length));
-  /* タグの付いた冊は、そのタグの見出しの下にまとめて並べる */
-  let openTag = null;
-  decks.forEach((deck) => {
-    const { tag, name } = splitDeck(deck);
-    if (tag !== openTag) {
-      if (tag) {
-        const head = document.createElement("div");
-        head.className = "deck-group";
-        head.textContent = tag;
-        listEl.appendChild(head);
-      }
-      openTag = tag;
-    }
-    const mine = rows.filter((r) => deckOf(r) === deck);
-    listEl.appendChild(card(deck, name, mine.length, mine.filter((r) => r.memorized).length));
+  decks.forEach((name) => {
+    const mine = rows.filter((r) => deckOf(r) === name);
+    listEl.appendChild(card(name, name, mine.length, mine.filter((r) => r.memorized).length));
   });
 }
 
@@ -8883,7 +8830,6 @@ async function renderDeckPicker() {
 const DECK_NAME_MAX = 24;
 const deckNameSheet = document.getElementById("deck-name-sheet");
 const deckNameInput = document.getElementById("deck-name-input");
-const deckTagInput = document.getElementById("deck-tag-input");
 const deckNameError = document.getElementById("deck-name-error");
 /* 入れ終わったときに呼ぶ相手。作るのか名前を変えるのかで変わる */
 let deckNameDone = null;
@@ -8899,16 +8845,11 @@ function closeDeckNameSheet() {
   showDeckNameError("");
 }
 
-async function openDeckNameSheet({ hint, value = "", tag = "", okLabel, onDone }) {
+function openDeckNameSheet({ hint, value = "", okLabel, onDone }) {
   deckNameDone = onDone;
   document.getElementById("deck-name-hint").textContent = hint;
   document.getElementById("deck-name-ok").textContent = okLabel;
   deckNameInput.value = value;
-  deckTagInput.value = tag;
-  /* すでに使っているタグを候補に出す。同じ分類に別名を付けてしまうのを防ぐ */
-  const tags = await listDeckTags();
-  document.getElementById("deck-tag-options").innerHTML =
-    tags.map((t) => `<option value="${escapeHtml(t)}"></option>`).join("");
   showDeckNameError("");
   deckNameSheet.style.display = "flex";
   deckNameInput.focus();
@@ -8916,50 +8857,39 @@ async function openDeckNameSheet({ hint, value = "", tag = "", okLabel, onDone }
 }
 
 /* 使えない名前なら、その理由を返す。使えるなら空文字 */
-async function deckNameProblem(deck, { allow = "" } = {}) {
-  const { tag, name } = splitDeck(deck);
+async function deckNameProblem(name, { allow = "" } = {}) {
   if (!name) return "名前を入れてください";
-  if (name.length > DECK_NAME_MAX) return `名前は${DECK_NAME_MAX}文字までにしてください`;
-  if (tag.length > DECK_NAME_MAX) return `タグは${DECK_NAME_MAX}文字までにしてください`;
-  if (deck === DECK_ALL || deck === DECK_MANAGE) return "その名前は使えません";
-  if (deck === allow) return "";
+  if (name.length > DECK_NAME_MAX) return `${DECK_NAME_MAX}文字までにしてください`;
+  if (name === DECK_ALL) return "その名前は使えません";
+  if (name === allow) return "";
   const decks = await listDecks();
-  if (decks.includes(deck)) {
-    return tag ? `「${tag}」に「${name}」はすでにあります` : `「${name}」はすでにあります`;
-  }
+  if (decks.includes(name)) return `「${name}」はすでにあります`;
   return "";
 }
 
 async function submitDeckName() {
   if (!deckNameDone) return;
-  /* 区切り文字はタグと名前を分けるために使っているので、どちらにも入れさせない */
-  const name = deckNameInput.value.trim().split(DECK_TAG_SEP).join("");
-  const tag = deckTagInput.value.trim().split(DECK_TAG_SEP).join("");
-  const deck = deckKey(tag, name);
-  const problem = await deckNameProblem(deck, { allow: deckNameDone.allow || "" });
+  const name = deckNameInput.value.trim();
+  const problem = await deckNameProblem(name, { allow: deckNameDone.allow || "" });
   if (problem) { showDeckNameError(problem); return; }
   const done = deckNameDone.run;
   closeDeckNameSheet();
-  await done(deck);
+  await done(name);
 }
 
 document.getElementById("deck-name-ok").addEventListener("click", submitDeckName);
 document.getElementById("deck-name-cancel").addEventListener("click", closeDeckNameSheet);
-[deckNameInput, deckTagInput].forEach((el) => {
-  el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); submitDeckName(); }
-    if (e.key === "Escape") closeDeckNameSheet();
-  });
-  /* 打ち直したら、前の指摘は消す */
-  el.addEventListener("input", () => showDeckNameError(""));
+deckNameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); submitDeckName(); }
+  if (e.key === "Escape") closeDeckNameSheet();
 });
+/* 打ち直したら、前の指摘は消す */
+deckNameInput.addEventListener("input", () => showDeckNameError(""));
 
 /* 新しい冊を作って、そのまま開く */
 async function createDeckFlow() {
-  /* いま見ている冊にタグが付いていれば、その分類の続きを作ることが多い */
-  await openDeckNameSheet({
+  openDeckNameSheet({
     hint: "新しい単語帳",
-    tag: currentDeck === DECK_ALL ? "" : deckTagOf(currentDeck),
     okLabel: "作る",
     onDone: { run: async (name) => {
       await rememberDeck(name);
@@ -8971,29 +8901,44 @@ async function createDeckFlow() {
       } else {
         await renderBookList();
       }
-      toast(`「${deckNameOf(name)}」を作りました`);
+      toast(`「${name}」を作りました`);
     } },
   });
 }
 
 document.getElementById("deck-new-btn").addEventListener("click", createDeckFlow);
 
+/* 札を長押しすると、その冊の整理を開く。上の帯からプルダウンを外したので、
+   名前を変える・たたむの入口はここだけになる */
+function bindDeckCardLongPress(btn, name) {
+  let timer = null, startX = 0, startY = 0;
+  const clear = () => { clearTimeout(timer); timer = null; endPressSink(); };
+  btn.addEventListener("pointerdown", (e) => {
+    startX = e.clientX; startY = e.clientY;
+    startPressSink(btn, BOOK_LONGPRESS_MS);
+    timer = setTimeout(async () => {
+      endPressSink();
+      btn.dataset.held = "1";
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* 拒否されても困らない */ } }
+      currentDeck = name;
+      await kvSet("current_deck", currentDeck);
+      document.getElementById("deck-manage-sheet").style.display = "flex";
+    }, BOOK_LONGPRESS_MS);
+  });
+  btn.addEventListener("pointermove", (e) => {
+    if (!timer) return;
+    /* 一覧を縦に送っているだけの指を、長押しと取り違えない */
+    if (Math.abs(e.clientX - startX) > BOOK_LONGPRESS_SLOP
+      || Math.abs(e.clientY - startY) > BOOK_LONGPRESS_SLOP) clear();
+  });
+  btn.addEventListener("pointerup", clear);
+  btn.addEventListener("pointercancel", clear);
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
 /* ---- 単語帳の切り替えと整理 ---- */
 const deckManageSheet = document.getElementById("deck-manage-sheet");
 const deckMoveSheet = document.getElementById("deck-move-sheet");
-
-document.getElementById("deck-select").addEventListener("change", async (e) => {
-  if (e.target.value === DECK_MANAGE) {
-    /* 整理は選ぶものではないので、見ている冊に戻してからシートを出す */
-    e.target.value = currentDeck;
-    deckManageSheet.style.display = "flex";
-    return;
-  }
-  currentDeck = e.target.value;
-  await kvSet("current_deck", currentDeck);
-  clearBookSelection();
-  await renderBookList();
-});
 
 document.getElementById("deck-manage-close").addEventListener("click", () => {
   deckManageSheet.style.display = "none";
@@ -9004,14 +8949,13 @@ document.getElementById("deck-create-btn").addEventListener("click", () => {
   createDeckFlow();
 });
 
-document.getElementById("deck-rename-btn").addEventListener("click", async () => {
+document.getElementById("deck-rename-btn").addEventListener("click", () => {
   deckManageSheet.style.display = "none";
   if (currentDeck === DECK_ALL) { toast("名前を変える単語帳を選んでください"); return; }
   const from = currentDeck;
-  await openDeckNameSheet({
-    hint: `「${deckNameOf(from)}」を直す`,
-    value: deckNameOf(from),
-    tag: deckTagOf(from),
+  openDeckNameSheet({
+    hint: `「${from}」の名前を変える`,
+    value: from,
     okLabel: "変える",
     /* 自分と同じ名前は「すでにある」ではないので、ここだけ通す */
     onDone: { allow: from, run: async (name) => {
@@ -9026,7 +8970,8 @@ document.getElementById("deck-rename-btn").addEventListener("click", async () =>
       await kvSet("current_deck", currentDeck);
       await refreshDeckSelects();
       await renderBookList();
-      toast(`「${deckNameOf(name)}」に変えました`);
+      if (document.getElementById("screen-decks").classList.contains("active")) await renderDeckPicker();
+      toast(`「${name}」に変えました`);
     } },
   });
 });
@@ -9037,8 +8982,8 @@ document.getElementById("deck-delete-btn").addEventListener("click", async () =>
   if (currentDeck === DEFAULT_DECK) { toast(`「${DEFAULT_DECK}」はたためません`); return; }
   const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === currentDeck);
   const ask = rows.length
-    ? `「${deckNameOf(currentDeck)}」をたたみます。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
-    : `「${deckNameOf(currentDeck)}」をたたみます。よろしいですか？`;
+    ? `「${currentDeck}」をたたみます。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
+    : `「${currentDeck}」をたたみます。よろしいですか？`;
   if (!confirm(ask)) return;
   /* 単語ごと消してしまわないよう、中身は既定の冊へ移してからたたむ */
   for (const r of rows) await saveWordRecord({ ...r, deck: DEFAULT_DECK });
@@ -9049,8 +8994,8 @@ document.getElementById("deck-delete-btn").addEventListener("click", async () =>
   await kvSet("current_deck", currentDeck);
   await refreshDeckSelects();
   await renderBookList();
-  const foldedName = deckNameOf(folded);
-  toast(rows.length ? `「${foldedName}」をたたみ、${rows.length}語を移しました` : `「${foldedName}」をたたみました`);
+  if (document.getElementById("screen-decks").classList.contains("active")) await renderDeckPicker();
+  toast(rows.length ? `「${folded}」をたたみ、${rows.length}語を移しました` : `「${folded}」をたたみました`);
 });
 
 /* ---- 選んだ単語を別の冊へ移す ---- */
@@ -9063,34 +9008,22 @@ document.getElementById("book-select-move-btn").addEventListener("click", async 
   const decks = await listDecks();
   const list = document.getElementById("deck-move-list");
   list.innerHTML = "";
-  let openTag = null;
-  decks.forEach((deck) => {
-    const { tag, name } = splitDeck(deck);
-    if (tag !== openTag) {
-      if (tag) {
-        const head = document.createElement("div");
-        head.className = "deck-group";
-        head.textContent = tag;
-        list.appendChild(head);
-      }
-      openTag = tag;
-    }
+  decks.forEach((name) => {
     const btn = document.createElement("button");
     btn.className = "memorize-mode-btn";
     btn.type = "button";
     btn.textContent = `📘 ${name}`;
-    btn.addEventListener("click", () => moveSelectionToDeck(deck));
+    btn.addEventListener("click", () => moveSelectionToDeck(name));
     list.appendChild(btn);
   });
   const fresh = document.createElement("button");
   fresh.className = "memorize-mode-btn";
   fresh.type = "button";
   fresh.textContent = "📕 新しい単語帳へ";
-  fresh.addEventListener("click", async () => {
+  fresh.addEventListener("click", () => {
     deckMoveSheet.style.display = "none";
-    await openDeckNameSheet({
+    openDeckNameSheet({
       hint: "新しい単語帳へ移す",
-      tag: currentDeck === DECK_ALL ? "" : deckTagOf(currentDeck),
       okLabel: "作って移す",
       onDone: { run: async (name) => {
         await rememberDeck(name);
@@ -9113,7 +9046,7 @@ async function moveSelectionToDeck(name) {
   bookSelection.clear();
   await refreshDeckSelects();
   await renderBookList();
-  toast(`${ids.length}語を「${deckNameOf(name)}」へ移しました`);
+  toast(`${ids.length}語を「${name}」へ移しました`);
 }
 
 document.getElementById("batch-deck-select").addEventListener("change", async (e) => {
@@ -9129,7 +9062,7 @@ document.getElementById("result-deck-select").addEventListener("change", async (
   const existing = await idbGet("words", currentWordRecordId());
   if (existing && deckOf(existing) !== resultDeck) {
     await saveWordRecord({ ...existing, deck: resultDeck });
-    toast(`「${deckNameOf(resultDeck)}」へ移しました`);
+    toast(`「${resultDeck}」へ移しました`);
   }
 });
 
@@ -10776,6 +10709,24 @@ const cloudMissingColumns = new Set();
 
 const cloudTombstonesSupported = () => !cloudMissingColumns.has("deleted");
 
+/* 単語の入っている単語帳は、単語そのものに名前が乗っているので放っておいても
+   同期される。同期されないのは中身が空の冊だけなので、その名前の一覧だけを
+   recent_words と同じ形（利用者ごとに1行）で持つ。
+   表が無いプロジェクトでも止まらないよう、一度断られたら以降は黙って諦める */
+let cloudDecksSupported = true;
+
+function pushDeckShelf() {
+  if (!supabaseClient || !cloudUserId || !cloudDecksSupported) return;
+  supabaseClient.from("decks")
+    .upsert({ user_id: cloudUserId, names: deckShelf, updated_at: new Date().toISOString() })
+    .then(({ error }) => {
+      if (!error) return;
+      cloudDecksSupported = false;
+      console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
+        + "（SUPABASE_SETUP.mdの追加SQLを実行してください）:", error.message || error);
+    });
+}
+
 /* PostgRESTは PGRST204 で「Could not find the 'antonyms' column of 'words'
    in the schema cache」、Postgres本体は 42703 で「column "antonyms" of
    relation "words" does not exist」を返す。どちらもテーブル名まで引用符で
@@ -10856,9 +10807,13 @@ async function runCloudMerge({ quiet = false } = {}) {
        しまい、削除したはずの単語が復活する */
     await flushCloudOutbox();
     await withCloudRetry(async () => {
-      const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }] = await Promise.all([
+      const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }, remoteDecks] = await Promise.all([
         sb.from("words").select("*").eq("user_id", cloudUserId),
         sb.from("recent_words").select("words").eq("user_id", cloudUserId).maybeSingle(),
+        /* 表が無くても全体を止めない */
+        cloudDecksSupported
+          ? sb.from("decks").select("names").eq("user_id", cloudUserId).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
       ]);
       if (wErr) throw wErr;
       if (rErr) throw rErr;
@@ -10906,10 +10861,33 @@ async function runCloudMerge({ quiet = false } = {}) {
           .upsert({ user_id: cloudUserId, words: mergedRecent, updated_at: new Date().toISOString() });
         if (error) throw error;
       }
+
+      /* 空の単語帳は足し合わせる。片方で作った冊が、もう片方の
+         「こちらには無い」という理由で消えてしまわないようにするため */
+      if (remoteDecks && remoteDecks.error) {
+        cloudDecksSupported = false;
+        console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
+          + "（SUPABASE_SETUP.mdの追加SQLを実行してください）");
+      } else if (cloudDecksSupported) {
+        const remoteNames = (remoteDecks && remoteDecks.data && remoteDecks.data.names) || [];
+        const merged = [...new Set([...deckShelf, ...remoteNames])].filter((n) => typeof n === "string" && n.trim());
+        if (merged.length !== deckShelf.length || merged.some((n, i) => n !== deckShelf[i])) {
+          deckShelf = merged;
+          await kvSet("deck_shelf", deckShelf);
+        }
+        if (merged.length) {
+          const { error } = await sb.from("decks")
+            .upsert({ user_id: cloudUserId, names: merged, updated_at: new Date().toISOString() });
+          if (error) { cloudDecksSupported = false; }
+        }
+      }
     });
 
     updateOutboxStatus(Object.keys(await outboxAll()).length);
+    await refreshDeckSelects();
     renderBookList();
+    /* 単語帳を選ぶ画面を開いたまま別の端末の変更が届くことがある */
+    if (document.getElementById("screen-decks").classList.contains("active")) renderDeckPicker();
     renderRecentChips();
   } catch (err) {
     console.warn("Cloud sync (pull) failed:", err);
@@ -11931,7 +11909,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "247";
+const APP_BUILD = "248";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
