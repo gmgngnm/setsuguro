@@ -1804,28 +1804,67 @@ async function sharedDecomposeGet(words) {
 /* 共有の表へ差し出す。分解そのものは既に終わっているので、
    失敗しても黙って諦める（待たせない・止めない） */
 function sharedDecomposePut(word, data) {
+  sharedDecomposePutMany([[word, data]]);
+}
+
+/* まとめ登録のように何語もあるときは、1語ずつ投げずに1回の差し出しにまとめる */
+function sharedDecomposePutMany(entries) {
   if (!supabaseClient || !cloudUserId) return;
-  if (!isSharedDecomposeUsable(data, word)) return;
+  const rows = entries
+    .filter(([word, data]) => isSharedDecomposeUsable(data, word))
+    .map(([word, data]) => ({ word: String(word || "").toLowerCase(),
+      version: DECOMPOSE_CACHE_VERSION, payload: data, created_at: Date.now() }));
+  if (!rows.length) return;
   /* 先に書いた人の結果を残す。上書き合戦にすると、同じ単語の行が
      引くたびに入れ替わって、結果が安定しない */
   supabaseClient.from(SHARED_DECOMPOSE_TABLE)
-    .upsert({ word: String(word || "").toLowerCase(), version: DECOMPOSE_CACHE_VERSION,
-              payload: data, created_at: Date.now() },
-            { onConflict: "word,version", ignoreDuplicates: true })
+    .upsert(rows, { onConflict: "word,version", ignoreDuplicates: true })
     .then(({ error }) => { if (error) console.warn("分解結果を共有できませんでした（手元には保存できています）:", error); })
     .catch((err) => console.warn("分解結果を共有できませんでした（手元には保存できています）:", err));
+}
+
+/* すでに単語帳にある語を、作り直さずにそのまま出すための札探し。
+   分解の控えは200語までで古いものから捨てるが、保存した札は消えない。
+   まとめ登録で何百語と入れたあとに引き直す場面でいちばん効く */
+async function findSavedWordCard(word) {
+  try {
+    const id = wordCardId(word);
+    const rows = await idbGetAll("words");
+    const hit = rows.find((r) => r.id === id) || rows.find((r) => wordCardId(r.word || "") === id);
+    /* 中身が欠けている札は使わない。作り直した方が早いし、確かでもある */
+    if (!hit || !Array.isArray(hit.morphemes) || !hit.morphemes.length) return null;
+    if (!hit.word_meaning) return null;
+    return hit;
+  } catch (err) {
+    console.warn("保存済みの単語を読めませんでした（作り直します）:", err);
+    return null;
+  }
+}
+
+/* 保存済みの札を、分解の結果と同じ形に移す */
+function savedCardToDecomposeResult(card) {
+  return {
+    correctedWord: card.word, wasCorrected: false, wordExists: true,
+    meaning: card.word_meaning || "", phonetic: card.word_phonetic || "",
+    memoryTip: card.word_memory_tip || "",
+    synonyms: card.synonyms || [], antonyms: card.antonyms || [],
+    morphemes: card.morphemes,
+  };
 }
 
 /* 手元の控え → 共有の表 の順に当たる。当たったものは手元にも控える */
 async function lookupDecomposeCaches(words) {
   const out = new Map();
   const remaining = [];
+  /* 手元の控えだけに有る語。共有の表にはまだ無いかもしれないので、
+     呼ぶ側が差し出せるように分けて返す */
+  const localOnly = new Map();
   for (const word of words) {
     const cached = await readDecomposeCache(word);
-    if (cached) out.set(word.toLowerCase(), cached);
+    if (cached) { out.set(word.toLowerCase(), cached); localOnly.set(word.toLowerCase(), cached); }
     else remaining.push(word);
   }
-  if (!remaining.length) return { hits: out, misses: remaining };
+  if (!remaining.length) return { hits: out, misses: remaining, localOnly };
   const shared = await sharedDecomposeGet(remaining);
   const misses = [];
   for (const word of remaining) {
@@ -1834,7 +1873,7 @@ async function lookupDecomposeCaches(words) {
     out.set(word.toLowerCase(), hit);
     await writeDecomposeCache(word, hit);
   }
-  return { hits: out, misses };
+  return { hits: out, misses, localOnly };
 }
 
 /* 空いた項目だけを埋め直す短い問い合わせ。分割はすでに確定しているので、
@@ -2712,7 +2751,11 @@ function isDecomposeResultComplete(result) {
 async function batchDecomposeWords(words, provider, apiKey) {
   /* 既に分かっている語はAIに訊かない。まとめ登録はいちばん語数が多い
      経路なので、控えと共有の表がここでいちばん効く */
-  const { hits: out, misses } = await lookupDecomposeCaches(words);
+  const { hits: out, misses, localOnly } = await lookupDecomposeCaches(words);
+  /* 手元の控えから出た語も、共有の表にはまだ無いかもしれない。
+     まとめ登録はいちばん語数が多い経路なので、ここで差し出しておくと、
+     あとから引いたとき（別の端末からでも）分解を頼まずに済む */
+  sharedDecomposePutMany([...localOnly]);
   if (!misses.length) return out;
 
   const fallbackToSingle = async (word) => {
@@ -4042,11 +4085,15 @@ async function runDecompose(rawWord) {
   }
   homeError.textContent = "";
 
+  /* すでに単語帳にある語は、作り直さずに保存してある内容をそのまま出す。
+     待ち時間もかからず、APIキーが無くても開ける */
+  const savedCard = await findSavedWordCard(word);
+
   const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
-  if (!apiKey) await demoWordDataReady;
-  const demo = !apiKey ? DEMO_WORD_DATA[word.toLowerCase()] : null;
-  if (!apiKey && !demo) {
+  if (!apiKey && !savedCard) await demoWordDataReady;
+  const demo = (!apiKey && !savedCard) ? DEMO_WORD_DATA[word.toLowerCase()] : null;
+  if (!apiKey && !demo && !savedCard) {
     homeError.textContent = "設定画面でAPIキーを登録してください";
     showScreen("screen-settings");
     refreshUsageDisplay();
@@ -4086,7 +4133,20 @@ async function runDecompose(rawWord) {
   const decomposeLoadingSeq = startDecomposeLoadingSequence("decompose-spinner");
 
   let morphemes;
-  if (demo) {
+  if (savedCard) {
+    morphemes = savedCard.morphemes;
+    currentWordMeaning = savedCard.word_meaning || "";
+    currentWordPhonetic = savedCard.word_phonetic || "";
+    currentMemoryTip = savedCard.word_memory_tip || "";
+    currentSynonyms = savedCard.synonyms || [];
+    currentAntonyms = savedCard.antonyms || [];
+    /* 札から出したぶんも控えと共有の表へ回しておく。控えから溢れていても、
+       次からは（別の端末からでも）分解を頼まずに済む */
+    const asResult = savedCardToDecomposeResult(savedCard);
+    writeDecomposeCache(word, asResult)
+      .catch((err) => console.warn("分解の控えを書けませんでした:", err));
+    sharedDecomposePut(word, asResult);
+  } else if (demo) {
     /* 本来はAI分解の応答待ちが入る箇所。デモ単語は即座にデータが揃ってしまい
        不自然にノータイムで進んでしまうため、ダミーの待ち時間を入れる */
     await sleep(1000);
@@ -4172,7 +4232,14 @@ async function runDecompose(rawWord) {
     currentCandidates = [{ text: demo.goroText, highlight: [] }];
     renderGoroList();
     document.getElementById("regen-btn").disabled = false;
-  } else if (await isGoroAutoEnabled()) {
+  } else if (savedCard && savedCard.goro_text) {
+    /* 保存してある語呂合わせをそのまま出す。別のものが欲しいときは
+       作り直すボタンから（APIキーが無いときは押せないままにする） */
+    currentCandidates = [{ text: savedCard.goro_text, highlight: savedCard.goro_highlight || [] }];
+    renderGoroList();
+    document.getElementById("regen-btn").disabled = !apiKey;
+  } else if (apiKey && await isGoroAutoEnabled()) {
+    /* 札に語呂合わせが無いときは、今まで通り作る（APIキーがあるときだけ） */
     /* 待たずに裏側で先行実行する。完了はloadGoroCandidates内のrenderGoroList
        が、進捗はgenerateGoroからのreportGoroStatusがgoro-listへ直接反映する */
     loadGoroCandidates(provider, apiKey);
@@ -11786,7 +11853,8 @@ async function saveGeneratedBatchRow(row, provider, apiKey) {
   await idbDelete(BATCH_STORE, row.id);
   /* ユーザーが使うと判断した語呂を、今後のFew-shot例・マンネリ検出の
      材料として蓄積する。1語ずつ保存したときと同じ扱いにする */
-  growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text, provider, apiKey)
+  growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text,
+    row.result.morphemes, provider, apiKey)
     .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
 }
 
@@ -12038,7 +12106,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "253";
+const APP_BUILD = "254";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
