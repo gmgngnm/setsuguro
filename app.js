@@ -3365,6 +3365,7 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
     if (target === "decks") { showScreen("screen-decks"); renderDeckPicker(); }
     if (target === "book") {
       clearBookSelection();
+      resetBookSearch();
       showScreen("screen-book");
       refreshDeckSelects().then(renderBookList);
       syncBookOnOpen();
@@ -8737,6 +8738,22 @@ let bookSelecting = false;
 let bookHasRows = false;
 /* いま一覧に出ている件数。数えの文言を作り直すために覚えておく */
 let bookStatsText = "";
+/* 一覧の絞り込み。冊を開き直したら空に戻す（前の検索が残っていると、
+   開いた冊が空に見えてしまう） */
+let bookQuery = "";
+
+/* 単語そのものだけでなく意味や語呂合わせでも引けるようにする。
+   綴りをうろ覚えでも「意味」から辿れた方が探しやすい */
+function bookRowMatches(record, query) {
+  return [record.word, record.word_meaning, record.word_phonetic, record.goro_text]
+    .some((v) => String(v || "").toLowerCase().includes(query));
+}
+
+function resetBookSearch() {
+  bookQuery = "";
+  const input = document.getElementById("book-search");
+  if (input) input.value = "";
+}
 
 function syncBookSelectionUi() {
   const selecting = bookSelecting;
@@ -8812,20 +8829,30 @@ async function renderBookList() {
   [...bookSelection].forEach((id) => { if (!alive.has(id)) bookSelection.delete(id); });
 
   bookHasRows = rows.length > 0;
+  /* 絞り込む相手が無い冊では、検索バーも出さない */
+  const search = document.getElementById("book-search");
+  if (search) search.hidden = !bookHasRows;
 
-  if (!rows.length) {
-    listEl.innerHTML = `<div class="empty-note">${currentDeck === DECK_ALL
-      ? "まだ記録がありません" : "この単語帳はまだ空です"}</div>`;
+  /* 数えも、選んだ単語の生き残りも、絞り込む前の冊の中身で決める。
+     絞り込みは見せ方の話で、冊の中身が減るわけではない */
+  const query = bookQuery.trim().toLowerCase();
+  const shown = query ? rows.filter((r) => bookRowMatches(r, query)) : rows;
+
+  if (!shown.length) {
+    listEl.innerHTML = `<div class="empty-note">${query
+      ? `「${escapeHtml(bookQuery.trim())}」に当てはまる単語がありません`
+      : (currentDeck === DECK_ALL ? "まだ記録がありません" : "この単語帳はまだ空です")}</div>`;
     syncBookSelectionUi();
     return;
   }
-  rows.forEach((r) => {
+  shown.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
     const row = buildBookRow(r.id, title, r.word_phonetic || "", r.word_meaning || "", r.created_at,
       () => {
         /* 選んでいる最中は、開かずに選ぶ／外すだけ */
         if (bookSelecting) toggleBookSelection(r.id);
-        else openWordDetail(r, rows);
+        /* ページ送りは、いま画面に出ている並びをそのまま辿る */
+        else openWordDetail(r, shown);
       },
       () => enterBookSelection(r.id));
     listEl.appendChild(row);
@@ -8856,6 +8883,7 @@ async function renderDeckPicker() {
       currentDeck = name;
       await kvSet("current_deck", currentDeck);
       clearBookSelection();
+      resetBookSearch();
       showScreen("screen-book");
       await refreshDeckSelects();
       await renderBookList();
@@ -9130,6 +9158,16 @@ document.getElementById("result-deck-select").addEventListener("change", async (
     await saveWordRecord({ ...existing, deck: resultDeck });
     toast(`「${resultDeck}」へ移しました`);
   }
+});
+
+document.getElementById("book-search").addEventListener("input", (e) => {
+  bookQuery = e.target.value;
+  renderBookList();
+});
+/* 検索中にEnterを押しても、何も起きずにキーボードだけ閉じるのが自然 */
+document.getElementById("book-search").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
+  if (e.key === "Escape") { resetBookSearch(); renderBookList(); }
 });
 
 document.getElementById("book-select-cancel-btn").addEventListener("click", clearBookSelection);
@@ -12000,7 +12038,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "252";
+const APP_BUILD = "253";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
