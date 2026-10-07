@@ -574,9 +574,12 @@ select:disabled{opacity:.5;cursor:default;}
 .save-word-btn{
   flex:1;min-width:0;height:52px;
   background:var(--accent);color:#fff;border:none;border-radius:16px;
-  padding:0 20px;font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;
+  padding:0 12px;font-size:14.5px;font-family:'JetBrains Mono',monospace;font-weight:700;
   box-shadow:var(--shadow);
   display:flex;align-items:center;justify-content:center;
+  /* 右隣に保存先を置いたぶん幅が減った。折り返して帯の高さが変わるより、
+     狭い端末では端を落とす */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .save-word-btn.on{background:var(--surface);color:var(--accent-ink);border:1.5px solid var(--accent);}
 #screen-result{padding-bottom:96px;}
@@ -673,8 +676,13 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .deck-pick .deck-select{flex:0 1 auto;min-width:120px;max-width:220px;}
 /* 結果画面では、保存ボタンのすぐ上に置いて行き先が見えるようにする */
-.deck-pick-save{justify-content:flex-end;flex:0 1 auto;}
-.deck-pick-save .deck-select{flex:0 1 220px;}
+/* 保存先は下の帯で保存ボタンの右隣に並ぶので、ボタンと高さと角丸を揃える */
+.deck-select-save{
+  flex:0 1 112px;min-width:88px;max-width:none;height:52px;
+  border-radius:16px;padding:0 28px 0 13px;font-size:13px;
+  background-color:var(--surface);box-shadow:var(--shadow);
+  background-position:right 10px center;
+}
 .deck-move-list{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow-y:auto;}
 
 /* 単語帳を選ぶ画面。1冊ずつをそのまま押せる大きさの札にする */
