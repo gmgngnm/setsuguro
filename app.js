@@ -8516,6 +8516,32 @@ function currentWordRecordId() {
   return wordCardId(currentWord);
 }
 
+/* 同じ単語を複数の単語帳に置けるよう、2枚目以降には別のIDを持たせる。
+   1枚目は今まで通り単語そのものがIDなので、古い記録とそのまま噛み合う。
+   冊の名前はIDに混ぜない（名前を変えたときにIDが嘘になるため） */
+function wordCopyId(word) {
+  return `${wordCardId(word)}#${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/* 同じ単語が同じ冊に2枚並ばないようにしながら、単語を別の冊へ移す。
+   別の冊から写した札を元の冊へ戻すときに起きうる。中身は同じなので、
+   先にあった方を残して移す側を消す */
+async function moveWordsToDeck(records, deck) {
+  const all = await idbGetAll("words");
+  let moved = 0, merged = 0;
+  for (const r of records) {
+    const clash = all.find((o) => o.id !== r.id && deckOf(o) === deck
+      && wordCardId(o.word) === wordCardId(r.word));
+    if (clash) { await deleteWordRecord(r.id); merged++; continue; }
+    const next = { ...r, deck };
+    await saveWordRecord(next);
+    const i = all.findIndex((o) => o.id === r.id);
+    if (i >= 0) all[i] = next;
+    moved++;
+  }
+  return { moved, merged };
+}
+
 async function refreshSaveWordBtn() {
   const btn = document.getElementById("save-word-btn");
   if (!btn) return;
@@ -9020,7 +9046,7 @@ document.getElementById("deck-delete-btn").addEventListener("click", async () =>
     : `「${currentDeck}」を削除します。よろしいですか？`;
   if (!confirm(ask)) return;
   /* 消すのは冊だけ。中の単語まで消えないよう、先に既定の冊へ移す */
-  for (const r of rows) await saveWordRecord({ ...r, deck: DEFAULT_DECK });
+  const { moved, merged } = await moveWordsToDeck(rows, DEFAULT_DECK);
   await forgetDeck(currentDeck);
   if (batchDeck === currentDeck) { batchDeck = DEFAULT_DECK; await kvSet("batch_deck", batchDeck); }
   const removed = currentDeck;
@@ -9029,7 +9055,9 @@ document.getElementById("deck-delete-btn").addEventListener("click", async () =>
   await refreshDeckSelects();
   await renderBookList();
   if (document.getElementById("screen-decks").classList.contains("active")) await renderDeckPicker();
-  toast(rows.length ? `「${removed}」を削除し、${rows.length}語を移しました` : `「${removed}」を削除しました`);
+  const movedNote = merged ? `${moved}語を移し、${merged}語はすでにあったのでまとめました`
+    : `${moved}語を移しました`;
+  toast(rows.length ? `「${removed}」を削除し、${movedNote}` : `「${removed}」を削除しました`);
 });
 
 /* ---- 選んだ単語を別の冊へ移す ---- */
@@ -9073,15 +9101,18 @@ async function moveSelectionToDeck(name) {
   deckMoveSheet.style.display = "none";
   const ids = [...bookSelection];
   if (!ids.length) return;
+  const records = [];
   for (const id of ids) {
     const r = await idbGet("words", id);
-    if (r) await saveWordRecord({ ...r, deck: name });
+    if (r) records.push(r);
   }
+  const { moved, merged } = await moveWordsToDeck(records, name);
   bookSelecting = false;
   bookSelection.clear();
   await refreshDeckSelects();
   await renderBookList();
-  toast(`${ids.length}語を「${name}」へ移しました`);
+  toast(merged ? `${moved}語を「${name}」へ移しました（${merged}語はすでにあったのでまとめました）`
+    : `${moved}語を「${name}」へ移しました`);
 }
 
 document.getElementById("batch-deck-select").addEventListener("change", async (e) => {
@@ -11470,17 +11501,32 @@ async function addBatchWords(words) {
   if (!words.length) { toast("英単語が見つかりませんでした"); return; }
 
   const queued = new Set((await loadBatchQueue()).map((r) => r.id));
-  const saved = new Set((await idbGetAll("words")).map((r) => r.id));
-  let added = 0, skipped = 0;
+  const saved = await idbGetAll("words");
+  let added = 0, copied = 0, skipped = 0;
   for (const word of words) {
     const id = wordCardId(word);
-    if (queued.has(id) || saved.has(id)) { skipped++; continue; }
+    if (queued.has(id)) { skipped++; continue; }
+    const sameWord = saved.filter((r) => wordCardId(r.word) === id);
+    /* 追加先の冊にもうあるなら、何もしない */
+    if (sameWord.some((r) => deckOf(r) === batchDeck)) { skipped++; continue; }
+    /* 別の冊にあるなら、作り直さずにその札をそのまま写す。
+       同じ単語のために生成を待つ必要もAPIを呼ぶ必要もない */
+    if (sameWord.length) {
+      const copy = { ...sameWord[0], id: wordCopyId(word), deck: batchDeck, created_at: Date.now() };
+      await saveWordRecord(copy);
+      saved.push(copy);
+      copied++;
+      continue;
+    }
     /* 追加した時点の行き先を覚えておく。生成を待つ間に追加先を変えても、
        先に積んだぶんは積んだときの冊へ入る */
     await putBatchRow({ id, word, deck: batchDeck, status: "pending", error: "", result: null, created_at: Date.now() });
     added++;
   }
-  toast(skipped ? `${added}語を追加（${skipped}語は登録済みのため除外）` : `${added}語を追加しました`);
+  const notes = [];
+  if (copied) notes.push(`${copied}語は別の単語帳からコピー`);
+  if (skipped) notes.push(`${skipped}語は登録済みのため除外`);
+  toast(notes.length ? `${added}語を追加（${notes.join("、")}）` : `${added}語を追加しました`);
   await renderBatchQueue();
 }
 
@@ -11954,7 +12000,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "251";
+const APP_BUILD = "252";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
