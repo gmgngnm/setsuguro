@@ -3404,6 +3404,10 @@ function showScreen(id) {
      常にページ最上部から表示されるようにする */
   window.scrollTo(0, 0);
 }
+/* APIキーの欄はformの中にある（ページ全体をフォームと見なされないため）。
+   送信先は無いので、Enterで送信されてページが読み直されないように止める */
+document.getElementById("api-key-form").addEventListener("submit", (e) => e.preventDefault());
+
 document.querySelectorAll("[data-nav]").forEach((el) => {
   el.addEventListener("click", () => {
     const target = el.dataset.nav;
@@ -12181,7 +12185,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "256";
+const APP_BUILD = "257";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

@@ -869,6 +869,8 @@ select:disabled{opacity:.5;cursor:default;}
 .form-row{display:flex;flex-direction:column;gap:6px;}
 .form-row label{font-size:12px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
 .form-field{
+  /* formにもなるので、ブラウザ既定の余白を消しておく */
+  margin:0;
   display:flex;justify-content:space-between;align-items:center;gap:8px;
   background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;
 }

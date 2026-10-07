@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#256</span>
+        <span class="build-tag" id="build-tag">#257</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -268,11 +268,15 @@
     <div class="section-label" style="margin-top:6px;">Gemini API キー</div>
     <div class="form-row">
       <label id="key-label">API キー</label>
-      <div class="form-field">
+      <!-- APIキーの欄だけをformで囲ってある。囲わないとブラウザは
+           ページ全体を1つのフォームと見なし、同じページの他の入力欄
+           （単語帳の検索バーなど）をこのパスワード欄とひと組だと思って
+           パスワード管理を出してくる -->
+      <form class="form-field" id="api-key-form">
         <input id="api-key-input" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
         <button id="clear-key-input" type="button" aria-label="入力をクリア"><svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         <button id="toggle-key-visibility" type="button" aria-label="表示切替"><svg class="icon-svg icon-svg-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      </div>
+      </form>
     </div>
 
     <div class="usage-card">
