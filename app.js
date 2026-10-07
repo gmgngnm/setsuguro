@@ -8730,7 +8730,7 @@ function syncBookSelectionUi() {
   cancel.hidden = !selecting;
   add.hidden = selecting;
   pick.hidden = selecting || !bookHasRows;
-  /* 「すべての単語」は束ねた眺めなので、名前を変えようもたたみようもない */
+  /* 「すべての単語」は束ねた眺めなので、名前の変更も削除もない */
   edit.hidden = selecting || currentDeck === DECK_ALL;
   del.hidden = !selecting;
   move.hidden = !selecting;
@@ -8836,7 +8836,7 @@ async function renderDeckPicker() {
       syncBookOnOpen();
     });
 
-    /* 「すべての単語」は名前を変えようもたたみようもない */
+    /* 「すべての単語」は名前の変更も削除もない */
     if (name !== DECK_ALL) bindDeckCardLongPress(btn, name);
     return btn;
   };
@@ -8940,7 +8940,7 @@ async function createDeckFlow() {
 document.getElementById("deck-new-btn").addEventListener("click", createDeckFlow);
 
 /* 札を長押しすると、その冊の整理を開く。上の帯からプルダウンを外したので、
-   名前を変える・たたむの入口はここだけになる */
+   名前の変更・削除の入口はここだけになる */
 function bindDeckCardLongPress(btn, name) {
   let timer = null, startX = 0, startY = 0;
   const clear = () => { clearTimeout(timer); timer = null; endPressSink(); };
@@ -8983,11 +8983,6 @@ document.getElementById("deck-manage-close").addEventListener("click", () => {
   deckManageSheet.style.display = "none";
 });
 
-document.getElementById("deck-create-btn").addEventListener("click", () => {
-  deckManageSheet.style.display = "none";
-  createDeckFlow();
-});
-
 document.getElementById("deck-rename-btn").addEventListener("click", () => {
   deckManageSheet.style.display = "none";
   if (currentDeck === DECK_ALL) { toast("名前を変える単語帳を選んでください"); return; }
@@ -9017,24 +9012,24 @@ document.getElementById("deck-rename-btn").addEventListener("click", () => {
 
 document.getElementById("deck-delete-btn").addEventListener("click", async () => {
   deckManageSheet.style.display = "none";
-  if (currentDeck === DECK_ALL) { toast("たたむ単語帳を選んでください"); return; }
-  if (currentDeck === DEFAULT_DECK) { toast(`「${DEFAULT_DECK}」はたためません`); return; }
+  if (currentDeck === DECK_ALL) { toast("削除する単語帳を選んでください"); return; }
+  if (currentDeck === DEFAULT_DECK) { toast(`「${DEFAULT_DECK}」は削除できません`); return; }
   const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === currentDeck);
   const ask = rows.length
-    ? `「${currentDeck}」をたたみます。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
-    : `「${currentDeck}」をたたみます。よろしいですか？`;
+    ? `「${currentDeck}」を削除します。中の${rows.length}語は「${DEFAULT_DECK}」へ移ります。よろしいですか？`
+    : `「${currentDeck}」を削除します。よろしいですか？`;
   if (!confirm(ask)) return;
-  /* 単語ごと消してしまわないよう、中身は既定の冊へ移してからたたむ */
+  /* 消すのは冊だけ。中の単語まで消えないよう、先に既定の冊へ移す */
   for (const r of rows) await saveWordRecord({ ...r, deck: DEFAULT_DECK });
   await forgetDeck(currentDeck);
   if (batchDeck === currentDeck) { batchDeck = DEFAULT_DECK; await kvSet("batch_deck", batchDeck); }
-  const folded = currentDeck;
+  const removed = currentDeck;
   currentDeck = DECK_ALL;
   await kvSet("current_deck", currentDeck);
   await refreshDeckSelects();
   await renderBookList();
   if (document.getElementById("screen-decks").classList.contains("active")) await renderDeckPicker();
-  toast(rows.length ? `「${folded}」をたたみ、${rows.length}語を移しました` : `「${folded}」をたたみました`);
+  toast(rows.length ? `「${removed}」を削除し、${rows.length}語を移しました` : `「${removed}」を削除しました`);
 });
 
 /* ---- 選んだ単語を別の冊へ移す ---- */
@@ -9111,7 +9106,7 @@ document.getElementById("book-select-cancel-btn").addEventListener("click", clea
 /* 長押しを知らなくても、まとめて選べる入口が見えているようにする */
 document.getElementById("book-select-btn").addEventListener("click", () => enterBookSelection(null));
 
-/* 開いている冊の名前を変える・たたむ。札を長押しする道と同じシートを開く */
+/* 開いている冊の名前を変える・削除する。札を長押しする道と同じシートを開く */
 document.getElementById("deck-edit-btn").addEventListener("click", () => {
   if (currentDeck === DECK_ALL) return;
   openDeckManageSheet();
@@ -11959,7 +11954,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "249";
+const APP_BUILD = "250";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
