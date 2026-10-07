@@ -1437,6 +1437,12 @@ async function isSavedJumpEnabled() {
 
 /* 設定画面の「語呂合わせの自動生成」。オフのときは分解だけで止め、
    単語ページの「語呂合わせを作る」を押したときだけ生成する */
+/* まとめて登録の「分解できない単語を省く」。接辞に分かれなかった語
+   （1つも取れない／単語まるごとで1つ）を、単語帳に入れずに落とす */
+async function isBatchSkipUnsplitEnabled() {
+  return !!(await kvGet("batch_skip_unsplit", false));
+}
+
 async function isGoroAutoEnabled() {
   return !!(await kvGet("goro_auto", true));
 }
@@ -4101,7 +4107,7 @@ async function runDecompose(rawWord) {
      検索から来たときは、前後の単語という並び自体が無い */
   if (savedCard && await isSavedJumpEnabled()) {
     currentWord = savedCard.word;
-    openWordDetail(savedCard);
+    openWordDetail(savedCard, null, "home");
     return;
   }
 
@@ -8935,7 +8941,7 @@ async function renderBookList() {
         /* 選んでいる最中は、開かずに選ぶ／外すだけ */
         if (bookSelecting) toggleBookSelection(r.id);
         /* ページ送りは、いま画面に出ている並びをそのまま辿る */
-        else openWordDetail(r, shown);
+        else openWordDetail(r, shown, "book");
       },
       () => enterBookSelection(r.id));
     listEl.appendChild(row);
@@ -8954,7 +8960,9 @@ async function renderDeckPicker() {
 
   const card = (name, label, count, memorized) => {
     const btn = document.createElement("button");
-    btn.className = "deck-card" + (name === currentDeck ? " current" : "");
+    /* 前に開いた冊に枠を残さない。押した跡が残っているように見えて、
+       いま何が選ばれているのかと取り違える */
+    btn.className = "deck-card";
     btn.type = "button";
     btn.dataset.deck = name;
     const pct = count ? Math.round((memorized / count) * 100) : 0;
@@ -9490,7 +9498,19 @@ function stepWordDetail(delta) {
   return true;
 }
 
-function openWordDetail(record, list = null) {
+/* 単語ページをどこから開いたか。戻るボタンの行き先がこれで決まる。
+   ページ送りでは渡さないので、送っている間は最初の出どころのまま */
+let wordDetailOrigin = "home";
+
+function openWordDetail(record, list = null, origin = null) {
+  if (origin) {
+    wordDetailOrigin = origin;
+    const back = document.getElementById("word-detail-back-btn");
+    if (back) {
+      back.title = origin === "book" ? "単語帳へ戻る" : "ホームへ戻る";
+      back.setAttribute("aria-label", back.title);
+    }
+  }
   currentWordDetailRecord = record;
   if (list) {
     wordDetailList = list;
@@ -9528,6 +9548,20 @@ function openWordDetail(record, list = null) {
 
   showScreen("screen-word-detail");
 }
+
+/* 単語帳から開いたなら単語帳へ、検索から開いたならホームへ戻る。
+   単語帳へ戻るときは絞り込みをそのまま残す。探し直しになってしまう */
+document.getElementById("word-detail-back-btn").addEventListener("click", async () => {
+  if (wordDetailOrigin === "book") {
+    showScreen("screen-book");
+    await renderBookList();
+    return;
+  }
+  showScreen("screen-home");
+  document.getElementById("word-input").value = "";
+  document.getElementById("home-error").textContent = "";
+  renderRecentChips();
+});
 
 async function requestWordDetailGoro() {
   const record = currentWordDetailRecord;
@@ -11795,10 +11829,11 @@ async function runBatchGeneration() {
      いちばん掛かる工程が動いてしまう。語呂は保存したあとで、
      単語ページの「語呂合わせを作る」から1語ずつ作れる */
   const goroAuto = await isGoroAutoEnabled();
+  const skipUnsplit = await isBatchSkipUnsplitEnabled();
 
   batchRunning = true;
   await renderBatchQueue();
-  let saved = 0;
+  let saved = 0, skipped = 0;
   const chunks = chunkArray(queue, BATCH_CHUNK_SIZE);
   setBatchChunk(1, chunks.length);
   /* 1語ずつの経路では、待っている間に工程名を移り変わらせて見せている。
@@ -11818,6 +11853,10 @@ async function runBatchGeneration() {
           const d = decomposed.get(row.word.toLowerCase());
           if (!d) { await markBatchFailed(row, "分解できませんでした"); continue; }
           if (d.wordExists === false) { await markBatchFailed(row, "英単語として認識できませんでした"); continue; }
+          /* 接辞に分かれなかった語（1つも取れない／単語まるごとで1つ）は、
+             省くことを選んでいればここで落とす。語呂合わせを作る前なので、
+             省いた語のぶんのトークンは使わない */
+          if (skipUnsplit && d.morphemes.length < 2) { await idbDelete(BATCH_STORE, row.id); skipped++; continue; }
           if (!d.morphemes.length) { await markBatchFailed(row, "接辞に分解できませんでした"); continue; }
           items.push({ row, decomposed: d, word: d.correctedWord, wordMeaning: d.meaning, morphemes: d.morphemes });
         }
@@ -11864,7 +11903,9 @@ async function runBatchGeneration() {
       }
       await renderBatchQueue();
     }
-    toast(saved ? `${saved}語を単語帳に保存しました` : "まとめ生成が終わりました");
+    const skipNote = skipped ? `${skipped}語は分解できないので省きました` : "";
+    toast(saved ? `${saved}語を単語帳に保存しました${skipNote ? `（${skipNote}）` : ""}`
+      : (skipNote || "まとめ生成が終わりました"));
   } finally {
     batchRunning = false;
     setBatchChunk(0, 0);
@@ -11911,6 +11952,8 @@ async function flushPendingReviewRows() {
 
 async function openBatchScreen() {
   showScreen("screen-batch");
+  const skipBox = document.getElementById("batch-skip-unsplit");
+  if (skipBox) skipBox.checked = await isBatchSkipUnsplitEnabled();
   await refreshDeckSelects();
   refreshGeminiKeyAvailability();
   /* 画面を離れている間も生成は続いている。戻ってきたときに、
@@ -11929,6 +11972,10 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 document.getElementById("batch-entry-btn").addEventListener("click", openBatchScreen);
+
+document.getElementById("batch-skip-unsplit").addEventListener("change", async (e) => {
+  await kvSet("batch_skip_unsplit", e.target.checked);
+});
 
 /* 入力欄の内容をキューに足してから、そのまま生成〜保存まで走らせる。
    入力が空でも、前回までに積み残した未生成の語があれば生成を続ける */
@@ -12134,7 +12181,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "255";
+const APP_BUILD = "256";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

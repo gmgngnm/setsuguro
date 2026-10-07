@@ -724,10 +724,6 @@ select:disabled{opacity:.5;cursor:default;}
 .deck-card .c{
   font-size:11.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;flex-shrink:0;
 }
-/* いま見ている冊が分かるようにしておく */
-.deck-card.current{
-  border-color:var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));
-}
 .deck-card:active{transform:scale(.98);}
 
 /* 単語帳の名前を入れる欄。押す言葉は欄の右横に並べる */
@@ -1026,6 +1022,15 @@ select:disabled{opacity:.5;cursor:default;}
   width:100%;box-sizing:border-box;resize:vertical;min-height:96px;
   font-family:'JetBrains Mono',monospace;font-size:14px;line-height:1.6;color:var(--ink);
   background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+}
+/* まとめて登録の選択肢。チェックボックスは端末の見た目のまま、色だけ合わせる */
+.batch-option{
+  display:flex;align-items:center;gap:9px;
+  font-size:13px;color:var(--ink-soft);cursor:pointer;
+  user-select:none;-webkit-user-select:none;
+}
+.batch-option input{
+  width:18px;height:18px;margin:0;flex-shrink:0;cursor:pointer;accent-color:var(--accent);
 }
 .batch-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);}
 
