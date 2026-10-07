@@ -1428,6 +1428,13 @@ async function isRagEnabled() {
   return !!(await kvGet("rag_enabled", false));
 }
 
+/* 設定画面の「保存済みの単語を検索したとき」。オンのときは、すでに
+   単語帳にある語は分解の演出を飛ばして単語ページをそのまま開く。
+   既定はオフ（これまで通り分解から見せる） */
+async function isSavedJumpEnabled() {
+  return !!(await kvGet("saved_jump", false));
+}
+
 /* 設定画面の「語呂合わせの自動生成」。オフのときは分解だけで止め、
    単語ページの「語呂合わせを作る」を押したときだけ生成する */
 async function isGoroAutoEnabled() {
@@ -4088,6 +4095,15 @@ async function runDecompose(rawWord) {
   /* すでに単語帳にある語は、作り直さずに保存してある内容をそのまま出す。
      待ち時間もかからず、APIキーが無くても開ける */
   const savedCard = await findSavedWordCard(word);
+
+  /* 設定で「単語ページを開く」を選んでいるときは、分解の演出も飛ばして
+     保存してある単語ページへ直接入る。ページ送りの並びは渡さない。
+     検索から来たときは、前後の単語という並び自体が無い */
+  if (savedCard && await isSavedJumpEnabled()) {
+    currentWord = savedCard.word;
+    openWordDetail(savedCard);
+    return;
+  }
 
   const provider = await getActiveProvider();
   const apiKey = await loadApiKey(provider);
@@ -10350,6 +10366,11 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.goroButton === (goroButtonVisible ? "on" : "off"));
   });
 
+  const savedJump = await isSavedJumpEnabled();
+  document.querySelectorAll("#saved-jump-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.savedJump === (savedJump ? "on" : "off"));
+  });
+
   const ragOn = await isRagEnabled();
   document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
@@ -10478,6 +10499,13 @@ document.querySelectorAll("#goro-button-row .mode-pill").forEach((pill) => {
     document.querySelectorAll("#goro-button-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
     /* 設定を変えたあとに単語ページへ戻っても、前のままにならないよう描き直す */
     if (currentWordDetailRecord) renderWordDetailGoro(currentWordDetailRecord);
+  });
+});
+
+document.querySelectorAll("#saved-jump-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("saved_jump", pill.dataset.savedJump === "on");
+    document.querySelectorAll("#saved-jump-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
   });
 });
 
@@ -12106,7 +12134,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "254";
+const APP_BUILD = "255";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
