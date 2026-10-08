@@ -10402,7 +10402,6 @@ async function refreshChatModelList({ force = false } = {}) {
 }
 
 async function initSettingsScreen() {
-  await renderSyncDetail();
   activeProvider = await getActiveProvider();
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
   await refreshUsageDisplay();
@@ -10922,15 +10921,6 @@ function setSyncStatus(text, cls) {
   el.className = `sync-status${cls ? ` ${cls}` : ""}`;
 }
 
-/* 「同期されていない気がする」を、どこで止まっているのかが分かる形にする。
-   クラウド側に列や表が足りないときは黙って項目を落として同期を続けるので、
-   別の端末では「単語帳が出てこない」としか見えない。その理由をここに出す */
-function syncTimeLabel(at) {
-  const d = new Date(at);
-  const two = (n) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
-}
-
 /* 列や表が無いときのエラーかどうか。問い合わせの形は合っているのに
    返ってくるものなので、通信の失敗とは分けて見る */
 function schemaMissingError(error) {
@@ -10942,8 +10932,12 @@ function schemaMissingError(error) {
 
 /* 足りない表・列を名指しで確かめる。1語も書いていない端末でも、
    何が足りないのかが分かるようにするため */
+/* 揃っていると分かったら、もう確かめない（毎回の突き合わせで2回ずつ
+   余分に問い合わせることになるため） */
+let cloudSchemaProbed = false;
+
 async function probeCloudSchema() {
-  if (!supabaseClient || !cloudUserId) return;
+  if (!supabaseClient || !cloudUserId || cloudSchemaProbed) return;
   if (!cloudMissingColumns.has("deck")) {
     try {
       const { error } = await supabaseClient.from("words").select("deck").limit(1);
@@ -10956,13 +10950,13 @@ async function probeCloudSchema() {
       if (error && deckTableMissing(error)) noteDecksTableMissing(error);
     } catch (err) { console.warn("decks表を確かめられませんでした:", err); }
   }
+  cloudSchemaProbed = true;
 }
 
 /* 足りない表・列を作るSQL。SUPABASE_SETUP.md と同じ内容を、
    スマホからでも貼れるように手元へ取れるようにしておく */
-/* 足りない列を足す書き方。型は SUPABASE_SETUP.md の create table と同じに
-   しておく（CLOUD_WORD_OPTIONAL_COLUMNS のどれが欠けても出せるように、
-   全部そろえてある） */
+/* 足りない列を足す書き方。型は SUPABASE_SETUP.md の create table と同じ。
+   足りないと分かったときに、何をすればいいかを知らせに添えるために使う */
 const WORDS_COLUMN_SQL = {
   word_meaning: "word_meaning text",
   word_phonetic: "word_phonetic text",
@@ -10995,6 +10989,13 @@ const DECKS_TABLE_SQL = ["-- decks表を作る（中が空の単語帳を同期�
   'create policy "decks are mine" on public.decks',
   "  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);"].join("\n");
 
+/* 足りないと分かったら、そのまま貼れるSQLをコンソールに出す。
+   画面に出す口は置いていないので、直し方の持ち出し先はここになる */
+function warnWithFixSql() {
+  const sql = syncFixSql();
+  if (sql) console.warn("足りないものを足すSQL（SupabaseのSQL Editorに貼って実行）:\n" + sql);
+}
+
 function syncFixSql() {
   const parts = [];
   /* 足りない列は1文にまとめる。何度貼っても困らないよう if not exists 付き */
@@ -11008,41 +11009,6 @@ function syncFixSql() {
   /* スキーマを変えただけでは PostgREST が気づかないので、最後に読み直させる */
   parts.push("notify pgrst, 'reload schema';");
   return parts.join("\n\n");
-}
-
-async function renderSyncDetail() {
-  const el = document.getElementById("sync-detail");
-  if (!el) return;
-  const user = await kvGet("google_user", null);
-  const words = await idbGetAll("words");
-  const decks = await listDecks();
-  const pending = Object.keys(await outboxAll()).length;
-
-  const lines = [
-    `アカウント: ${user ? (user.email || user.name || "サインイン済み") : "サインインしていません"}`,
-    `接続: ${cloudUserId ? "つながっています"
-      : (cloudSyncConfigured() ? "つながっていません" : "同期の設定がありません")}`,
-    `この端末: ${words.length}語 ・ 単語帳${decks.length}冊`,
-    `サーバー: ${cloudRemoteWordCount < 0 ? "まだ確かめていません" : `${cloudRemoteWordCount}語`}`
-      + (cloudLastPullAt ? `（${syncTimeLabel(cloudLastPullAt)} 時点）` : ""),
-    `未送信: ${pending}件`,
-  ];
-  const warns = [];
-  if (cloudUserId && !cloudDecksSupported) {
-    warns.push("decks表がありません → 中が空の単語帳は同期されません");
-  }
-  if (cloudMissingColumns.size) {
-    warns.push(`words表に無い列: ${[...cloudMissingColumns].join(", ")}`
-      + (cloudMissingColumns.has("deck") ? " → どの単語帳に入れたかが同期されません" : ""));
-  }
-  if (warns.length) warns.push("SUPABASE_SETUP.md のSQLを実行すると直ります");
-
-  el.innerHTML = lines.map((t) => escapeHtml(t)).join("\n")
-    + (warns.length ? "\n" + warns.map((t) => `<span class="warn">${escapeHtml(t)}</span>`).join("\n") : "");
-  el.hidden = false;
-
-  const fixBtn = document.getElementById("sync-fix-sql-btn");
-  if (fixBtn) fixBtn.hidden = !syncFixSql();
 }
 
 /* エラー後だけ再試行ボタンを出す。自動リトライの最中は、押しても
@@ -11121,8 +11087,8 @@ function noteDecksTableMissing(err) {
   cloudDecksSupported = false;
   console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
     + "（SUPABASE_SETUP.mdの追加SQLを実行してください）:", (err && err.message) || err);
-  toast("サーバーに decks 表が無いため、空の単語帳は同期されません（設定の同期の状態を見てください）");
-  renderSyncDetail();
+  toast("サーバーに decks 表が無いため、空の単語帳は同期されません（SUPABASE_SETUP.md のSQL）");
+  warnWithFixSql();
 }
 
 function deckShelfRow() {
@@ -11170,9 +11136,9 @@ function noteMissingColumn(name) {
      しか分からない。deck列が無ければ、どの単語帳に入れたかが丸ごと
      伝わらないので、気づけるように画面にも出す */
   toast(name === "deck"
-    ? "サーバーに deck 列が無いため、どの単語帳に入れたかは同期されません（設定の同期の状態を見てください）"
-    : `サーバーに ${name} 列が無いため、その項目は同期されません`);
-  renderSyncDetail();
+    ? "サーバーに deck 列が無いため、どの単語帳に入れたかは同期されません（SUPABASE_SETUP.md のSQL）"
+    : `サーバーに ${name} 列が無いため、その項目は同期されません（SUPABASE_SETUP.md のSQL）`);
+  warnWithFixSql();
   return true;
 }
 
@@ -11220,11 +11186,6 @@ function cloudRowToLocalWord(r, local = null) {
    サインイン直後のほか、Realtimeの購読が切れて張り直した時と、画面に
    戻ってきた時にも呼ばれる（その間の取りこぼしを埋めるため）。
    quiet:true では「同期中…」を出さずに静かに走らせる */
-/* 同期の状態に出すための控え。最後に向こうを見に行った時刻と、そのとき
-   向こうにあった語数 */
-let cloudLastPullAt = 0;
-let cloudRemoteWordCount = -1;
-
 let cloudMergeInFlight = null;
 
 function pullAndMergeCloudData(options) {
@@ -11255,8 +11216,6 @@ async function runCloudMerge({ quiet = false } = {}) {
       if (wErr) throw wErr;
       if (rErr) throw rErr;
 
-      cloudLastPullAt = Date.now();
-      cloudRemoteWordCount = (remoteWords || []).filter((w) => !w.deleted).length;
       /* 書き込みを試すまで分からないと、読むだけの端末では原因が見えない。
          引いた行に冊の名前が入っていなければ、その場で分かる */
       if ((remoteWords || []).length && !(remoteWords || []).some((w) => "deck" in w)) {
@@ -11356,7 +11315,6 @@ async function runCloudMerge({ quiet = false } = {}) {
 
     updateOutboxStatus(Object.keys(await outboxAll()).length);
     await probeCloudSchema();
-    await renderSyncDetail();
     await refreshDeckSelects();
     renderBookList();
     /* 単語帳を選ぶ画面を開いたまま別の端末の変更が届くことがある */
@@ -11517,71 +11475,6 @@ document.addEventListener("visibilitychange", () => {
   if (!supabaseClient || !cloudUserId) return;
   startRealtimeWordSync();
   pullAndMergeCloudData({ quiet: true });
-});
-
-/* サーバーの列を足したあとなど、こちらの内容を向こうへ行き渡らせたいとき用。
-   送った語は「いま書いた」ことになるので、他の端末もこの内容を採る */
-document.getElementById("sync-push-all-btn").addEventListener("click", async (e) => {
-  const btn = e.currentTarget;
-  if (btn.disabled) return;
-  if (!cloudUserId) { toast("サインインすると送れます"); return; }
-  const rows = await idbGetAll("words");
-  if (!rows.length) { toast("送る単語がありません"); return; }
-  if (!confirm(`この端末の${rows.length}語をすべて送り直します。`
-    + "他の端末にも、この端末の内容が行き渡ります。よろしいですか？")) return;
-  btn.disabled = true;
-  const label = btn.textContent;
-  try {
-    /* 1回に全部は積まない。途中で切れても、送れたぶんはそのまま残る */
-    const chunks = chunkArray(rows, 150);
-    for (const [i, chunk] of chunks.entries()) {
-      btn.textContent = `送っています… ${i + 1}/${chunks.length}`;
-      await saveWordRecords(chunk);
-    }
-    await pushDeckShelf();
-    toast(`${rows.length}語を送り直しました`);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = label;
-    await renderSyncDetail();
-  }
-});
-
-document.getElementById("sync-fix-sql-btn").addEventListener("click", async () => {
-  const sql = syncFixSql();
-  if (!sql) return;
-  try {
-    await navigator.clipboard.writeText(sql);
-  } catch (err) {
-    /* 書き込みを断られる端末向け。選択してからのコピーなら通ることが多い */
-    const area = document.createElement("textarea");
-    area.value = sql;
-    area.setAttribute("readonly", "");
-    area.style.cssText = "position:fixed;top:0;left:0;opacity:0;";
-    document.body.appendChild(area);
-    area.select();
-    area.setSelectionRange(0, sql.length);
-    const ok = document.execCommand && document.execCommand("copy");
-    area.remove();
-    if (!ok) { toast("コピーできませんでした。SUPABASE_SETUP.md のSQLをお使いください"); return; }
-  }
-  toast("SQLをコピーしました。SupabaseのSQL Editorに貼って実行してください");
-});
-
-document.getElementById("sync-check-btn").addEventListener("click", async (e) => {
-  const btn = e.currentTarget;
-  if (btn.disabled) return;
-  btn.disabled = true;
-  btn.textContent = "確かめています…";
-  try {
-    if (!cloudUserId && lastFailedIdToken) await signInToCloud(lastFailedIdToken);
-    if (cloudUserId) { await pullAndMergeCloudData(); await probeCloudSchema(); }
-    else toast("サインインすると同期できます");
-    await renderSyncDetail();
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "今すぐ同期して確かめる";
-  }
 });
 
 document.getElementById("cloud-sync-retry-btn").addEventListener("click", async (e) => {
@@ -12337,6 +12230,8 @@ batchCsvInput.addEventListener("change", async (e) => {
 });
 
 const batchPhotoInput = document.getElementById("batch-photo-input");
+const batchAlbumInput = document.getElementById("batch-album-input");
+const batchPhotoSheet = document.getElementById("batch-photo-sheet");
 /* awaitを挟むとiOS Safariでファイル選択が開かなくなるため、
    このハンドラは同期のまま保つこと（キーの有無は事前に読んだ
    geminiKeyAvailableで判定する） */
@@ -12351,12 +12246,28 @@ function openPhotoRegister({ fromHome = false } = {}) {
   /* 画面の初期化（キーの再確認・進捗の復元・積み残しの処理）が要るので、
      showScreenを直に呼ばず、まとめて登録の入口をそのまま通す */
   if (fromHome) openBatchScreen();
-  batchPhotoInput.click();
+  /* その場で撮るのか、入っている写真から選ぶのかを選ばせる。
+     撮る方は capture 付きの入力、選ぶ方は capture 無しの入力を押す */
+  batchPhotoSheet.style.display = "flex";
 }
+
+/* シートのボタンから入力を押す。ここも押した流れが切れないよう、
+   awaitを挟まず同期のまま保つこと（iOS Safariでファイル選択が開かなくなる） */
+function pickPhotoFrom(input) {
+  batchPhotoSheet.style.display = "none";
+  input.click();
+}
+
+document.getElementById("batch-photo-camera-btn")
+  .addEventListener("click", () => pickPhotoFrom(batchPhotoInput));
+document.getElementById("batch-photo-album-btn")
+  .addEventListener("click", () => pickPhotoFrom(batchAlbumInput));
+document.getElementById("batch-photo-sheet-close")
+  .addEventListener("click", () => { batchPhotoSheet.style.display = "none"; });
 
 document.getElementById("batch-photo-btn").addEventListener("click", () => openPhotoRegister());
 document.getElementById("home-photo-btn").addEventListener("click", () => openPhotoRegister({ fromHome: true }));
-batchPhotoInput.addEventListener("change", async (e) => {
+const onPhotoPicked = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
@@ -12386,7 +12297,10 @@ batchPhotoInput.addEventListener("change", async (e) => {
   }
   btn.disabled = false;
   progress.style.display = "none";
-});
+};
+/* 撮った写真も、アルバムから選んだ写真も、読み取りは同じ */
+batchPhotoInput.addEventListener("change", onPhotoPicked);
+batchAlbumInput.addEventListener("change", onPhotoPicked);
 
 /* ------------------------------------------------------------------ *
  * 13. テーマカラー
@@ -12500,7 +12414,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "262";
+const APP_BUILD = "264";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
