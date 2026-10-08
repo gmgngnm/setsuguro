@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#262</span>
+        <span class="build-tag" id="build-tag">#264</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -264,20 +264,6 @@
       <button class="btn-ghost" id="google-signout-btn" type="button">サインアウト</button>
     </div>
     <div class="settings-status" id="google-status"></div>
-    <!-- 同期がうまくいかないとき、何が起きているのかを数字で見られるようにする。
-         クラウド側の列や表が足りないときの沈黙がいちばん分かりにくいので、
-         そこもここに出す -->
-    <div class="sync-detail" id="sync-detail" hidden></div>
-    <div class="sync-detail-actions">
-      <button class="btn-ghost sync-detail-btn" id="sync-check-btn" type="button">今すぐ同期して確かめる</button>
-      <!-- 足りない表・列があるときだけ出す。スマホからでも直せるように、
-           貼って実行するだけのSQLを手元に取れるようにしておく -->
-      <button class="btn-ghost sync-detail-btn" id="sync-fix-sql-btn" type="button" hidden>直すSQLをコピー</button>
-      <!-- 足りない列を足した直後は、サーバーの行にその列の既定値しか入って
-           いない。送り直す口が無いと、こちらの内容を送るまで単語を1語ずつ
-           保存し直すことになる -->
-      <button class="btn-ghost sync-detail-btn" id="sync-push-all-btn" type="button">この端末の内容を送り直す</button>
-    </div>
 
     <div class="section-label" style="margin-top:6px;">Gemini API キー</div>
     <div class="form-row">
@@ -405,6 +391,8 @@
     <input type="file" id="batch-csv-input" accept=".csv,text/csv" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <input type="file" id="csv-import-input" accept=".csv,text/csv" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <input type="file" id="batch-photo-input" accept="image/*" capture="environment" class="visually-hidden" tabindex="-1" aria-hidden="true">
+    <!-- capture を付けない方。こちらはその場で撮らず、入っている写真から選べる -->
+    <input type="file" id="batch-album-input" accept="image/*" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <div class="memorize-mode-sheet" id="batch-csv-sheet" style="display:none;">
       <div class="memorize-mode-hint">CSVの操作を選択</div>
       <button class="memorize-mode-btn" id="batch-csv-template-btn" type="button">📄 書式をダウンロード</button>
@@ -430,6 +418,14 @@
 
 <!-- 単語帳の名前を入れるシート。画面(.screen)の中に置くと、その画面が
      隠れているときに出せなくなるので、画面の外に置いてある -->
+<!-- 写真の取り方を選ぶシート。ホームからもまとめて登録からも開くので、
+     画面(.screen)の中ではなく外に置いてある -->
+<div class="memorize-mode-sheet" id="batch-photo-sheet" style="display:none;">
+  <div class="memorize-mode-hint">写真から単語を読み取る</div>
+  <button class="memorize-mode-btn" id="batch-photo-camera-btn" type="button">その場で撮影する</button>
+  <button class="memorize-mode-btn" id="batch-photo-album-btn" type="button">アルバムから選ぶ</button>
+  <button class="memorize-mode-close" id="batch-photo-sheet-close" type="button">✕ 閉じる</button>
+</div>
 <div class="memorize-mode-sheet" id="deck-manage-sheet" style="display:none;">
   <div class="memorize-mode-hint" id="deck-manage-hint">単語帳の整理</div>
   <button class="memorize-mode-btn" id="deck-rename-btn" type="button">名前を変更</button>

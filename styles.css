@@ -896,18 +896,6 @@ select:disabled{opacity:.5;cursor:default;}
   content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:#fff;font-size:14px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.45);
 }
-/* 同期の状態。読み物ではなく確かめる道具なので、等幅で数字を揃える */
-.sync-detail{
-  font-size:11.5px;line-height:1.7;color:var(--ink-soft);
-  font-family:'JetBrains Mono',monospace;
-  background:var(--surface);border:1px solid var(--line);border-radius:12px;
-  padding:10px 12px;white-space:pre-wrap;word-break:break-word;
-}
-.sync-detail[hidden]{display:none;}
-.sync-detail .warn{color:var(--danger);}
-.sync-detail-actions{display:flex;flex-wrap:wrap;gap:8px;}
-.sync-detail-btn{align-self:flex-start;}
-.sync-detail-btn[hidden]{display:none;}
 .usage-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;}
 .usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-soft);}
 .usage-row b{color:var(--accent-ink);}
