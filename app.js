@@ -10402,6 +10402,7 @@ async function refreshChatModelList({ force = false } = {}) {
 }
 
 async function initSettingsScreen() {
+  await renderSyncDetail();
   activeProvider = await getActiveProvider();
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
   await refreshUsageDisplay();
@@ -10921,6 +10922,47 @@ function setSyncStatus(text, cls) {
   el.className = `sync-status${cls ? ` ${cls}` : ""}`;
 }
 
+/* 「同期されていない気がする」を、どこで止まっているのかが分かる形にする。
+   クラウド側に列や表が足りないときは黙って項目を落として同期を続けるので、
+   別の端末では「単語帳が出てこない」としか見えない。その理由をここに出す */
+function syncTimeLabel(at) {
+  const d = new Date(at);
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+async function renderSyncDetail() {
+  const el = document.getElementById("sync-detail");
+  if (!el) return;
+  const user = await kvGet("google_user", null);
+  const words = await idbGetAll("words");
+  const decks = await listDecks();
+  const pending = Object.keys(await outboxAll()).length;
+
+  const lines = [
+    `アカウント: ${user ? (user.email || user.name || "サインイン済み") : "サインインしていません"}`,
+    `接続: ${cloudUserId ? "つながっています"
+      : (cloudSyncConfigured() ? "つながっていません" : "同期の設定がありません")}`,
+    `この端末: ${words.length}語 ・ 単語帳${decks.length}冊`,
+    `サーバー: ${cloudRemoteWordCount < 0 ? "まだ確かめていません" : `${cloudRemoteWordCount}語`}`
+      + (cloudLastPullAt ? `（${syncTimeLabel(cloudLastPullAt)} 時点）` : ""),
+    `未送信: ${pending}件`,
+  ];
+  const warns = [];
+  if (cloudUserId && !cloudDecksSupported) {
+    warns.push("decks表がありません → 中が空の単語帳は同期されません");
+  }
+  if (cloudMissingColumns.size) {
+    warns.push(`words表に無い列: ${[...cloudMissingColumns].join(", ")}`
+      + (cloudMissingColumns.has("deck") ? " → どの単語帳に入れたかが同期されません" : ""));
+  }
+  if (warns.length) warns.push("SUPABASE_SETUP.md のSQLを実行すると直ります");
+
+  el.innerHTML = lines.map((t) => escapeHtml(t)).join("\n")
+    + (warns.length ? "\n" + warns.map((t) => `<span class="warn">${escapeHtml(t)}</span>`).join("\n") : "");
+  el.hidden = false;
+}
+
 /* エラー後だけ再試行ボタンを出す。自動リトライの最中は、押しても
    二重に走らせないよう回転アイコンにしてクリックを無視する */
 function setSyncRetryVisible(visible, spinning) {
@@ -10990,6 +11032,17 @@ function deckTableMissing(error) {
   return /does not exist|Could not find the table|schema cache/i.test(msg);
 }
 
+/* 表が無いと分かったときに一度だけ知らせる。console だけだと、
+   「PCで作った単語帳がスマホに出てこない」としか分からない */
+function noteDecksTableMissing(err) {
+  if (!cloudDecksSupported) return;
+  cloudDecksSupported = false;
+  console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
+    + "（SUPABASE_SETUP.mdの追加SQLを実行してください）:", (err && err.message) || err);
+  toast("サーバーに decks 表が無いため、空の単語帳は同期されません（設定の同期の状態を見てください）");
+  renderSyncDetail();
+}
+
 function deckShelfRow() {
   return { user_id: cloudUserId, names: deckShelf,
     updated_at: new Date(deckShelfAt || Date.now()).toISOString() };
@@ -11005,9 +11058,7 @@ async function pushDeckShelf() {
     deckShelfDirty = false;
   } catch (err) {
     if (deckTableMissing(err)) {
-      cloudDecksSupported = false;
-      console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
-        + "（SUPABASE_SETUP.mdの追加SQLを実行してください）:", err.message || err);
+      noteDecksTableMissing(err);
       return;
     }
     deckShelfDirty = true;
@@ -11033,6 +11084,13 @@ function noteMissingColumn(name) {
   cloudMissingColumns.add(name);
   console.warn(`Supabaseのwordsテーブルに ${name} 列が無いため、この項目は同期しません`
     + "（SUPABASE_SETUP.mdの移行SQLを実行してください）");
+  /* 黙って落とすと、別の端末で見たときに「単語帳が無い」「語呂が無い」と
+     しか分からない。deck列が無ければ、どの単語帳に入れたかが丸ごと
+     伝わらないので、気づけるように画面にも出す */
+  toast(name === "deck"
+    ? "サーバーに deck 列が無いため、どの単語帳に入れたかは同期されません（設定の同期の状態を見てください）"
+    : `サーバーに ${name} 列が無いため、その項目は同期されません`);
+  renderSyncDetail();
   return true;
 }
 
@@ -11076,6 +11134,11 @@ function cloudRowToLocalWord(r) {
    サインイン直後のほか、Realtimeの購読が切れて張り直した時と、画面に
    戻ってきた時にも呼ばれる（その間の取りこぼしを埋めるため）。
    quiet:true では「同期中…」を出さずに静かに走らせる */
+/* 同期の状態に出すための控え。最後に向こうを見に行った時刻と、そのとき
+   向こうにあった語数 */
+let cloudLastPullAt = 0;
+let cloudRemoteWordCount = -1;
+
 let cloudMergeInFlight = null;
 
 function pullAndMergeCloudData(options) {
@@ -11105,6 +11168,9 @@ async function runCloudMerge({ quiet = false } = {}) {
       ]);
       if (wErr) throw wErr;
       if (rErr) throw rErr;
+
+      cloudLastPullAt = Date.now();
+      cloudRemoteWordCount = (remoteWords || []).filter((w) => !w.deleted).length;
 
       const localWords = await idbGetAll("words");
       const localById = new Map(localWords.map((w) => [w.id, w]));
@@ -11153,11 +11219,7 @@ async function runCloudMerge({ quiet = false } = {}) {
       /* 空の単語帳の一覧は、新しく書き換えた方を正とする。足し合わせていた
          ころは、片方で冊を消しても向こうの一覧から戻ってきてしまった */
       if (remoteDecks && remoteDecks.error) {
-        if (deckTableMissing(remoteDecks.error)) {
-          cloudDecksSupported = false;
-          console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
-            + "（SUPABASE_SETUP.mdの追加SQLを実行してください）");
-        }
+        if (deckTableMissing(remoteDecks.error)) noteDecksTableMissing(remoteDecks.error);
       } else if (cloudDecksSupported) {
         const remoteRow = (remoteDecks && remoteDecks.data) || null;
         const remoteNames = ((remoteRow && remoteRow.names) || [])
@@ -11191,7 +11253,7 @@ async function runCloudMerge({ quiet = false } = {}) {
           if (!deckShelfAt) deckShelfAt = Date.now();
           const { error } = await sb.from("decks").upsert(deckShelfRow());
           if (error) {
-            if (deckTableMissing(error)) cloudDecksSupported = false;
+            if (deckTableMissing(error)) noteDecksTableMissing(error);
             else deckShelfDirty = true;
           } else {
             deckShelfDirty = false;
@@ -11202,6 +11264,7 @@ async function runCloudMerge({ quiet = false } = {}) {
     });
 
     updateOutboxStatus(Object.keys(await outboxAll()).length);
+    await renderSyncDetail();
     await refreshDeckSelects();
     renderBookList();
     /* 単語帳を選ぶ画面を開いたまま別の端末の変更が届くことがある */
@@ -11362,6 +11425,22 @@ document.addEventListener("visibilitychange", () => {
   if (!supabaseClient || !cloudUserId) return;
   startRealtimeWordSync();
   pullAndMergeCloudData({ quiet: true });
+});
+
+document.getElementById("sync-check-btn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "確かめています…";
+  try {
+    if (!cloudUserId && lastFailedIdToken) await signInToCloud(lastFailedIdToken);
+    if (cloudUserId) await pullAndMergeCloudData();
+    else toast("サインインすると同期できます");
+    await renderSyncDetail();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "今すぐ同期して確かめる";
+  }
 });
 
 document.getElementById("cloud-sync-retry-btn").addEventListener("click", async (e) => {
@@ -12280,7 +12359,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "258";
+const APP_BUILD = "259";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
