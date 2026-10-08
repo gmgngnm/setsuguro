@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#264</span>
+        <span class="build-tag" id="build-tag">#265</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -391,8 +391,9 @@
     <input type="file" id="batch-csv-input" accept=".csv,text/csv" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <input type="file" id="csv-import-input" accept=".csv,text/csv" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <input type="file" id="batch-photo-input" accept="image/*" capture="environment" class="visually-hidden" tabindex="-1" aria-hidden="true">
-    <!-- capture を付けない方。こちらはその場で撮らず、入っている写真から選べる -->
-    <input type="file" id="batch-album-input" accept="image/*" class="visually-hidden" tabindex="-1" aria-hidden="true">
+    <!-- capture を付けない方。こちらはその場で撮らず、入っている写真から選べる。
+         ノート何ページ分かをまとめて読ませたいので、複数選べるようにしてある -->
+    <input type="file" id="batch-album-input" accept="image/*" multiple class="visually-hidden" tabindex="-1" aria-hidden="true">
     <div class="memorize-mode-sheet" id="batch-csv-sheet" style="display:none;">
       <div class="memorize-mode-hint">CSVの操作を選択</div>
       <button class="memorize-mode-btn" id="batch-csv-template-btn" type="button">📄 書式をダウンロード</button>
@@ -423,7 +424,7 @@
 <div class="memorize-mode-sheet" id="batch-photo-sheet" style="display:none;">
   <div class="memorize-mode-hint">写真から単語を読み取る</div>
   <button class="memorize-mode-btn" id="batch-photo-camera-btn" type="button">その場で撮影する</button>
-  <button class="memorize-mode-btn" id="batch-photo-album-btn" type="button">アルバムから選ぶ</button>
+  <button class="memorize-mode-btn" id="batch-photo-album-btn" type="button">アルバムから選ぶ（複数可）</button>
   <button class="memorize-mode-close" id="batch-photo-sheet-close" type="button">✕ 閉じる</button>
 </div>
 <div class="memorize-mode-sheet" id="deck-manage-sheet" style="display:none;">

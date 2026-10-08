@@ -12268,28 +12268,47 @@ document.getElementById("batch-photo-sheet-close")
 document.getElementById("batch-photo-btn").addEventListener("click", () => openPhotoRegister());
 document.getElementById("home-photo-btn").addEventListener("click", () => openPhotoRegister({ fromHome: true }));
 const onPhotoPicked = async (e) => {
-  const file = e.target.files[0];
+  /* 複数選べるので、選ばれたぶんを順に読む。1枚ずつ送るのは、
+     画像をまとめると1回の問い合わせが重くなり、途中で落ちたときに
+     どれも残らないため（順に読めば、読めたぶんは欄に残る） */
+  const files = [...e.target.files];
   e.target.value = "";
-  if (!file) return;
+  if (!files.length) return;
 
   const btn = document.getElementById("batch-photo-btn");
   const progress = document.getElementById("batch-photo-progress");
+  const label = progress.querySelector(".spin-label");
+  const labelText = label ? label.textContent : "";
   btn.disabled = true;
   progress.style.display = "flex";
   try {
     const apiKey = await loadApiKey("gemini");
     if (!apiKey) { toast("設定画面でGemini APIキーを登録してください"); return; }
-    const dataUrl = await compressImageForRecognition(file);
-    const rawWords = await recognizeWordsFromImage(dataUrl, apiKey);
+    const rawWords = [];
+    let failed = 0;
+    for (const [i, file] of files.entries()) {
+      if (label && files.length > 1) label.textContent = `${labelText}（${i + 1}/${files.length}）`;
+      try {
+        const dataUrl = await compressImageForRecognition(file);
+        rawWords.push(...await recognizeWordsFromImage(dataUrl, apiKey));
+      } catch (err) {
+        /* 1枚読めなくても、残りは読む。何枚だめだったかは最後にまとめて言う */
+        console.error(err);
+        failed++;
+      }
+    }
     /* 認識精度は完璧ではないため、キューへ直接足さずテキスト欄に
-       差し込んで確認・修正してから「リストに追加」を押させる */
+       差し込んで確認・修正してから「リストに追加」を押させる。
+       同じ単語が何枚にも写っていても、ここで1つにまとまる */
     const words = parseBatchWordInput(rawWords.join("\n"));
+    const note = failed ? `（${failed}枚は読み取れませんでした）` : "";
     if (!words.length) {
-      toast("英単語を読み取れませんでした");
+      toast(failed ? `画像の読み取りに失敗しました${note}` : "英単語を読み取れませんでした");
     } else {
       const input = document.getElementById("batch-input");
       input.value = input.value.trim() ? `${input.value.trim()}\n${words.join("\n")}` : words.join("\n");
-      toast(`${words.length}語を読み取りました。内容を確認して「リストに追加」を押してください`);
+      toast(`${files.length > 1 ? `${files.length}枚から` : ""}${words.length}語を読み取りました${note}。`
+        + "内容を確認して「リストに追加」を押してください");
     }
   } catch (err) {
     console.error(err);
@@ -12297,6 +12316,7 @@ const onPhotoPicked = async (e) => {
   }
   btn.disabled = false;
   progress.style.display = "none";
+  if (label) label.textContent = labelText;
 };
 /* 撮った写真も、アルバムから選んだ写真も、読み取りは同じ */
 batchPhotoInput.addEventListener("change", onPhotoPicked);
@@ -12414,7 +12434,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "264";
+const APP_BUILD = "265";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
