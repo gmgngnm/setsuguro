@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#261</span>
+        <span class="build-tag" id="build-tag">#262</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -273,6 +273,10 @@
       <!-- 足りない表・列があるときだけ出す。スマホからでも直せるように、
            貼って実行するだけのSQLを手元に取れるようにしておく -->
       <button class="btn-ghost sync-detail-btn" id="sync-fix-sql-btn" type="button" hidden>直すSQLをコピー</button>
+      <!-- 足りない列を足した直後は、サーバーの行にその列の既定値しか入って
+           いない。送り直す口が無いと、こちらの内容を送るまで単語を1語ずつ
+           保存し直すことになる -->
+      <button class="btn-ghost sync-detail-btn" id="sync-push-all-btn" type="button">この端末の内容を送り直す</button>
     </div>
 
     <div class="section-label" style="margin-top:6px;">Gemini API キー</div>

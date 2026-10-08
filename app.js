@@ -10960,30 +10960,50 @@ async function probeCloudSchema() {
 
 /* 足りない表・列を作るSQL。SUPABASE_SETUP.md と同じ内容を、
    スマホからでも貼れるように手元へ取れるようにしておく */
-const SYNC_FIX_SQL = {
-  deck: ["-- words表に deck 列を足す（どの単語帳に入れたかを同期する）",
-    "alter table public.words",
-    "  add column if not exists deck text not null default '単語帳';"].join("\n"),
-  decks: ["-- decks表を作る（中が空の単語帳を同期する）",
-    "create table if not exists public.decks (",
-    "  user_id uuid primary key references auth.users on delete cascade,",
-    "  names jsonb not null default '[]'::jsonb,",
-    "  updated_at timestamptz not null default now()",
-    ");",
-    "",
-    "alter table public.decks enable row level security;",
-    "",
-    'drop policy if exists "decks are mine" on public.decks;',
-    'create policy "decks are mine" on public.decks',
-    "  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);"].join("\n"),
+/* 足りない列を足す書き方。型は SUPABASE_SETUP.md の create table と同じに
+   しておく（CLOUD_WORD_OPTIONAL_COLUMNS のどれが欠けても出せるように、
+   全部そろえてある） */
+const WORDS_COLUMN_SQL = {
+  word_meaning: "word_meaning text",
+  word_phonetic: "word_phonetic text",
+  word_memory_tip: "word_memory_tip text",
+  morphemes: "morphemes jsonb",
+  synonyms: "synonyms jsonb",
+  antonyms: "antonyms jsonb",
+  goro_text: "goro_text text",
+  goro_highlight: "goro_highlight jsonb",
+  provider: "provider text",
+  memorized: "memorized boolean default false",
+  deck: "deck text not null default '単語帳'",
+  deleted: "deleted boolean not null default false",
+  created_at: "created_at bigint",
+  updated_at: "updated_at bigint",
 };
+
+const DECKS_TABLE_SQL = ["-- decks表を作る（中が空の単語帳を同期する）",
+  "create table if not exists public.decks (",
+  "  user_id uuid primary key references auth.users on delete cascade,",
+  "  names jsonb not null default '[]'::jsonb,",
+  "  updated_at timestamptz not null default now()",
+  ");",
+  "",
+  "alter table public.decks enable row level security;",
+  "",
+  /* SQL Editorは貼った内容を1つのトランザクションで流すので、
+     既にあるというだけのエラーで全部が巻き戻る。先に落としておく */
+  'drop policy if exists "decks are mine" on public.decks;',
+  'create policy "decks are mine" on public.decks',
+  "  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);"].join("\n");
 
 function syncFixSql() {
   const parts = [];
-  for (const name of cloudMissingColumns) {
-    if (SYNC_FIX_SQL[name]) parts.push(SYNC_FIX_SQL[name]);
+  /* 足りない列は1文にまとめる。何度貼っても困らないよう if not exists 付き */
+  const cols = [...cloudMissingColumns].filter((n) => WORDS_COLUMN_SQL[n]).sort();
+  if (cols.length) {
+    parts.push("-- words表に足りない列を足す\nalter table public.words\n"
+      + cols.map((n) => `  add column if not exists ${WORDS_COLUMN_SQL[n]}`).join(",\n") + ";");
   }
-  if (!cloudDecksSupported) parts.push(SYNC_FIX_SQL.decks);
+  if (!cloudDecksSupported) parts.push(DECKS_TABLE_SQL);
   if (!parts.length) return "";
   /* スキーマを変えただけでは PostgREST が気づかないので、最後に読み直させる */
   parts.push("notify pgrst, 'reload schema';");
@@ -11497,6 +11517,34 @@ document.addEventListener("visibilitychange", () => {
   if (!supabaseClient || !cloudUserId) return;
   startRealtimeWordSync();
   pullAndMergeCloudData({ quiet: true });
+});
+
+/* サーバーの列を足したあとなど、こちらの内容を向こうへ行き渡らせたいとき用。
+   送った語は「いま書いた」ことになるので、他の端末もこの内容を採る */
+document.getElementById("sync-push-all-btn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  if (!cloudUserId) { toast("サインインすると送れます"); return; }
+  const rows = await idbGetAll("words");
+  if (!rows.length) { toast("送る単語がありません"); return; }
+  if (!confirm(`この端末の${rows.length}語をすべて送り直します。`
+    + "他の端末にも、この端末の内容が行き渡ります。よろしいですか？")) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  try {
+    /* 1回に全部は積まない。途中で切れても、送れたぶんはそのまま残る */
+    const chunks = chunkArray(rows, 150);
+    for (const [i, chunk] of chunks.entries()) {
+      btn.textContent = `送っています… ${i + 1}/${chunks.length}`;
+      await saveWordRecords(chunk);
+    }
+    await pushDeckShelf();
+    toast(`${rows.length}語を送り直しました`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+    await renderSyncDetail();
+  }
 });
 
 document.getElementById("sync-fix-sql-btn").addEventListener("click", async () => {
@@ -12452,7 +12500,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "261";
+const APP_BUILD = "262";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
