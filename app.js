@@ -10931,6 +10931,33 @@ function syncTimeLabel(at) {
   return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
+/* 列や表が無いときのエラーかどうか。問い合わせの形は合っているのに
+   返ってくるものなので、通信の失敗とは分けて見る */
+function schemaMissingError(error) {
+  if (!error) return false;
+  const code = String(error.code || "");
+  if (["42703", "42P01", "PGRST100", "PGRST202", "PGRST204", "PGRST205"].includes(code)) return true;
+  return /does not exist|schema cache|Could not find/i.test(`${error.message || ""} ${error.details || ""}`);
+}
+
+/* 足りない表・列を名指しで確かめる。1語も書いていない端末でも、
+   何が足りないのかが分かるようにするため */
+async function probeCloudSchema() {
+  if (!supabaseClient || !cloudUserId) return;
+  if (!cloudMissingColumns.has("deck")) {
+    try {
+      const { error } = await supabaseClient.from("words").select("deck").limit(1);
+      if (error && schemaMissingError(error)) noteMissingColumn("deck");
+    } catch (err) { console.warn("deck列を確かめられませんでした:", err); }
+  }
+  if (cloudDecksSupported) {
+    try {
+      const { error } = await supabaseClient.from("decks").select("names").limit(1);
+      if (error && deckTableMissing(error)) noteDecksTableMissing(error);
+    } catch (err) { console.warn("decks表を確かめられませんでした:", err); }
+  }
+}
+
 /* 足りない表・列を作るSQL。SUPABASE_SETUP.md と同じ内容を、
    スマホからでも貼れるように手元へ取れるようにしておく */
 const SYNC_FIX_SQL = {
@@ -11152,11 +11179,15 @@ async function cloudWordsUpsert(records) {
     if (!noteMissingColumn(missingColumnName(error))) throw error;
   }
 }
-function cloudRowToLocalWord(r) {
+/* local には、手元に同じ単語があるならそれを渡す。サーバーに deck 列が
+   無いと行には冊の名前が入ってこないので、既定の冊で上書きしてしまうと
+   手元で分けた単語帳がその場で消える（分け方はこちらにしか無い） */
+function cloudRowToLocalWord(r, local = null) {
+  const deck = ("deck" in r) ? (r.deck || DEFAULT_DECK) : (local ? deckOf(local) : DEFAULT_DECK);
   return {
     id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
     word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [],
-    deck: r.deck || DEFAULT_DECK,
+    deck,
     synonyms: r.synonyms || [], antonyms: r.antonyms || [],
     goro_text: r.goro_text || "", goro_highlight: r.goro_highlight || [], provider: r.provider || "",
     memorized: !!r.memorized, created_at: r.created_at || Date.now(), updated_at: r.updated_at || Date.now(),
@@ -11206,6 +11237,11 @@ async function runCloudMerge({ quiet = false } = {}) {
 
       cloudLastPullAt = Date.now();
       cloudRemoteWordCount = (remoteWords || []).filter((w) => !w.deleted).length;
+      /* 書き込みを試すまで分からないと、読むだけの端末では原因が見えない。
+         引いた行に冊の名前が入っていなければ、その場で分かる */
+      if ((remoteWords || []).length && !(remoteWords || []).some((w) => "deck" in w)) {
+        noteMissingColumn("deck");
+      }
 
       const localWords = await idbGetAll("words");
       const localById = new Map(localWords.map((w) => [w.id, w]));
@@ -11228,7 +11264,7 @@ async function runCloudMerge({ quiet = false } = {}) {
           continue;
         }
         if (!local || remoteAt > (local.updated_at || 0)) {
-          await idbPut("words", cloudRowToLocalWord(remote));
+          await idbPut("words", cloudRowToLocalWord(remote, local));
         }
       }
       const toUpload = localWords.filter((w) => {
@@ -11299,6 +11335,7 @@ async function runCloudMerge({ quiet = false } = {}) {
     });
 
     updateOutboxStatus(Object.keys(await outboxAll()).length);
+    await probeCloudSchema();
     await renderSyncDetail();
     await refreshDeckSelects();
     renderBookList();
@@ -11444,7 +11481,7 @@ async function applyRemoteWordChanges(payloads) {
       continue;
     }
     if (local && (row.updated_at || 0) <= (local.updated_at || 0)) continue;
-    await idbPut("words", cloudRowToLocalWord(row));
+    await idbPut("words", cloudRowToLocalWord(row, local));
     if (local) changed++; else added++;
   }
   if (!added && !removed && !changed) return;
@@ -11490,7 +11527,7 @@ document.getElementById("sync-check-btn").addEventListener("click", async (e) =>
   btn.textContent = "確かめています…";
   try {
     if (!cloudUserId && lastFailedIdToken) await signInToCloud(lastFailedIdToken);
-    if (cloudUserId) await pullAndMergeCloudData();
+    if (cloudUserId) { await pullAndMergeCloudData(); await probeCloudSchema(); }
     else toast("サインインすると同期できます");
     await renderSyncDetail();
   } finally {
@@ -12415,7 +12452,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "260";
+const APP_BUILD = "261";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
