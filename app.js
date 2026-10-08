@@ -3422,7 +3422,13 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
          テキストボックスの自動フォーカスはPC版のみで行う */
       if (window.innerWidth >= 860) document.getElementById("word-input").focus();
     }
-    if (target === "decks") { showScreen("screen-decks"); renderDeckPicker(); }
+    if (target === "decks") {
+      showScreen("screen-decks");
+      renderDeckPicker();
+      /* 冊の数や並びも別の端末で変わる。開くたびに向こうを見に行く
+         （待たない。届いた時点で pullAndMergeCloudData が描き直す） */
+      syncBookOnOpen();
+    }
     if (target === "book") {
       clearBookSelection();
       resetBookSearch();
@@ -8622,18 +8628,19 @@ function wordCopyId(word) {
    先にあった方を残して移す側を消す */
 async function moveWordsToDeck(records, deck) {
   const all = await idbGetAll("words");
-  let moved = 0, merged = 0;
+  const moving = [];
+  let merged = 0;
   for (const r of records) {
     const clash = all.find((o) => o.id !== r.id && deckOf(o) === deck
       && wordCardId(o.word) === wordCardId(r.word));
     if (clash) { await deleteWordRecord(r.id); merged++; continue; }
     const next = { ...r, deck };
-    await saveWordRecord(next);
+    moving.push(next);
     const i = all.findIndex((o) => o.id === r.id);
     if (i >= 0) all[i] = next;
-    moved++;
   }
-  return { moved, merged };
+  await saveWordRecords(moving);
+  return { moved: moving.length, merged };
 }
 
 async function refreshSaveWordBtn() {
@@ -8755,6 +8762,8 @@ const DECK_ALL = "\u0000すべて";
 
 /* 中身が空になっても消えないよう、作った冊の名前を控えておく */
 let deckShelf = [];
+/* 棚を最後に書き換えた時刻。向こうの一覧とどちらが新しいかの判定に使う */
+let deckShelfAt = 0;
 let currentDeck = DECK_ALL;
 let batchDeck = DEFAULT_DECK;
 /* 調べた単語を保存する先。まとめて登録の追加先とは別に覚える */
@@ -8768,6 +8777,7 @@ function deckOf(record) {
 async function loadDeckState() {
   const shelf = await kvGet("deck_shelf", []);
   deckShelf = Array.isArray(shelf) ? shelf.filter((n) => typeof n === "string" && n.trim()) : [];
+  deckShelfAt = Number(await kvGet("deck_shelf_at", 0)) || 0;
   currentDeck = await kvGet("current_deck", DECK_ALL);
   batchDeck = await kvGet("batch_deck", DEFAULT_DECK);
   resultDeck = await kvGet("result_deck", DEFAULT_DECK);
@@ -8781,19 +8791,25 @@ async function listDecks() {
   return [...names].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
+/* 棚を書き換えたら必ずここを通す。時刻を一緒に控えておかないと、
+   どちらの端末の一覧が新しいのか突き合わせで決められない */
+async function saveDeckShelf(names) {
+  deckShelf = names;
+  deckShelfAt = Date.now();
+  await kvSet("deck_shelf", deckShelf);
+  await kvSet("deck_shelf_at", deckShelfAt);
+  pushDeckShelf();
+}
+
 async function rememberDeck(name) {
   const clean = String(name || "").trim();
   if (!clean || deckShelf.includes(clean)) return clean;
-  deckShelf = [...deckShelf, clean];
-  await kvSet("deck_shelf", deckShelf);
-  pushDeckShelf();
+  await saveDeckShelf([...deckShelf, clean]);
   return clean;
 }
 
 async function forgetDeck(name) {
-  deckShelf = deckShelf.filter((n) => n !== name);
-  await kvSet("deck_shelf", deckShelf);
-  pushDeckShelf();
+  await saveDeckShelf(deckShelf.filter((n) => n !== name));
 }
 
 /* 冊を選ぶプルダウンの中身。単語帳の画面では「すべて」と整理の入口も出す */
@@ -9145,7 +9161,7 @@ document.getElementById("deck-rename-btn").addEventListener("click", () => {
       if (name === from) return;
       /* 冊の名前は単語そのものが持っているので、入っている単語をすべて書き換える */
       const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === from);
-      for (const r of rows) await saveWordRecord({ ...r, deck: name });
+      await saveWordRecords(rows.map((r) => ({ ...r, deck: name })));
       await forgetDeck(from);
       await rememberDeck(name);
       if (batchDeck === from) { batchDeck = name; await kvSet("batch_deck", batchDeck); }
@@ -9420,7 +9436,8 @@ csvImportInput.addEventListener("change", async (e) => {
   const text = await file.text();
   const records = csvToWords(text);
   if (!records.length) { toast("読み込めるデータが見つかりませんでした"); return; }
-  for (const r of records) await saveWordRecord(r);
+  /* CSVは何百語にもなる。1語ずつ送ると語数ぶんの往復になるのでまとめて送る */
+  await saveWordRecords(records);
   toast(`${records.length}件の単語を読み込みました`);
   renderBookList();
 });
@@ -10961,17 +10978,41 @@ const cloudTombstonesSupported = () => !cloudMissingColumns.has("deleted");
    recent_words と同じ形（利用者ごとに1行）で持つ。
    表が無いプロジェクトでも止まらないよう、一度断られたら以降は黙って諦める */
 let cloudDecksSupported = true;
+/* 送れなかった棚。次の突き合わせで送り直す */
+let deckShelfDirty = false;
 
-function pushDeckShelf() {
+/* 表そのものが無いときだけ諦める。通信が切れただけで諦めてしまうと、
+   そのあと繋がっても空の単語帳が二度と同期されない */
+function deckTableMissing(error) {
+  const code = String(error?.code || "");
+  if (code === "PGRST205" || code === "PGRST202" || code === "42P01") return true;
+  const msg = `${error?.message || ""} ${error?.details || ""}`;
+  return /does not exist|Could not find the table|schema cache/i.test(msg);
+}
+
+function deckShelfRow() {
+  return { user_id: cloudUserId, names: deckShelf,
+    updated_at: new Date(deckShelfAt || Date.now()).toISOString() };
+}
+
+async function pushDeckShelf() {
   if (!supabaseClient || !cloudUserId || !cloudDecksSupported) return;
-  supabaseClient.from("decks")
-    .upsert({ user_id: cloudUserId, names: deckShelf, updated_at: new Date().toISOString() })
-    .then(({ error }) => {
-      if (!error) return;
+  try {
+    await withWriteRetry(async () => {
+      const { error } = await supabaseClient.from("decks").upsert(deckShelfRow());
+      if (error) throw error;
+    });
+    deckShelfDirty = false;
+  } catch (err) {
+    if (deckTableMissing(err)) {
       cloudDecksSupported = false;
       console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
-        + "（SUPABASE_SETUP.mdの追加SQLを実行してください）:", error.message || error);
-    });
+        + "（SUPABASE_SETUP.mdの追加SQLを実行してください）:", err.message || err);
+      return;
+    }
+    deckShelfDirty = true;
+    console.warn("単語帳の一覧を送れませんでした（あとで送り直します）:", err);
+  }
 }
 
 /* PostgRESTは PGRST204 で「Could not find the 'antonyms' column of 'words'
@@ -11059,7 +11100,7 @@ async function runCloudMerge({ quiet = false } = {}) {
         sb.from("recent_words").select("words").eq("user_id", cloudUserId).maybeSingle(),
         /* 表が無くても全体を止めない */
         cloudDecksSupported
-          ? sb.from("decks").select("names").eq("user_id", cloudUserId).maybeSingle()
+          ? sb.from("decks").select("names,updated_at").eq("user_id", cloudUserId).maybeSingle()
           : Promise.resolve({ data: null, error: null }),
       ]);
       if (wErr) throw wErr;
@@ -11109,23 +11150,53 @@ async function runCloudMerge({ quiet = false } = {}) {
         if (error) throw error;
       }
 
-      /* 空の単語帳は足し合わせる。片方で作った冊が、もう片方の
-         「こちらには無い」という理由で消えてしまわないようにするため */
+      /* 空の単語帳の一覧は、新しく書き換えた方を正とする。足し合わせていた
+         ころは、片方で冊を消しても向こうの一覧から戻ってきてしまった */
       if (remoteDecks && remoteDecks.error) {
-        cloudDecksSupported = false;
-        console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
-          + "（SUPABASE_SETUP.mdの追加SQLを実行してください）");
-      } else if (cloudDecksSupported) {
-        const remoteNames = (remoteDecks && remoteDecks.data && remoteDecks.data.names) || [];
-        const merged = [...new Set([...deckShelf, ...remoteNames])].filter((n) => typeof n === "string" && n.trim());
-        if (merged.length !== deckShelf.length || merged.some((n, i) => n !== deckShelf[i])) {
-          deckShelf = merged;
-          await kvSet("deck_shelf", deckShelf);
+        if (deckTableMissing(remoteDecks.error)) {
+          cloudDecksSupported = false;
+          console.warn("Supabaseにdecks表が無いため、空の単語帳は同期しません"
+            + "（SUPABASE_SETUP.mdの追加SQLを実行してください）");
         }
-        if (merged.length) {
-          const { error } = await sb.from("decks")
-            .upsert({ user_id: cloudUserId, names: merged, updated_at: new Date().toISOString() });
-          if (error) { cloudDecksSupported = false; }
+      } else if (cloudDecksSupported) {
+        const remoteRow = (remoteDecks && remoteDecks.data) || null;
+        const remoteNames = ((remoteRow && remoteRow.names) || [])
+          .filter((n) => typeof n === "string" && n.trim());
+        const remoteAt = Date.parse((remoteRow && remoteRow.updated_at) || "") || 0;
+
+        if (!deckShelfAt && remoteRow) {
+          /* この版より前に作られた棚には時刻が無い。どちらが新しいか
+             決めようがないので、この一度だけは足し合わせてから時刻を打つ */
+          const merged = [...new Set([...deckShelf, ...remoteNames])];
+          deckShelf = merged;
+          deckShelfAt = Date.now();
+          await kvSet("deck_shelf", deckShelf);
+          await kvSet("deck_shelf_at", deckShelfAt);
+          deckShelfDirty = true;
+        } else if (remoteRow && remoteAt > deckShelfAt && !deckShelfDirty) {
+          /* 向こうの方が新しい。消された冊が戻ってこないよう、入れ替える */
+          deckShelf = remoteNames;
+          deckShelfAt = remoteAt;
+          await kvSet("deck_shelf", deckShelf);
+          await kvSet("deck_shelf_at", deckShelfAt);
+          deckShelfDirty = false;
+        }
+
+        /* 向こうが古い・まだ無い・送れていなかったときは、こちらを送る */
+        const sameAsRemote = remoteRow && !deckShelfDirty
+          && remoteAt === deckShelfAt
+          && remoteNames.length === deckShelf.length
+          && remoteNames.every((n, i) => n === deckShelf[i]);
+        if (!sameAsRemote && (deckShelf.length || remoteRow)) {
+          if (!deckShelfAt) deckShelfAt = Date.now();
+          const { error } = await sb.from("decks").upsert(deckShelfRow());
+          if (error) {
+            if (deckTableMissing(error)) cloudDecksSupported = false;
+            else deckShelfDirty = true;
+          } else {
+            deckShelfDirty = false;
+            await kvSet("deck_shelf_at", deckShelfAt);
+          }
         }
       }
     });
@@ -11534,6 +11605,30 @@ async function saveWordRecord(record) {
   await idbPut("words", record);
   await syncWordUpsert(record);
 }
+/* 冊をまたいで何語も書き換えるとき用。1語ずつ送ると語数ぶんの往復になり、
+   途中で切れると半端に残る。手元には全部書いてから、クラウドへは1回で送る */
+async function saveWordRecords(records) {
+  if (!records.length) return;
+  const at = Date.now();
+  const stamped = records.map((r) => ({ ...r, updated_at: at }));
+  for (const r of stamped) {
+    markLocalWrite(r.id, at);
+    await idbPut("words", r);
+  }
+  if (!supabaseClient || !cloudUserId) return;
+  if (cloudOffline()) {
+    for (const r of stamped) await outboxPut(r.id, { op: "upsert" });
+    return;
+  }
+  try {
+    await withWriteRetry(() => cloudWordsUpsert(stamped));
+    await outboxDrop(stamped.map((r) => r.id));
+  } catch (err) {
+    for (const r of stamped) await outboxPut(r.id, { op: "upsert" });
+    reportSyncDeferred(err, "word upsert");
+  }
+}
+
 async function deleteWordRecord(id) {
   const existing = await idbGet("words", id);
   const deletedAt = Date.now();
@@ -12185,7 +12280,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "257";
+const APP_BUILD = "258";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
