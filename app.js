@@ -10931,6 +10931,38 @@ function syncTimeLabel(at) {
   return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
+/* 足りない表・列を作るSQL。SUPABASE_SETUP.md と同じ内容を、
+   スマホからでも貼れるように手元へ取れるようにしておく */
+const SYNC_FIX_SQL = {
+  deck: ["-- words表に deck 列を足す（どの単語帳に入れたかを同期する）",
+    "alter table public.words",
+    "  add column if not exists deck text not null default '単語帳';"].join("\n"),
+  decks: ["-- decks表を作る（中が空の単語帳を同期する）",
+    "create table if not exists public.decks (",
+    "  user_id uuid primary key references auth.users on delete cascade,",
+    "  names jsonb not null default '[]'::jsonb,",
+    "  updated_at timestamptz not null default now()",
+    ");",
+    "",
+    "alter table public.decks enable row level security;",
+    "",
+    'drop policy if exists "decks are mine" on public.decks;',
+    'create policy "decks are mine" on public.decks',
+    "  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);"].join("\n"),
+};
+
+function syncFixSql() {
+  const parts = [];
+  for (const name of cloudMissingColumns) {
+    if (SYNC_FIX_SQL[name]) parts.push(SYNC_FIX_SQL[name]);
+  }
+  if (!cloudDecksSupported) parts.push(SYNC_FIX_SQL.decks);
+  if (!parts.length) return "";
+  /* スキーマを変えただけでは PostgREST が気づかないので、最後に読み直させる */
+  parts.push("notify pgrst, 'reload schema';");
+  return parts.join("\n\n");
+}
+
 async function renderSyncDetail() {
   const el = document.getElementById("sync-detail");
   if (!el) return;
@@ -10961,6 +10993,9 @@ async function renderSyncDetail() {
   el.innerHTML = lines.map((t) => escapeHtml(t)).join("\n")
     + (warns.length ? "\n" + warns.map((t) => `<span class="warn">${escapeHtml(t)}</span>`).join("\n") : "");
   el.hidden = false;
+
+  const fixBtn = document.getElementById("sync-fix-sql-btn");
+  if (fixBtn) fixBtn.hidden = !syncFixSql();
 }
 
 /* エラー後だけ再試行ボタンを出す。自動リトライの最中は、押しても
@@ -11425,6 +11460,27 @@ document.addEventListener("visibilitychange", () => {
   if (!supabaseClient || !cloudUserId) return;
   startRealtimeWordSync();
   pullAndMergeCloudData({ quiet: true });
+});
+
+document.getElementById("sync-fix-sql-btn").addEventListener("click", async () => {
+  const sql = syncFixSql();
+  if (!sql) return;
+  try {
+    await navigator.clipboard.writeText(sql);
+  } catch (err) {
+    /* 書き込みを断られる端末向け。選択してからのコピーなら通ることが多い */
+    const area = document.createElement("textarea");
+    area.value = sql;
+    area.setAttribute("readonly", "");
+    area.style.cssText = "position:fixed;top:0;left:0;opacity:0;";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, sql.length);
+    const ok = document.execCommand && document.execCommand("copy");
+    area.remove();
+    if (!ok) { toast("コピーできませんでした。SUPABASE_SETUP.md のSQLをお使いください"); return; }
+  }
+  toast("SQLをコピーしました。SupabaseのSQL Editorに貼って実行してください");
 });
 
 document.getElementById("sync-check-btn").addEventListener("click", async (e) => {
@@ -12359,7 +12415,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "259";
+const APP_BUILD = "260";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

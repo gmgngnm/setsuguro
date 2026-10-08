@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#259</span>
+        <span class="build-tag" id="build-tag">#260</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -268,7 +268,12 @@
          クラウド側の列や表が足りないときの沈黙がいちばん分かりにくいので、
          そこもここに出す -->
     <div class="sync-detail" id="sync-detail" hidden></div>
-    <button class="btn-ghost sync-detail-btn" id="sync-check-btn" type="button">今すぐ同期して確かめる</button>
+    <div class="sync-detail-actions">
+      <button class="btn-ghost sync-detail-btn" id="sync-check-btn" type="button">今すぐ同期して確かめる</button>
+      <!-- 足りない表・列があるときだけ出す。スマホからでも直せるように、
+           貼って実行するだけのSQLを手元に取れるようにしておく -->
+      <button class="btn-ghost sync-detail-btn" id="sync-fix-sql-btn" type="button" hidden>直すSQLをコピー</button>
+    </div>
 
     <div class="section-label" style="margin-top:6px;">Gemini API キー</div>
     <div class="form-row">
