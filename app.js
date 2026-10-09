@@ -8916,19 +8916,40 @@ function syncBookSelectionUi() {
 function toggleBookSelection(id) {
   if (bookSelection.has(id)) bookSelection.delete(id);
   else bookSelection.add(id);
+  /* 次の範囲選択は、最後に押した札を起点にする */
+  bookSelectionAnchor = id;
   syncBookSelectionUi();
 }
+
+/* 範囲選択の起点。ここから次に押した札までをまとめて選ぶ */
+let bookSelectionAnchor = "";
 
 /* 長押しからでも上の帯の選択ボタンからでも、同じ選ぶ状態に入る */
 function enterBookSelection(id) {
   bookSelecting = true;
-  if (id) bookSelection.add(id);
+  if (id) { bookSelection.add(id); bookSelectionAnchor = id; }
+  syncBookSelectionUi();
+}
+
+/* 起点から押した札までを、画面に出ている並びのままでまとめて選ぶ。
+   並べ替えや絞り込みで順番は変わるので、保存した順ではなく
+   いま見えている並びを基準にする */
+function selectBookRange(toId, list) {
+  const ids = list.map((r) => r.id);
+  const from = ids.indexOf(bookSelectionAnchor);
+  const to = ids.indexOf(toId);
+  /* 起点が絞り込みで消えているなら、範囲の決めようがない */
+  if (from < 0 || to < 0) { toggleBookSelection(toId); return; }
+  const [a, b] = from <= to ? [from, to] : [to, from];
+  for (let i = a; i <= b; i++) bookSelection.add(ids[i]);
+  /* 起点は動かさない。続けてシフトで押せば、同じ起点から伸ばせる */
   syncBookSelectionUi();
 }
 
 function clearBookSelection() {
   bookSelecting = false;
   bookSelection.clear();
+  bookSelectionAnchor = "";
   syncBookSelectionUi();
 }
 
@@ -8970,9 +8991,11 @@ async function renderBookList() {
   shown.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
     const row = buildBookRow(r.id, title, r.word_phonetic || "", r.word_meaning || "", r.created_at,
-      () => {
-        /* 選んでいる最中は、開かずに選ぶ／外すだけ */
-        if (bookSelecting) toggleBookSelection(r.id);
+      (e) => {
+        /* 選んでいる最中は、開かずに選ぶ／外すだけ。
+           シフトを押しながらなら、起点からここまでをまとめて選ぶ */
+        if (bookSelecting && e && e.shiftKey) selectBookRange(r.id, shown);
+        else if (bookSelecting) toggleBookSelection(r.id);
         /* ページ送りは、いま画面に出ている並びをそのまま辿る */
         else openWordDetail(r, shown, "book");
       },
@@ -9936,10 +9959,11 @@ function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress) {
     if (Math.abs(e.clientX - startX) > BOOK_LONGPRESS_SLOP
       || Math.abs(e.clientY - startY) > BOOK_LONGPRESS_SLOP) clear();
   });
-  body.addEventListener("pointerup", () => {
+  body.addEventListener("pointerup", (e) => {
     clear();
-    /* 長押しで入った直後の指離しを、そのまま選択の解除にしない */
-    if (!fired) onTap();
+    /* 長押しで入った直後の指離しを、そのまま選択の解除にしない。
+       シフトを押していたかは呼び先で使うので、そのまま渡す */
+    if (!fired) onTap(e);
   });
   body.addEventListener("pointercancel", clear);
   /* 長押しで出る端末の選択メニューやマウスの右クリックメニューを出さない */
@@ -12453,7 +12477,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "266";
+const APP_BUILD = "267";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
