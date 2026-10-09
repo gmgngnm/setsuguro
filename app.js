@@ -8824,7 +8824,8 @@ async function loadDeckState() {
   const shelf = await kvGet("deck_shelf", []);
   deckShelf = Array.isArray(shelf) ? shelf.filter((n) => typeof n === "string" && n.trim()) : [];
   deckShelfAt = Number(await kvGet("deck_shelf_at", 0)) || 0;
-  bookSort = (await kvGet("book_sort", "added")) === "alpha" ? "alpha" : "added";
+  const savedSort = await kvGet("book_sort", "added");
+  bookSort = BOOK_SORTS.includes(savedSort) ? savedSort : "added";
   const sortSelect = document.getElementById("book-sort");
   if (sortSelect) sortSelect.value = bookSort;
   currentDeck = await kvGet("current_deck", DECK_ALL);
@@ -8899,14 +8900,16 @@ let bookStatsText = "";
 /* 一覧の絞り込み。冊を開き直したら空に戻す（前の検索が残っていると、
    開いた冊が空に見えてしまう） */
 let bookQuery = "";
-/* カードの並び順。added=追加の新しい順、alpha=アルファベット順。
+/* カードの並び順。added=新しい順、oldest=古い順、alpha=アルファベット順。
    絞り込みと違って、冊を開き直しても選んだままにする（好みの問題なので） */
+const BOOK_SORTS = ["added", "oldest", "alpha"];
 let bookSort = "added";
 
 function sortBookRows(rows) {
   if (bookSort === "alpha") {
     return rows.sort((a, b) => String(a.word || "").localeCompare(String(b.word || ""), "en"));
   }
+  if (bookSort === "oldest") return rows.sort((a, b) => a.created_at - b.created_at);
   return rows.sort((a, b) => b.created_at - a.created_at);
 }
 
@@ -9355,7 +9358,7 @@ document.getElementById("result-deck-select").addEventListener("change", async (
 });
 
 document.getElementById("book-sort").addEventListener("change", async (e) => {
-  bookSort = e.target.value === "alpha" ? "alpha" : "added";
+  bookSort = BOOK_SORTS.includes(e.target.value) ? e.target.value : "added";
   await kvSet("book_sort", bookSort);
   await renderBookList();
 });
@@ -12577,7 +12580,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "270";
+const APP_BUILD = "271";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
