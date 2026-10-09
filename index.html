@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#265</span>
+        <span class="build-tag" id="build-tag">#266</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -152,9 +152,15 @@
       <button class="memorize-mode-btn" id="mode-btn-auto" type="button">🔊 カード自動再生</button>
       <button class="memorize-mode-close" id="memorize-mode-close" type="button">✕ 閉じる</button>
     </div>
-    <input class="book-search" id="book-search" type="search" inputmode="search"
-      placeholder="単語・意味で絞り込む" autocomplete="off" autocapitalize="off"
-      spellcheck="false" aria-label="単語帳の中を絞り込む" hidden>
+    <div class="book-tools" id="book-tools" hidden>
+      <input class="book-search" id="book-search" type="search" inputmode="search"
+        placeholder="単語・意味で絞り込む" autocomplete="off" autocapitalize="off"
+        spellcheck="false" aria-label="単語帳の中を絞り込む">
+      <select class="deck-select book-sort" id="book-sort" aria-label="カードの並び順">
+        <option value="added">追加順</option>
+        <option value="alpha">A→Z</option>
+      </select>
+    </div>
     <div class="book-list" id="book-list"></div>
   </section>
 

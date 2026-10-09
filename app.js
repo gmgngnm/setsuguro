@@ -8778,6 +8778,9 @@ async function loadDeckState() {
   const shelf = await kvGet("deck_shelf", []);
   deckShelf = Array.isArray(shelf) ? shelf.filter((n) => typeof n === "string" && n.trim()) : [];
   deckShelfAt = Number(await kvGet("deck_shelf_at", 0)) || 0;
+  bookSort = (await kvGet("book_sort", "added")) === "alpha" ? "alpha" : "added";
+  const sortSelect = document.getElementById("book-sort");
+  if (sortSelect) sortSelect.value = bookSort;
   currentDeck = await kvGet("current_deck", DECK_ALL);
   batchDeck = await kvGet("batch_deck", DEFAULT_DECK);
   resultDeck = await kvGet("result_deck", DEFAULT_DECK);
@@ -8850,6 +8853,16 @@ let bookStatsText = "";
 /* 一覧の絞り込み。冊を開き直したら空に戻す（前の検索が残っていると、
    開いた冊が空に見えてしまう） */
 let bookQuery = "";
+/* カードの並び順。added=追加の新しい順、alpha=アルファベット順。
+   絞り込みと違って、冊を開き直しても選んだままにする（好みの問題なので） */
+let bookSort = "added";
+
+function sortBookRows(rows) {
+  if (bookSort === "alpha") {
+    return rows.sort((a, b) => String(a.word || "").localeCompare(String(b.word || ""), "en"));
+  }
+  return rows.sort((a, b) => b.created_at - a.created_at);
+}
 
 /* 単語そのものだけでなく意味や語呂合わせでも引けるようにする。
    綴りをうろ覚えでも「意味」から辿れた方が探しやすい */
@@ -8925,7 +8938,7 @@ async function renderBookList() {
 
   let rows = await idbGetAll("words");
   if (currentDeck !== DECK_ALL) rows = rows.filter((r) => deckOf(r) === currentDeck);
-  rows.sort((a, b) => b.created_at - a.created_at);
+  sortBookRows(rows);
 
   const memorizedCount = rows.filter((r) => r.memorized).length;
   const memorizedPct = rows.length ? Math.round((memorizedCount / rows.length) * 100) : 0;
@@ -8938,9 +8951,9 @@ async function renderBookList() {
   [...bookSelection].forEach((id) => { if (!alive.has(id)) bookSelection.delete(id); });
 
   bookHasRows = rows.length > 0;
-  /* 絞り込む相手が無い冊では、検索バーも出さない */
-  const search = document.getElementById("book-search");
-  if (search) search.hidden = !bookHasRows;
+  /* 絞り込む相手も並べ替える相手も無い冊では、その行ごと出さない */
+  const tools = document.getElementById("book-tools");
+  if (tools) tools.hidden = !bookHasRows;
 
   /* 数えも、選んだ単語の生き残りも、絞り込む前の冊の中身で決める。
      絞り込みは見せ方の話で、冊の中身が減るわけではない */
@@ -9269,6 +9282,12 @@ document.getElementById("result-deck-select").addEventListener("change", async (
     await saveWordRecord({ ...existing, deck: resultDeck });
     toast(`「${resultDeck}」へ移しました`);
   }
+});
+
+document.getElementById("book-sort").addEventListener("change", async (e) => {
+  bookSort = e.target.value === "alpha" ? "alpha" : "added";
+  await kvSet("book_sort", bookSort);
+  await renderBookList();
 });
 
 document.getElementById("book-search").addEventListener("input", (e) => {
@@ -12434,7 +12453,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "265";
+const APP_BUILD = "266";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
