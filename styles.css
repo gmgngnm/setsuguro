@@ -639,7 +639,8 @@ select:disabled{opacity:.5;cursor:default;}
 .book-row{position:relative;border-radius:14px;}
 .book-row .row-body{
   position:relative;background:var(--surface);border:1px solid var(--line);border-radius:14px;
-  padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  /* 日付を右下に置くぶん、下だけ少し広く取る */
+  padding:11px 14px 15px;display:flex;justify-content:space-between;align-items:center;gap:10px;
   /* 長押しで端末の文字選択が始まらないようにする。縦の送りは邪魔しない */
   touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
@@ -678,18 +679,31 @@ select:disabled{opacity:.5;cursor:default;}
   transform:translate(-50%,-50%) rotate(45deg);
 }
 .icon-btn-danger{color:var(--danger);border-color:color-mix(in srgb, var(--danger) 40%, var(--line));}
-.book-row .w{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;}
-.book-row .w .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;font-size:11px;color:var(--ink-faint);margin-left:6px;}
-.book-row .g{font-size:12px;color:var(--ink-soft);margin-top:2px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-/* 一覧の接辞。綴りだけを小さく1行で。行間を詰めて、カードの高さを
-   ほとんど変えないようにしてある */
-.book-row .a{
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.4;
-  color:var(--ink-faint);margin-top:1px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;
+.book-row .w{display:flex;align-items:baseline;gap:8px;min-width:0;}
+.book-row .w .word{
+  font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;
+  flex:0 0 auto;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.book-row .a .sep{color:var(--accent);opacity:.65;margin:0 3px;}
-.book-row .date{font-size:10px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;flex-shrink:0;}
+/* 意味は単語の右横。発音記号は出さない（一覧で読むのは意味の方） */
+.book-row .g{
+  font-size:12px;color:var(--ink-soft);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+/* 一覧の接辞。綴りと意味を小さく1行で。分かれない語では中身が空になるが、
+   行そのものは残してカードの高さを揃える */
+.book-row .a{
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.5;min-height:16px;
+  color:var(--ink-faint);margin-top:3px;padding-right:34px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.book-row .a .m{color:var(--ink-soft);opacity:.85;}
+.book-row .a .sep{color:var(--accent);opacity:.65;margin:0 4px;}
+/* 日付はカードの右下に小さく。読む順のいちばん最後に来るようにする */
+.book-row .date{
+  position:absolute;right:12px;bottom:5px;
+  font-size:9.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;
+  flex-shrink:0;pointer-events:none;
+}
 /* 上の帯の中に入れたので、戻るボタンと追加ボタンの間の余りに収める。
    入りきらない端末では端を落として、行が折り返さないようにする */
 .book-stats{

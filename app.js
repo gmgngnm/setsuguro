@@ -9040,7 +9040,7 @@ async function renderBookList() {
   }
   shown.forEach((r) => {
     const title = r.memorized ? `✓ ${r.word}` : r.word;
-    const row = buildBookRow(r.id, title, r.word_phonetic || "", r.word_meaning || "", r.created_at,
+    const row = buildBookRow(r.id, title, r.word_meaning || "", r.created_at,
       (e) => {
         /* 選んでいる最中は、開かずに選ぶ／外すだけ。
            シフトを押しながらなら、起点からここまでをまとめて選ぶ */
@@ -9973,25 +9973,31 @@ function endPressSink() {
 const BOOK_LONGPRESS_MS = 500;
 const BOOK_LONGPRESS_SLOP = 10;
 
-function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress, morphemes = []) {
+function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes = []) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
   wrap.dataset.wordId = id;
   const date = new Date(createdAt);
   const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
-  const phoneticHtml = phonetic ? `<span class="phonetic">[${escapeHtml(phonetic)}]</span>` : "";
-  const subHtml = sub ? `<div class="g">${escapeHtml(sub)}</div>` : "";
-  /* 接辞は綴りだけを繋いで1行に。意味まで出すと行が増えて、
-     一覧としてのひと目の良さが無くなる。1つしか無い（＝分かれなかった）
-     語では、単語をもう一度書くだけになるので出さない */
-  const parts = (morphemes || []).map((m) => String(m?.part || "")).filter(Boolean);
+  const subHtml = sub ? `<span class="g">${escapeHtml(sub)}</span>` : "";
+  /* 接辞は綴りと意味を並べて1行に。1つしか無い（＝分かれなかった）語では、
+     単語をもう一度書くだけになるので中身は出さない。ただし行そのものは
+     必ず置く。出したり出さなかったりすると、カードの高さが揃わない */
+  const parts = (morphemes || [])
+    .map((m) => ({ part: String(m?.part || ""), meaning: String(m?.meaning || "") }))
+    .filter((m) => m.part);
   const affixHtml = parts.length > 1
-    ? `<div class="a">${parts.map((x) => escapeHtml(x)).join('<span class="sep">+</span>')}</div>`
+    ? parts.map((m) => `${escapeHtml(m.part)}`
+        + (m.meaning ? `<span class="m">（${escapeHtml(m.meaning)}）</span>` : ""))
+      .join('<span class="sep">+</span>')
     : "";
   wrap.innerHTML = `
     <div class="row-body">
       <span class="row-check" aria-hidden="true"></span>
-      <div class="row-text"><div class="w">${escapeHtml(title)}${phoneticHtml}</div>${subHtml}${affixHtml}</div>
+      <div class="row-text">
+        <div class="w"><span class="word">${escapeHtml(title)}</span>${subHtml}</div>
+        <div class="a">${affixHtml}</div>
+      </div>
       <div class="date">${dateStr}</div>
     </div>`;
   const body = wrap.querySelector(".row-body");
@@ -12590,7 +12596,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "272";
+const APP_BUILD = "273";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
