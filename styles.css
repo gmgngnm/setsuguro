@@ -612,9 +612,17 @@ select:disabled{opacity:.5;cursor:default;}
 .goro-generate-btn[hidden]{display:none;}
 
 /* Record book */
+/* 絞り込みと並び順は1行に並べる。どちらも一覧の見せ方を決めるもの */
+.book-tools{display:flex;align-items:stretch;gap:8px;}
+.book-tools[hidden]{display:none;}
+.book-sort{
+  flex:0 0 auto;width:104px;height:44px;border-radius:14px;
+  padding:0 28px 0 12px;font-size:12.5px;max-width:none;
+  background-position:right 10px center;
+}
 /* 一覧の絞り込み。虫めがねは背景に描いて、左に余白を取って重ねる */
 .book-search{
-  width:100%;height:44px;background:var(--surface);color:var(--ink);
+  flex:1 1 auto;min-width:0;height:44px;background:var(--surface);color:var(--ink);
   border:1.5px solid var(--line);border-radius:14px;
   padding:0 14px 0 38px;font-size:14px;
   font-family:'Zen Kaku Gothic New',sans-serif;outline:none;
