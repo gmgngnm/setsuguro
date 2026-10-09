@@ -681,6 +681,14 @@ select:disabled{opacity:.5;cursor:default;}
 .book-row .w{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-ink);font-size:14px;}
 .book-row .w .phonetic{font-family:'JetBrains Mono',monospace;font-weight:400;font-size:11px;color:var(--ink-faint);margin-left:6px;}
 .book-row .g{font-size:12px;color:var(--ink-soft);margin-top:2px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 一覧の接辞。綴りだけを小さく1行で。行間を詰めて、カードの高さを
+   ほとんど変えないようにしてある */
+.book-row .a{
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.4;
+  color:var(--ink-faint);margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;
+}
+.book-row .a .sep{color:var(--accent);opacity:.65;margin:0 3px;}
 .book-row .date{font-size:10px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;flex-shrink:0;}
 /* 上の帯の中に入れたので、戻るボタンと追加ボタンの間の余りに収める。
    入りきらない端末では端を落として、行が折り返さないようにする */
@@ -906,6 +914,12 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .usage-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;}
 .usage-row{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-soft);}
+/* 上限に当たったことの控え。使用状況の数字と並べて置く */
+.usage-quota{
+  font-size:11.5px;line-height:1.6;color:var(--danger);
+  border-top:1px solid var(--line);padding-top:8px;margin-top:2px;
+}
+.usage-quota[hidden]{display:none;}
 .usage-row b{color:var(--accent-ink);}
 .usage-note{font-size:10.5px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;}
 /* 端末内に保存する旨の断り書き。読めれば十分な内容なので、枠も塗りも
