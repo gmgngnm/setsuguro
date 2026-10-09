@@ -9980,17 +9980,16 @@ function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes =
   const date = new Date(createdAt);
   const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
   const subHtml = sub ? `<span class="g">${escapeHtml(sub)}</span>` : "";
-  /* 接辞は綴りと意味を並べて1行に。1つしか無い（＝分かれなかった）語では、
-     単語をもう一度書くだけになるので中身は出さない。ただし行そのものは
-     必ず置く。出したり出さなかったりすると、カードの高さが揃わない */
+  /* 接辞は綴りと意味を並べて1行に。分かれなかった語（＝1つだけ）も、
+     その1つをそのまま書く。空の行が混ざるより、全部に同じものが
+     並んでいた方が読みやすい。行そのものは記録が無いときも必ず置く
+     （出したり出さなかったりすると、カードの高さが揃わない） */
   const parts = (morphemes || [])
     .map((m) => ({ part: String(m?.part || ""), meaning: String(m?.meaning || "") }))
     .filter((m) => m.part);
-  const affixHtml = parts.length > 1
-    ? parts.map((m) => `${escapeHtml(m.part)}`
-        + (m.meaning ? `<span class="m">（${escapeHtml(m.meaning)}）</span>` : ""))
-      .join('<span class="sep">+</span>')
-    : "";
+  const affixHtml = parts.map((m) => `${escapeHtml(m.part)}`
+      + (m.meaning ? `<span class="m">（${escapeHtml(m.meaning)}）</span>` : ""))
+    .join('<span class="sep">+</span>');
   wrap.innerHTML = `
     <div class="row-body">
       <span class="row-check" aria-hidden="true"></span>
@@ -12596,7 +12595,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "273";
+const APP_BUILD = "274";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
