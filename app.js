@@ -1481,19 +1481,39 @@ function sleep(ms) {
    1分あたりの上限なら数分で回復し、1日あたりの上限なら日付が変わるまで
    戻らないが、どちらの上限に当たったかは応答からは判別しきれないため、
    両方あり得ることを伝える */
-const QUOTA_ERROR_MESSAGE = "Geminiの利用上限に達しました。しばらく時間をおいてからお試しください（1分あたりの上限なら数分、1日あたりの上限なら日付が変わるまで待つと回復します）。";
+const QUOTA_ERROR_MESSAGE = "Geminiの利用上限に達しました（APIからの応答: 利用上限）。"
+  + "1分あたりの上限なら数分、1日あたりの上限なら日付が変わるまで待つと回復します。"
+  + "待っても戻らない場合は、無料枠・課金枠を使い切っています。Google AI Studio のクォータと請求をご確認ください。";
 
 function isQuotaError(err) {
   const msg = String(err?.message || "");
-  return statusFromError(err) === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg);
+  const status = statusFromError(err);
+  /* 429は回数の上限。402は支払いの問題。403でも、本文が枠や請求に
+     触れていれば使い切りのことがある（キーの間違いとは分けたい） */
+  if (status === 429 || status === 402) return true;
+  if (status === 403 && /quota|billing|limit|exceeded|disabled/i.test(msg)) return true;
+  return /RESOURCE_EXHAUSTED|quota|rate limit|billing|insufficient|out of credit/i.test(msg);
+}
+
+/* 上限の知らせは、出たことを覚えておいて設定画面にも出す。
+   「使い切ったのかどうか」は、その場の文言だけだと流れてしまう */
+let lastQuotaErrorAt = 0;
+function noteQuotaError(err) {
+  if (!isQuotaError(err)) return;
+  lastQuotaErrorAt = Date.now();
+  kvSet("last_quota_error_at", lastQuotaErrorAt).catch(() => { });
+  kvSet("last_quota_error_detail", String(err?.message || "")).catch(() => { });
+  refreshUsageDisplay();
 }
 
 /* 画面に出す文言。こちらでは直しようのない理由（上限・混雑）のときだけ
    専用の案内に差し替える。生の英語のエラー本文をそのまま出すと、
    何をすればいいのか分からないまま長文だけが残る */
 function aiErrorMessage(err) {
-  if (isQuotaError(err)) return QUOTA_ERROR_MESSAGE;
+  if (isQuotaError(err)) { noteQuotaError(err); return QUOTA_ERROR_MESSAGE; }
   if (isTransientAiError(err)) return BUSY_RETRY_MESSAGE;
+  /* 上限でも混雑でもないものは、状態番号ごとそのまま見せる。
+     こちらで言い換えると、調べる手がかりまで消えてしまう */
   return String(err?.message || "原因不明のエラー");
 }
 
@@ -1573,6 +1593,15 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
  * 4. ローカル辞書とのハイブリッド照合・フォールバック分解
  * ------------------------------------------------------------------ */
 const MEANING_UNAVAILABLE = "（意味を取得できませんでした）";
+
+/* 意味が取れていない札。単語帳に置いても読めないので、入れない・残さない。
+   単語そのものの意味が空のものと、接辞の意味が取れなかったものを見る */
+function isWordRecordUnusable(record) {
+  if (!record) return true;
+  const meaning = String(record.word_meaning || "").trim();
+  if (!meaning || meaning === MEANING_UNAVAILABLE) return true;
+  return (record.morphemes || []).some((m) => (m?.meaning || "") === MEANING_UNAVAILABLE);
+}
 
 /* 辞書未収録の語根（AI推定）は、呼ぶたびに meaning の言い回しが
    微妙にブレる（例:「見る」/「見ること」）。同じpartについて過去に
@@ -8774,6 +8803,23 @@ function deckOf(record) {
   return name || DEFAULT_DECK;
 }
 
+/* 以前の版では、意味が取れなかった語もそのまま単語帳へ入っていた。
+   読めない札が残り続けるので、一度だけ拾って消す */
+async function purgeUnusableWords() {
+  if (await kvGet("purged_unusable_words", false)) return;
+  try {
+    const broken = (await idbGetAll("words")).filter(isWordRecordUnusable);
+    for (const r of broken) await deleteWordRecord(r.id);
+    await kvSet("purged_unusable_words", true);
+    if (broken.length) {
+      toast(`意味を取得できていなかった${broken.length}語を単語帳から消しました`);
+      renderBookList();
+    }
+  } catch (err) {
+    console.warn("意味の取れていない語を片付けられませんでした:", err);
+  }
+}
+
 async function loadDeckState() {
   const shelf = await kvGet("deck_shelf", []);
   deckShelf = Array.isArray(shelf) ? shelf.filter((n) => typeof n === "string" && n.trim()) : [];
@@ -8999,7 +9045,8 @@ async function renderBookList() {
         /* ページ送りは、いま画面に出ている並びをそのまま辿る */
         else openWordDetail(r, shown, "book");
       },
-      () => enterBookSelection(r.id));
+      () => enterBookSelection(r.id),
+      r.morphemes || []);
     listEl.appendChild(row);
   });
   syncBookSelectionUi();
@@ -9922,7 +9969,7 @@ function endPressSink() {
 const BOOK_LONGPRESS_MS = 500;
 const BOOK_LONGPRESS_SLOP = 10;
 
-function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress) {
+function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress, morphemes = []) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
   wrap.dataset.wordId = id;
@@ -9930,10 +9977,17 @@ function buildBookRow(id, title, phonetic, sub, createdAt, onTap, onLongPress) {
   const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
   const phoneticHtml = phonetic ? `<span class="phonetic">[${escapeHtml(phonetic)}]</span>` : "";
   const subHtml = sub ? `<div class="g">${escapeHtml(sub)}</div>` : "";
+  /* 接辞は綴りだけを繋いで1行に。意味まで出すと行が増えて、
+     一覧としてのひと目の良さが無くなる。1つしか無い（＝分かれなかった）
+     語では、単語をもう一度書くだけになるので出さない */
+  const parts = (morphemes || []).map((m) => String(m?.part || "")).filter(Boolean);
+  const affixHtml = parts.length > 1
+    ? `<div class="a">${parts.map((x) => escapeHtml(x)).join('<span class="sep">+</span>')}</div>`
+    : "";
   wrap.innerHTML = `
     <div class="row-body">
       <span class="row-check" aria-hidden="true"></span>
-      <div class="row-text"><div class="w">${escapeHtml(title)}${phoneticHtml}</div>${subHtml}</div>
+      <div class="row-text"><div class="w">${escapeHtml(title)}${phoneticHtml}</div>${subHtml}${affixHtml}</div>
       <div class="date">${dateStr}</div>
     </div>`;
   const body = wrap.querySelector(".row-body");
@@ -10685,6 +10739,21 @@ async function refreshUsageDisplay() {
      Google AI Studio の Usage 画面で見る */
   callsEl.textContent = `${stats.calls} 回（直近1分 ${perMinute} 回）`;
   tokensEl.textContent = stats.tokens.toLocaleString();
+
+  /* 上限に当たったことがあるなら、いつ当たったのかを出す。
+     「使い切ったのかどうか」をあとからでも確かめられるようにするため */
+  const quotaEl = document.getElementById("usage-quota");
+  if (!quotaEl) return;
+  const at = lastQuotaErrorAt || Number(await kvGet("last_quota_error_at", 0)) || 0;
+  lastQuotaErrorAt = at;
+  /* 日をまたげば回復していることが多いので、その日のぶんだけ出す */
+  const sameDay = at && new Date(at).toDateString() === new Date().toDateString();
+  if (!sameDay) { quotaEl.hidden = true; quotaEl.textContent = ""; return; }
+  const d = new Date(at);
+  const two = (n) => String(n).padStart(2, "0");
+  quotaEl.hidden = false;
+  quotaEl.textContent = `⚠ ${two(d.getHours())}:${two(d.getMinutes())} に利用上限のエラーが出ています`
+    + "（1分あたりの上限なら数分で戻ります。戻らなければ枠を使い切っています）";
 }
 
 /* ------------------------------------------------------------------ *
@@ -11919,8 +11988,10 @@ function batchRowToWordRecord(row, existing) {
   };
 }
 
+/* 何をしたかを呼び先へ返す。写しただけ・すでにあっただけで片付いたのか、
+   これから作る語があるのかで、続けて生成へ進むかどうかが変わる */
 async function addBatchWords(words) {
-  if (!words.length) { toast("英単語が見つかりませんでした"); return; }
+  if (!words.length) { toast("英単語が見つかりませんでした"); return { added: 0, copied: 0, skipped: 0 }; }
 
   const queued = new Set((await loadBatchQueue()).map((r) => r.id));
   const saved = await idbGetAll("words");
@@ -11945,11 +12016,15 @@ async function addBatchWords(words) {
     await putBatchRow({ id, word, deck: batchDeck, status: "pending", error: "", result: null, created_at: Date.now() });
     added++;
   }
+  /* 「0語を追加（3語はコピー）」のような言い方をすると、うまくいったのに
+     何もできなかったように読める。したことだけを並べる */
   const notes = [];
-  if (copied) notes.push(`${copied}語は別の単語帳からコピー`);
-  if (skipped) notes.push(`${skipped}語は登録済みのため除外`);
-  toast(notes.length ? `${added}語を追加（${notes.join("、")}）` : `${added}語を追加しました`);
+  if (added) notes.push(`${added}語を追加しました`);
+  if (copied) notes.push(`${copied}語を「${batchDeck}」へ別の単語帳からコピーしました`);
+  if (skipped) notes.push(`${skipped}語はすでにこの単語帳にあります`);
+  toast(notes.join("、") || "追加できる単語がありませんでした");
   await renderBatchQueue();
+  return { added, copied, skipped };
 }
 
 /* まとめて登録用のCSVは、単語帳のCSV(CSV_COLUMNS)とは別物で、
@@ -12143,6 +12218,12 @@ async function runBatchGeneration() {
               goro_highlight: cand ? cand.highlight : [],
               provider,
             };
+            /* 意味が取れていない札は入れない。読めないものを単語帳に
+               並べても仕方がないので、失敗として残して後から試し直す */
+            if (isWordRecordUnusable(batchRowToWordRecord(it.row, null))) {
+              await markBatchFailed(it.row, "意味を取得できませんでした");
+              continue;
+            }
             /* 生成できた語はその場で単語帳へ入れ、キューからは外す。
                チャンクごとに確定させておくことで、途中で画面を離れても
                通信が切れても、そこまでの成果はそのまま残る */
@@ -12237,10 +12318,16 @@ document.getElementById("batch-skip-unsplit").addEventListener("change", async (
 document.getElementById("batch-run-btn").addEventListener("click", async () => {
   const input = document.getElementById("batch-input");
   const words = parseBatchWordInput(input.value);
+  let done = null;
   if (words.length) {
-    await addBatchWords(words);
+    done = await addBatchWords(words);
     input.value = "";
   }
+  /* 写した・すでにあった、で全部片付いたときは作る相手がいない。
+     それでも生成へ進むと「生成待ちの単語がありません」とだけ出て、
+     うまくいったのに失敗したように見える */
+  const pending = (await loadBatchQueue()).filter((r) => r.status === "pending").length;
+  if (!pending && done && (done.copied || done.skipped)) return;
   await runBatchGeneration();
 });
 
@@ -12329,15 +12416,18 @@ const onPhotoPicked = async (e) => {
     if (!apiKey) { toast("設定画面でGemini APIキーを登録してください"); return; }
     const rawWords = [];
     let failed = 0;
+    let quotaHit = null;
     for (const [i, file] of files.entries()) {
       if (label && files.length > 1) label.textContent = `${labelText}（${i + 1}/${files.length}）`;
       try {
         const dataUrl = await compressImageForRecognition(file);
         rawWords.push(...await recognizeWordsFromImage(dataUrl, apiKey));
       } catch (err) {
-        /* 1枚読めなくても、残りは読む。何枚だめだったかは最後にまとめて言う */
+        /* 1枚読めなくても、残りは読む。何枚だめだったかは最後にまとめて言う。
+           ただし上限に当たったのなら、続けても同じなのでそこで止める */
         console.error(err);
         failed++;
+        if (isQuotaError(err)) { quotaHit = err; break; }
       }
     }
     /* 認識精度は完璧ではないため、キューへ直接足さずテキスト欄に
@@ -12345,7 +12435,14 @@ const onPhotoPicked = async (e) => {
        同じ単語が何枚にも写っていても、ここで1つにまとまる */
     const words = parseBatchWordInput(rawWords.join("\n"));
     const note = failed ? `（${failed}枚は読み取れませんでした）` : "";
-    if (!words.length) {
+    if (quotaHit) {
+      /* 上限に当たったことが、読めた語があってもなくても分かるようにする */
+      toast(`${words.length ? `${words.length}語まで読めました。` : ""}${aiErrorMessage(quotaHit)}`);
+      if (words.length) {
+        const input = document.getElementById("batch-input");
+        input.value = input.value.trim() ? `${input.value.trim()}\n${words.join("\n")}` : words.join("\n");
+      }
+    } else if (!words.length) {
       toast(failed ? `画像の読み取りに失敗しました${note}` : "英単語を読み取れませんでした");
     } else {
       const input = document.getElementById("batch-input");
@@ -12355,7 +12452,10 @@ const onPhotoPicked = async (e) => {
     }
   } catch (err) {
     console.error(err);
-    toast(`画像の読み取りに失敗しました（${aiErrorMessage(err)}）`);
+    /* 上限のときは、長い案内を括弧に埋めると読みにくい。そのまま出す */
+    toast(isQuotaError(err)
+      ? `画像を読み取れませんでした。${aiErrorMessage(err)}`
+      : `画像の読み取りに失敗しました（${aiErrorMessage(err)}）`);
   }
   btn.disabled = false;
   progress.style.display = "none";
@@ -12477,7 +12577,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "267";
+const APP_BUILD = "270";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -12510,6 +12610,8 @@ refreshTtsAvailability();
 refreshGoroButtonSetting();
 /* 冊の選択は、一覧やプルダウンを描くより先に読んでおく */
 loadDeckState().then(refreshDeckSelects);
+/* 以前の版で入ってしまった、意味の取れていない札を一度だけ片付ける */
+purgeUnusableWords();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
