@@ -8804,19 +8804,20 @@ function deckOf(record) {
 }
 
 /* 以前の版では、意味が取れなかった語もそのまま単語帳へ入っていた。
-   読めない札が残り続けるので、一度だけ拾って消す */
+   一度きりの片付けだと、別の端末やクラウドから戻ってきたぶんが残って
+   しまうので、起動のたびと突き合わせのたびに拾って消す。
+   消したことは目印（deleted）として向こうにも伝わる */
 async function purgeUnusableWords() {
-  if (await kvGet("purged_unusable_words", false)) return;
   try {
     const broken = (await idbGetAll("words")).filter(isWordRecordUnusable);
+    if (!broken.length) return 0;
     for (const r of broken) await deleteWordRecord(r.id);
-    await kvSet("purged_unusable_words", true);
-    if (broken.length) {
-      toast(`意味を取得できていなかった${broken.length}語を単語帳から消しました`);
-      renderBookList();
-    }
+    toast(`意味を取得できていなかった${broken.length}語を単語帳から消しました`);
+    renderBookList();
+    return broken.length;
   } catch (err) {
     console.warn("意味の取れていない語を片付けられませんでした:", err);
+    return 0;
   }
 }
 
@@ -11429,6 +11430,8 @@ async function runCloudMerge({ quiet = false } = {}) {
     });
 
     updateOutboxStatus(Object.keys(await outboxAll()).length);
+    /* 向こうに残っていた読めない札を取り込んだままにしない */
+    await purgeUnusableWords();
     await probeCloudSchema();
     await refreshDeckSelects();
     renderBookList();
@@ -11987,7 +11990,9 @@ function batchRowToWordRecord(row, existing) {
     provider: row.result.provider,
     deck: existing ? deckOf(existing) : (row.deck || DEFAULT_DECK),
     memorized: existing ? existing.memorized : false,
-    created_at: existing ? existing.created_at : Date.now(),
+    /* 積んだときの時刻をそのまま使う。生成の終わった順ではなく、
+       入力に並んでいた順で単語帳に入るようにするため */
+    created_at: existing ? existing.created_at : (row.created_at || Date.now()),
   };
 }
 
@@ -11999,7 +12004,12 @@ async function addBatchWords(words) {
   const queued = new Set((await loadBatchQueue()).map((r) => r.id));
   const saved = await idbGetAll("words");
   let added = 0, copied = 0, skipped = 0;
-  for (const word of words) {
+  /* 渡された順（＝写真に写っていた順、貼り付けた順）をそのまま
+     並び順に移す。1語ごとに1ミリ秒ずらしておけば、写した語も
+     あとから作る語も、入力の順に並ぶ */
+  const base = Date.now();
+  for (const [index, word] of words.entries()) {
+    const orderAt = base + index;
     const id = wordCardId(word);
     if (queued.has(id)) { skipped++; continue; }
     const sameWord = saved.filter((r) => wordCardId(r.word) === id);
@@ -12008,7 +12018,7 @@ async function addBatchWords(words) {
     /* 別の冊にあるなら、作り直さずにその札をそのまま写す。
        同じ単語のために生成を待つ必要もAPIを呼ぶ必要もない */
     if (sameWord.length) {
-      const copy = { ...sameWord[0], id: wordCopyId(word), deck: batchDeck, created_at: Date.now() };
+      const copy = { ...sameWord[0], id: wordCopyId(word), deck: batchDeck, created_at: orderAt };
       await saveWordRecord(copy);
       saved.push(copy);
       copied++;
@@ -12016,7 +12026,7 @@ async function addBatchWords(words) {
     }
     /* 追加した時点の行き先を覚えておく。生成を待つ間に追加先を変えても、
        先に積んだぶんは積んだときの冊へ入る */
-    await putBatchRow({ id, word, deck: batchDeck, status: "pending", error: "", result: null, created_at: Date.now() });
+    await putBatchRow({ id, word, deck: batchDeck, status: "pending", error: "", result: null, created_at: orderAt });
     added++;
   }
   /* 「0語を追加（3語はコピー）」のような言い方をすると、うまくいったのに
@@ -12580,7 +12590,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "271";
+const APP_BUILD = "272";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
