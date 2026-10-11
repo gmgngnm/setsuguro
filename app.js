@@ -1595,11 +1595,19 @@ async function callAI(provider, apiKey, systemPrompt, userPrompt, temperature = 
 const MEANING_UNAVAILABLE = "（意味を取得できませんでした）";
 
 /* 意味が取れていない札。単語帳に置いても読めないので、入れない・残さない。
-   単語そのものの意味が空のものと、接辞の意味が取れなかったものを見る */
+   見るのは単語そのものの意味だけ。接辞のどれか1つの意味が埋まらなかった
+   札まで消すと、読める札まで巻き添えで消える（接辞の欠けは単語ページで
+   引き直せる程度のことなので、消す理由にはしない） */
 function isWordRecordUnusable(record) {
   if (!record) return true;
   const meaning = String(record.word_meaning || "").trim();
-  if (!meaning || meaning === MEANING_UNAVAILABLE) return true;
+  return !meaning || meaning === MEANING_UNAVAILABLE;
+}
+
+/* まとめ生成で単語帳へ入れるかどうかは、接辞の意味まで揃っているかで決める。
+   これから作るものには、欠けのないものだけを入れる */
+function isWordRecordIncomplete(record) {
+  if (isWordRecordUnusable(record)) return true;
   return (record.morphemes || []).some((m) => (m?.meaning || "") === MEANING_UNAVAILABLE);
 }
 
@@ -8809,8 +8817,15 @@ function deckOf(record) {
    消したことは目印（deleted）として向こうにも伝わる */
 async function purgeUnusableWords() {
   try {
-    const broken = (await idbGetAll("words")).filter(isWordRecordUnusable);
+    const all = await idbGetAll("words");
+    const broken = all.filter(isWordRecordUnusable);
     if (!broken.length) return 0;
+    /* 一度に大半が消えるのは、片付けの条件ではなく読み込みの方が
+       おかしいとき。巻き添えを増やさないよう、そこでは手を出さない */
+    if (all.length >= 20 && broken.length > all.length * 0.3) {
+      console.warn(`意味の無い札が${broken.length}/${all.length}語と多すぎるため、片付けを見送りました`);
+      return 0;
+    }
     for (const r of broken) await deleteWordRecord(r.id);
     toast(`意味を取得できていなかった${broken.length}語を単語帳から消しました`);
     renderBookList();
@@ -11279,7 +11294,37 @@ function localWordToCloudRow(w, deleted = false) {
 /* 通常の保存用のupsert。列が足りないプロジェクトでも保存が止まらないよう、
    新しい列名を言われるあいだは、その列を落として送り直す。列の数で
    頭打ちになるので回り続けることはない */
+/* 1回のやりとりで扱う行数。PostgRESTは、範囲を指定しないselectに
+   既定の上限（Supabaseでは1000行）を当てて、足りないまま成功を返す。
+   単語帳が1000語を超えると、超えたぶんが黙って届かないので、
+   読むときも送るときもこの大きさに区切る */
+const CLOUD_PAGE_SIZE = 500;
+
+/* 自分の単語を最後の1行まで読む。idで並べてから区切るので、
+   ページの境目で取りこぼしたり重なったりしない */
+async function cloudWordsFetchAll(sb) {
+  const out = [];
+  for (let from = 0; ; from += CLOUD_PAGE_SIZE) {
+    const { data, error } = await sb.from("words").select("*")
+      .eq("user_id", cloudUserId)
+      .order("id", { ascending: true })
+      .range(from, from + CLOUD_PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = data || [];
+    out.push(...rows);
+    if (rows.length < CLOUD_PAGE_SIZE) return out;
+  }
+}
+
 async function cloudWordsUpsert(records) {
+  /* まとめて送るときも区切る。1600語を1回のPOSTに積むと、
+     途中で断られたときにどれも入らない */
+  for (const chunk of chunkArray(records, CLOUD_PAGE_SIZE)) {
+    await cloudWordsUpsertChunk(chunk);
+  }
+}
+
+async function cloudWordsUpsertChunk(records) {
   for (let attempt = 0; attempt <= CLOUD_WORD_OPTIONAL_COLUMNS.length; attempt++) {
     const { error } = await supabaseClient.from("words").upsert(records.map((r) => localWordToCloudRow(r, false)));
     if (!error) return;
@@ -11327,7 +11372,7 @@ async function runCloudMerge({ quiet = false } = {}) {
     await flushCloudOutbox();
     await withCloudRetry(async () => {
       const [{ data: remoteWords, error: wErr }, { data: remoteRecentRow, error: rErr }, remoteDecks] = await Promise.all([
-        sb.from("words").select("*").eq("user_id", cloudUserId),
+        cloudWordsFetchAll(sb).then((data) => ({ data, error: null })),
         sb.from("recent_words").select("words").eq("user_id", cloudUserId).maybeSingle(),
         /* 表が無くても全体を止めない */
         cloudDecksSupported
@@ -12238,7 +12283,7 @@ async function runBatchGeneration() {
             };
             /* 意味が取れていない札は入れない。読めないものを単語帳に
                並べても仕方がないので、失敗として残して後から試し直す */
-            if (isWordRecordUnusable(batchRowToWordRecord(it.row, null))) {
+            if (isWordRecordIncomplete(batchRowToWordRecord(it.row, null))) {
               await markBatchFailed(it.row, "意味を取得できませんでした");
               continue;
             }
@@ -12595,7 +12640,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "274";
+const APP_BUILD = "275";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
