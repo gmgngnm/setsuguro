@@ -8811,31 +8811,6 @@ function deckOf(record) {
   return name || DEFAULT_DECK;
 }
 
-/* 以前の版では、意味が取れなかった語もそのまま単語帳へ入っていた。
-   一度きりの片付けだと、別の端末やクラウドから戻ってきたぶんが残って
-   しまうので、起動のたびと突き合わせのたびに拾って消す。
-   消したことは目印（deleted）として向こうにも伝わる */
-async function purgeUnusableWords() {
-  try {
-    const all = await idbGetAll("words");
-    const broken = all.filter(isWordRecordUnusable);
-    if (!broken.length) return 0;
-    /* 一度に大半が消えるのは、片付けの条件ではなく読み込みの方が
-       おかしいとき。巻き添えを増やさないよう、そこでは手を出さない */
-    if (all.length >= 20 && broken.length > all.length * 0.3) {
-      console.warn(`意味の無い札が${broken.length}/${all.length}語と多すぎるため、片付けを見送りました`);
-      return 0;
-    }
-    for (const r of broken) await deleteWordRecord(r.id);
-    toast(`意味を取得できていなかった${broken.length}語を単語帳から消しました`);
-    renderBookList();
-    return broken.length;
-  } catch (err) {
-    console.warn("意味の取れていない語を片付けられませんでした:", err);
-    return 0;
-  }
-}
-
 async function loadDeckState() {
   const shelf = await kvGet("deck_shelf", []);
   deckShelf = Array.isArray(shelf) ? shelf.filter((n) => typeof n === "string" && n.trim()) : [];
@@ -10523,6 +10498,7 @@ async function refreshChatModelList({ force = false } = {}) {
 }
 
 async function initSettingsScreen() {
+  updateOutboxStatus(Object.keys(await outboxAll()).length);
   activeProvider = await getActiveProvider();
   document.getElementById("api-key-input").value = await loadApiKey(activeProvider);
   await refreshUsageDisplay();
@@ -11480,8 +11456,6 @@ async function runCloudMerge({ quiet = false } = {}) {
     });
 
     updateOutboxStatus(Object.keys(await outboxAll()).length);
-    /* 向こうに残っていた読めない札を取り込んだままにしない */
-    await purgeUnusableWords();
     await probeCloudSchema();
     await refreshDeckSelects();
     renderBookList();
@@ -11727,7 +11701,14 @@ async function outboxDrop(ids) {
 }
 
 function updateOutboxStatus(pending) {
-  if (!cloudUserId) return;
+  /* つながっていないときに何も出さないと、同期しているつもりのまま
+     端末ごとに中身がずれていく。ここだけは必ず言う */
+  if (!cloudUserId) {
+    if (!cloudSyncConfigured()) { setSyncStatus(""); return; }
+    setSyncStatus("サインインしていないため同期していません", "error");
+    setSyncRetryVisible(false);
+    return;
+  }
   if (pending > 0) {
     setSyncStatus(`未送信の変更が${pending}件あります（自動で送り直します）`, "syncing");
     /* 待たずに自分で送り直したい人のために、再試行ボタンも出しておく */
@@ -12640,7 +12621,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "275";
+const APP_BUILD = "276";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -12673,8 +12654,6 @@ refreshTtsAvailability();
 refreshGoroButtonSetting();
 /* 冊の選択は、一覧やプルダウンを描くより先に読んでおく */
 loadDeckState().then(refreshDeckSelects);
-/* 以前の版で入ってしまった、意味の取れていない札を一度だけ片付ける */
-purgeUnusableWords();
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
    (スマホ版はキーボードが開いてしまい使い勝手が悪いためPC版のみ) */
 if (window.innerWidth >= 860) wordInput.focus();
