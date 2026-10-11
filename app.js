@@ -9036,8 +9036,9 @@ async function renderBookList() {
            シフトを押しながらなら、起点からここまでをまとめて選ぶ */
         if (bookSelecting && e && e.shiftKey) selectBookRange(r.id, shown);
         else if (bookSelecting) toggleBookSelection(r.id);
-        /* ページ送りは、いま画面に出ている並びをそのまま辿る */
-        else openWordDetail(r, shown, "book");
+        /* ページ送りは、絞り込む前の冊の全部を、いまの並び順のまま辿る。
+           絞り込んだぶんだけにすると、探して開いた1語から先へ進めない */
+        else openWordDetail(r, rows, "book");
       },
       () => enterBookSelection(r.id),
       r.morphemes || []);
@@ -12621,7 +12622,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "276";
+const APP_BUILD = "277";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
