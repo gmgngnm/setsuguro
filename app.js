@@ -8802,8 +8802,9 @@ async function toggleSaveWord() {
       /* 保存先は、結果画面で選んでいる冊 */
       deck: document.getElementById("result-deck-select")?.value || deckForNewWord(),
       memorized: existing ? existing.memorized : false,
-      /* 語呂を作り直して保存し直しても、付けてあった例文は残す */
+      /* 語呂を作り直して保存し直しても、付けてあった例文と復習の記録は残す */
       examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
+      srs: existing && existing.srs ? existing.srs : null,
       created_at: existing ? existing.created_at : Date.now(),
     });
     if (!(existing && Array.isArray(existing.examples) && existing.examples.length)) queueAutoExamples([id]);
@@ -10684,23 +10685,129 @@ document.getElementById("memorize-speech-toggle").addEventListener("click", asyn
   renderMemorizeSpeechToggle();
 });
 
-let memorizeRandomOrder = true;
-async function loadMemorizeRandomSetting() {
-  memorizeRandomOrder = await kvGet("memorize_random", true);
+/* 出題の順番。
+   srs（復習優先）… 覚えた度合いに合わせて、忘れかけたころに出す（下の「間隔反復」）
+   random       … しばらく出ていない語から、満遍なく
+   newest       … 追加の新しい順 */
+const MEMORIZE_ORDERS = ["srs", "random", "newest"];
+let memorizeOrder = "srs";
+async function loadMemorizeOrder() {
+  const saved = await kvGet("memorize_order", null);
+  if (MEMORIZE_ORDERS.includes(saved)) { memorizeOrder = saved; return; }
+  /* 前の版の「ランダムな順番で出題 オン／オフ」から引き継ぐ。オフにしていた
+     なら新しい順のまま。オンなら復習優先にする（ランダムの代わりに使ってほしい形） */
+  memorizeOrder = (await kvGet("memorize_random", true)) === false ? "newest" : "srs";
 }
-loadMemorizeRandomSetting();
+loadMemorizeOrder();
 
-function renderMemorizeRandomToggle() {
-  const btn = document.getElementById("memorize-random-toggle");
-  btn.textContent = memorizeRandomOrder ? "オン" : "オフ";
-  btn.classList.toggle("on", memorizeRandomOrder);
+function renderMemorizeOrderRow() {
+  document.querySelectorAll("#memorize-order-row .memorize-count-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.order === memorizeOrder);
+  });
+  renderMemorizeSrsNote();
 }
-document.getElementById("memorize-random-toggle").addEventListener("click", async (e) => {
-  e.stopPropagation();
-  memorizeRandomOrder = !memorizeRandomOrder;
-  await kvSet("memorize_random", memorizeRandomOrder);
-  renderMemorizeRandomToggle();
+document.querySelectorAll("#memorize-order-row .memorize-count-pill").forEach((pill) => {
+  pill.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    memorizeOrder = pill.dataset.order;
+    await kvSet("memorize_order", memorizeOrder);
+    renderMemorizeOrderRow();
+  });
 });
+
+/* 復習優先のときは、いまの単語帳で復習の時期が来ている語と、まだ一度も
+   判定していない語の数を添える。始める前に、今日どれだけあるか分かる */
+async function renderMemorizeSrsNote() {
+  const el = document.getElementById("memorize-srs-note");
+  if (!el) return;
+  if (memorizeOrder !== "srs") { el.hidden = true; return; }
+  let words = await idbGetAll("words");
+  if (currentDeck !== DECK_ALL) words = words.filter((w) => deckOf(w) === currentDeck);
+  const now = Date.now();
+  const due = words.filter((w) => w.srs && w.srs.due && w.srs.due <= now).length;
+  const fresh = words.filter((w) => !(w.srs && w.srs.due)).length;
+  el.textContent = `復習の時期 ${due}語 ・ まだ判定していない ${fresh}語`;
+  el.hidden = false;
+}
+
+/* ---- 間隔反復（忘れかけたころに復習する） ----
+   覚えた（左スワイプ・○）と答えるたびに、次に出すまでの間を広げる。
+   1日後、3日後、その次からは前の間隔の約2.5倍（7〜8日、19日、…）。
+   まだ（右スワイプ・✕）と答えたら間隔を最初に戻し、10分後には復習の
+   時期に入れる。その回のうちにも、数枚あとでもう一度出す。
+   よく間違える語は、伸ばす倍率（ease）も少しずつ下げ、間を詰めて出す。
+   予定より早く復習して覚えていたときは、実際に空いた日数ぶんしか
+   伸ばさない（早く見たから覚えていただけ、を長い間隔と取り違えない）。
+   日をまたぐ区切りは朝4時。夜中に学習しても「翌日」がすぐ来ないように */
+const DAY_MS = 86400000;
+const SRS_RELEARN_MS = 10 * 60 * 1000;
+const SRS_RELEARN_GAP = 5;
+const SRS_EASE_START = 2.5;
+const SRS_EASE_MIN = 1.3;
+const SRS_EASE_STEP = 0.2;
+const SRS_MAX_DAYS = 365;
+const SRS_DAY_START_HOUR = 4;
+
+function srsDueAt(now, days) {
+  if (days < 1) return now + days * DAY_MS;
+  const d = new Date(now);
+  if (d.getHours() < SRS_DAY_START_HOUR) d.setDate(d.getDate() - 1);
+  d.setHours(SRS_DAY_START_HOUR, 0, 0, 0);
+  d.setDate(d.getDate() + Math.round(days));
+  return d.getTime();
+}
+
+function srsAfter(prev, correct, now = Date.now()) {
+  const s = { reps: 0, ease: SRS_EASE_START, interval: 0, due: 0, last: 0, lapses: 0,
+    ...(prev && typeof prev === "object" ? prev : {}) };
+  const round2 = (x) => Math.round(x * 100) / 100;
+  if (!correct) {
+    return { reps: 0, ease: round2(Math.max(SRS_EASE_MIN, s.ease - SRS_EASE_STEP)), interval: 0,
+      due: now + SRS_RELEARN_MS, last: now, lapses: s.lapses + 1 };
+  }
+  let interval;
+  if (s.reps <= 0) interval = 1;
+  else if (s.reps === 1) interval = 3;
+  else {
+    const elapsed = s.last ? (now - s.last) / DAY_MS : s.interval;
+    interval = Math.max(s.interval, Math.min(elapsed, s.interval) * s.ease);
+  }
+  interval = round2(Math.min(SRS_MAX_DAYS, interval));
+  return { reps: s.reps + 1, ease: s.ease, interval, due: srsDueAt(now, interval), last: now, lapses: s.lapses };
+}
+
+/* 復習優先の並び。
+   1. 復習の時期が来ている語。予定の間隔に対して遅れが大きいものから
+   2. まだ一度も判定していない語（しばらく出ていない語から）
+   3. 時期がまだ先の語。時期の近いものから（出題数が多いときだけ届く） */
+function srsOrder(pool, now = Date.now()) {
+  const due = [], fresh = [], later = [];
+  for (const r of pool) {
+    if (!(r.srs && r.srs.due)) fresh.push(r);
+    else if (r.srs.due <= now) due.push(r);
+    else later.push(r);
+  }
+  const lateness = (r) => (now - r.srs.due) / Math.max(DAY_MS, (r.srs.interval || 0) * DAY_MS);
+  return [
+    ...shuffleCopy(due).sort((a, b) => lateness(b) - lateness(a)),
+    ...leastRecentFirst(fresh),
+    ...shuffleCopy(later).sort((a, b) => a.srs.due - b.srs.due),
+  ];
+}
+
+/* 「まだ」にした語を、その回のうちに数枚あとでもう一度出す。同じ語が
+   すでに後ろに控えていれば、そちらは外して入れ直す（何枚も溜まらない）。
+   もう一度出てきたカードには「もう一度」と添えるので、別の札として持つ */
+const memorizeRelearn = new WeakSet();
+function requeueForRelearn(record) {
+  for (let i = memorizeQueue.length - 1; i > memorizeIndex; i--) {
+    if (memorizeQueue[i].id === record.id) memorizeQueue.splice(i, 1);
+  }
+  const again = { ...record };
+  memorizeRelearn.add(again);
+  const at = Math.min(memorizeQueue.length, memorizeIndex + 1 + SRS_RELEARN_GAP);
+  memorizeQueue.splice(at, 0, again);
+}
 
 /* 自動再生モードの再生速度（表面表示→裏返し→次のカードへ進むまでの
    待ち時間の基準値を、この倍率で割ったものを実際の待ち時間として使う） */
@@ -10746,7 +10853,7 @@ function cancelMemorizeSeekBar() {
 
 const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
 document.getElementById("memorize-entry-btn").addEventListener("click", () => {
-  renderMemorizeRandomToggle();
+  renderMemorizeOrderRow();
   renderMemorizeCountRow();
   memorizeModeSheet.style.display = "flex";
 });
@@ -10789,11 +10896,11 @@ async function startMemorizeMode(mode = "all") {
   if (currentDeck !== DECK_ALL) words = words.filter((w) => deckOf(w) === currentDeck);
   await loadMemorizeSeen(words);
   const pool = uniqueByWord(mode === "unlearned" ? words.filter((w) => !w.memorized) : words);
-  memorizeQueue = memorizeRandomOrder
-    ? leastRecentFirst(pool)
+  memorizeQueue = memorizeOrder === "srs" ? srsOrder(pool)
+    : memorizeOrder === "random" ? leastRecentFirst(pool)
     : pool.sort((a, b) => b.created_at - a.created_at);
-  /* 出題数を決めていれば、そのぶんだけにする。ランダムなら、しばらく
-     出ていない語から選ばれるので、回を重ねるうちに全部の語が一巡する */
+  /* 出題数を決めていれば、そのぶんだけにする。復習優先なら時期の来た語から、
+     ランダムならしばらく出ていない語から選ばれるので、回を重ねても偏らない */
   if (memorizeCount > 0) memorizeQueue = memorizeQueue.slice(0, memorizeCount);
   memorizeIndex = 0;
   memorizeSessionAt = Date.now();
@@ -11001,7 +11108,9 @@ function renderMemorizeCard() {
 
   const card = document.getElementById("memorize-card");
   const cardInner = document.getElementById("memorize-card-inner");
-  card.classList.toggle("memorized-tag", !!record.memorized);
+  const relearn = memorizeRelearn.has(record);
+  card.classList.toggle("relearn-tag", relearn);
+  card.classList.toggle("memorized-tag", !!record.memorized && !relearn);
   /* 新しいカードに切り替える瞬間は、直前のカードのスワイプ/裏返しの状態を
      アニメーションなしで一旦リセットする */
   card.style.transition = "none";
@@ -11206,8 +11315,13 @@ async function classifyMemorizeCard(memorized) {
   const record = memorizeQueue[memorizeIndex];
   if (!record) return;
   clearMemorizeAutoTimer();
-  record.memorized = memorized;
-  await saveWordRecord(record);
+  /* 次に出す時期は、端末に保存してある最新の記録から計算する。前へで戻って
+     判定し直したときなどに、並びに持っている古い記録から数えない */
+  const latest = (await idbGet("words", record.id)) || record;
+  const srs = srsAfter(latest.srs, memorized);
+  Object.assign(record, { memorized, srs });
+  await saveWordRecord({ ...latest, memorized, srs });
+  if (!memorized && memorizeOrder === "srs") requeueForRelearn(record);
 
   const card = document.getElementById("memorize-card");
   card.style.transition = "transform .25s ease, opacity .25s ease";
@@ -11994,6 +12108,7 @@ const WORDS_COLUMN_SQL = {
   provider: "provider text",
   memorized: "memorized boolean default false",
   examples: "examples jsonb",
+  srs: "srs jsonb",
   deck: "deck text not null default '単語帳'",
   deleted: "deleted boolean not null default false",
   created_at: "created_at bigint",
@@ -12080,7 +12195,7 @@ async function withCloudRetry(fn, attempts = 3) {
 const CLOUD_WORD_OPTIONAL_COLUMNS = [
   "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
   "synonyms", "antonyms", "goro_text", "goro_highlight", "provider",
-  "memorized", "deck", "deleted", "created_at", "updated_at", "examples",
+  "memorized", "deck", "deleted", "created_at", "updated_at", "examples", "srs",
 ];
 
 /* 送っても弾かれると分かった列。1回の応答では1列しか分からないので、
@@ -12176,6 +12291,7 @@ function localWordToCloudRow(w, deleted = false) {
     goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
     provider: w.provider || "", memorized: !!w.memorized, deck: deckOf(w), deleted,
     examples: Array.isArray(w.examples) ? w.examples : [],
+    srs: w.srs && typeof w.srs === "object" ? w.srs : null,
     created_at: w.created_at || Date.now(), updated_at: w.updated_at || Date.now(),
   };
   for (const name of cloudMissingColumns) delete row[name];
@@ -12231,8 +12347,13 @@ function cloudRowToLocalWord(r, local = null) {
   const examples = ("examples" in r)
     ? (Array.isArray(r.examples) ? r.examples : [])
     : (local && Array.isArray(local.examples) ? local.examples : []);
+  /* 復習の記録も同じ。列の無いサーバーから読んで、手元の記録を消さない */
+  const srs = ("srs" in r)
+    ? (r.srs && typeof r.srs === "object" ? r.srs : null)
+    : (local && local.srs ? local.srs : null);
   return {
     examples,
+    srs,
     id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
     word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [],
     deck,
@@ -12942,6 +13063,7 @@ function batchRowToWordRecord(row, existing) {
     deck: existing ? deckOf(existing) : (row.deck || DEFAULT_DECK),
     memorized: existing ? existing.memorized : false,
     examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
+    srs: existing && existing.srs ? existing.srs : null,
     /* 積んだときの時刻をそのまま使う。生成の終わった順ではなく、
        入力に並んでいた順で単語帳に入るようにするため */
     created_at: existing ? existing.created_at : (row.created_at || Date.now()),
@@ -13544,7 +13666,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "286";
+const APP_BUILD = "287";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

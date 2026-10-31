@@ -38,6 +38,7 @@ create table public.words (
   provider text,
   memorized boolean default false,
   examples jsonb,
+  srs jsonb,
   deleted boolean not null default false,
   created_at bigint,
   updated_at bigint,
@@ -144,6 +145,20 @@ SQL Editorで以下を一度だけ実行する。
 ```sql
 alter table public.words
   add column if not exists examples jsonb;
+
+notify pgrst, 'reload schema';
+```
+
+### 既存プロジェクトへの追加（srs 列）
+
+暗記モードの「復習優先」で使う、単語ごとの復習の記録（次に出す時期、
+覚えた回数など）を持つ `srs` 列。無くてもアプリは止まらないが、復習の
+時期はその端末の中だけで決まり、他の端末には届かない。SQL Editorで
+以下を一度だけ実行する。
+
+```sql
+alter table public.words
+  add column if not exists srs jsonb;
 
 notify pgrst, 'reload schema';
 ```
