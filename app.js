@@ -3248,7 +3248,27 @@ if ("speechSynthesis" in window) {
   window.speechSynthesis.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
 }
 
-function speakWithBrowser(spoken, onEnd, lang) {
+/* iOS Safariは、利用者が押した流れの外で初めて呼ばれた読み上げを黙って捨てる。
+   暗記モードは、ボタンを押してから単語を読み込み終えた後で最初のカードを
+   読むので、必ずその「流れの外」になる。押された瞬間に無音の読み上げを
+   一度だけ通しておくと、それ以降は流れの外からでも読めるようになる */
+let browserSpeechPrimed = false;
+function primeBrowserSpeech() {
+  if (browserSpeechPrimed || !("speechSynthesis" in window)) return;
+  browserSpeechPrimed = true;
+  try {
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0;
+    window.speechSynthesis.speak(u);
+  } catch (err) {
+    console.warn("読み上げの準備に失敗しました:", err);
+  }
+}
+
+/* auto は、押されて読むのではなく、カードを出したついでに読むとき。
+   そういう読み上げが鳴らなかったことは知らせない。暗記モードを始める
+   たびに「読み上げられませんでした」と出ても、利用者には何もしようがない */
+function speakWithBrowser(spoken, onEnd, lang, auto = false) {
   if (!("speechSynthesis" in window)) { if (onEnd) onEnd(); return; }
   const synth = window.speechSynthesis;
   const u = new SpeechSynthesisUtterance(spoken);
@@ -3271,14 +3291,14 @@ function speakWithBrowser(spoken, onEnd, lang) {
   u.onend = finish;
   u.onerror = (e) => {
     console.warn("端末の音声で読み上げられませんでした:", e && e.error);
-    notifyTtsBrowserFailed();
+    if (!auto) notifyTtsBrowserFailed();
     finish();
   };
   /* 失敗の知らせすら来ず、始まりもしないまま黙って終わる端末がある。
      鳴り始めた気配が無ければ、こちらから切り上げる */
   u.onstart = () => { clearTimeout(startGuard); };
   startGuard = setTimeout(() => {
-    if (!synth.speaking && !synth.pending) { notifyTtsBrowserFailed(); finish(); }
+    if (!synth.speaking && !synth.pending) { if (!auto) notifyTtsBrowserFailed(); finish(); }
   }, 1500);
 
   /* 読み上げが止められたまま戻らないことがある。始める前に起こしておく */
@@ -3375,8 +3395,10 @@ async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
 
 /* 読み上げが完全に止まるより、声が変わってでも読まれる方がよいので、
    キー未設定・通信失敗・再生失敗のいずれでもブラウザ内蔵の合成に戻す。
-   onEndは自動再生の進行に使われるため、どの経路でも必ず呼ぶ */
-async function speak(text, onEnd, lang = "ja-JP") {
+   onEndは自動再生の進行に使われるため、どの経路でも必ず呼ぶ。
+   auto: true は、押されて読むのではなく画面を出したついでに読むとき。
+   失敗しても知らせを出さない（speakWithBrowser の説明を参照） */
+async function speak(text, onEnd, lang = "ja-JP", { auto = false } = {}) {
   stopSpeaking();
   const gen = ttsGeneration;
   const spoken = spokenTextOf(text);
@@ -3385,7 +3407,7 @@ async function speak(text, onEnd, lang = "ja-JP") {
   /* 端末の音声で読むと分かっているなら、ここで始める。この行までawaitが
      無いので、押した流れが続いたまま呼べる（既定は端末の音声なので、
      ふだん通るのはこちら） */
-  if (!ttsSpeakerAvailable) { speakWithBrowser(spoken, onEnd, lang); return; }
+  if (!ttsSpeakerAvailable) { speakWithBrowser(spoken, onEnd, lang, auto); return; }
 
   /* GeminiのTTSは多言語なので、英単語も日本語も同じ経路で読む
      （VOICEVOX時代は日本語専用だったため英語をブラウザ内蔵に固定していた） */
@@ -3394,7 +3416,7 @@ async function speak(text, onEnd, lang = "ja-JP") {
   const speaker = endpoint ? await kvGet("tts_speaker", TTS_SPEAKER_DEFAULT) : "";
   const apiKey = speaker ? await loadApiKey(provider) : "";
   if (gen !== ttsGeneration) { if (onEnd) onEnd(); return; }
-  if (!apiKey) { speakWithBrowser(spoken, onEnd, lang); return; }
+  if (!apiKey) { speakWithBrowser(spoken, onEnd, lang, auto); return; }
 
   try {
     const url = await fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken);
@@ -3404,17 +3426,17 @@ async function speak(text, onEnd, lang = "ja-JP") {
     audio.onended = () => { if (currentTtsAudio === audio) currentTtsAudio = null; if (onEnd) onEnd(); };
     audio.onerror = () => {
       if (currentTtsAudio === audio) currentTtsAudio = null;
-      speakWithBrowser(spoken, onEnd, lang);
+      speakWithBrowser(spoken, onEnd, lang, auto);
     };
     await audio.play();
   } catch (err) {
     console.warn("TTS playback failed, falling back to the browser voice:", err);
     if (currentTtsAudio) currentTtsAudio = null;
-    if (!ttsFallbackNotified) {
+    if (!auto && !ttsFallbackNotified) {
       ttsFallbackNotified = true;
       toast("読み上げに失敗したため端末の音声を使います");
     }
-    speakWithBrowser(spoken, onEnd, lang);
+    speakWithBrowser(spoken, onEnd, lang, auto);
   }
 }
 
@@ -10676,16 +10698,21 @@ document.addEventListener("pointerdown", (e) => {
   if (memorizeModeSheet.contains(e.target)) return;
   memorizeModeSheet.style.display = "none";
 });
+/* 押した流れのうちに読み上げを起こしておく（primeBrowserSpeech の説明を参照）。
+   startMemorizeMode の中では await を挟むので、そこでは間に合わない */
 document.getElementById("mode-btn-all").addEventListener("click", () => {
   memorizeModeSheet.style.display = "none";
+  primeBrowserSpeech();
   startMemorizeMode("all");
 });
 document.getElementById("mode-btn-unlearned").addEventListener("click", () => {
   memorizeModeSheet.style.display = "none";
+  primeBrowserSpeech();
   startMemorizeMode("unlearned");
 });
 document.getElementById("mode-btn-auto").addEventListener("click", () => {
   memorizeModeSheet.style.display = "none";
+  primeBrowserSpeech();
   startMemorizeMode("auto");
 });
 
@@ -10862,7 +10889,7 @@ function renderMemorizeCard() {
     cardInner.style.transition = "";
   });
 
-  if (memorizeSpeechOn) speak(record.word, null, "en-US");
+  if (memorizeSpeechOn) speak(record.word, null, "en-US", { auto: true });
 
   const autoplayBar = document.getElementById("memorize-autoplay-bar");
   if (memorizeAutoPlay) {
@@ -11005,7 +11032,7 @@ function revealMemorizeDetail() {
   if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
   if (memorizeSpeechOn && memorizeSettings.speech === "both" && record.word_meaning) {
-    speak(record.word_meaning);
+    speak(record.word_meaning, null, "ja-JP", { auto: true });
   }
   if (memorizeAutoPlay) {
     clearMemorizeAutoTimer();
@@ -11027,7 +11054,7 @@ function hideMemorizeDetail() {
   /* 接辞を踏まえた一文・語呂合わせは、一度裏返して表示させたら
      表に戻しても表示したままにしておく */
 
-  if (memorizeSpeechOn) speak(record.word, null, "en-US");
+  if (memorizeSpeechOn) speak(record.word, null, "en-US", { auto: true });
 
   scheduleMemorizeAutoPlay();
 }
@@ -13350,7 +13377,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "281";
+const APP_BUILD = "282";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
