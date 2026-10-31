@@ -37,6 +37,7 @@ create table public.words (
   goro_highlight jsonb,
   provider text,
   memorized boolean default false,
+  examples jsonb,
   deleted boolean not null default false,
   created_at bigint,
   updated_at bigint,
@@ -130,6 +131,19 @@ notify pgrst, 'reload schema';
 ```sql
 alter table public.words
   add column if not exists deck text not null default '単語帳';
+
+notify pgrst, 'reload schema';
+```
+
+### 既存プロジェクトへの追加（examples 列）
+
+単語ごとの例文（英文と日本語訳）を持つ `examples` 列。無くてもアプリは
+止まらないが、作った例文はその端末に留まり、他の端末には届かない。
+SQL Editorで以下を一度だけ実行する。
+
+```sql
+alter table public.words
+  add column if not exists examples jsonb;
 
 notify pgrst, 'reload schema';
 ```

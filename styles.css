@@ -610,6 +610,22 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .goro-generate-btn:active{transform:scale(.99);}
 .goro-generate-btn[hidden]{display:none;}
+/* 例文。英文を主に、訳は一段小さく添える。右端の読み上げボタンで英文を読む */
+.example-list{display:flex;flex-direction:column;gap:8px;}
+.example-list:empty{display:none;}
+.example-card{
+  display:flex;align-items:flex-start;gap:10px;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 12px 12px 16px;
+}
+.example-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+.example-en{font-size:14px;line-height:1.55;color:var(--ink);font-family:'JetBrains Mono',monospace;}
+.example-en b{color:var(--accent-ink);font-weight:700;}
+.example-ja{font-size:12.5px;line-height:1.6;color:var(--ink-soft);}
+.example-speak{
+  flex-shrink:0;width:32px;height:32px;border-radius:9px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink-soft);display:flex;align-items:center;justify-content:center;
+}
+.example-speak:active{transform:scale(.94);}
 
 /* Record book */
 /* 絞り込みと並び順は1行に並べる。どちらも一覧の見せ方を決めるもの */
