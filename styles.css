@@ -794,6 +794,17 @@ select:disabled{opacity:.5;cursor:default;}
   padding:5px 14px;font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink-faint);
 }
 .memorize-random-toggle.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+.memorize-count-row{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:0 2px 8px;font-size:13px;color:var(--ink);
+}
+.memorize-count-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+.memorize-count-pill{
+  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;
+  padding:5px 11px;font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink-faint);
+  font-variant-numeric:tabular-nums;
+}
+.memorize-count-pill.on{background:var(--accent);border-color:var(--accent);color:#fff;}
 .memorize-mode-btn{
   background:var(--surface-2);border:1px solid var(--line);border-radius:14px;
   padding:14px 16px;font-size:14px;font-family:'JetBrains Mono',monospace;font-weight:600;
@@ -805,8 +816,23 @@ select:disabled{opacity:.5;cursor:default;}
   font-size:12px;font-family:'JetBrains Mono',monospace;padding:6px 8px;text-align:center;
 }
 /* Memorize mode */
-#screen-memorize{justify-content:flex-start;align-items:stretch;padding-bottom:112px;}
-.memorize-progress{font-size:12px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;align-self:center;}
+/* マルバツを持ち上げたぶん、カードの下端がその陰に入らないよう下の余白も広げる */
+#screen-memorize{justify-content:flex-start;align-items:stretch;padding-bottom:calc(166px + env(safe-area-inset-bottom));}
+/* 戻るボタンの右の余りを、単語ページと同じ帯で埋める。読み上げボタンとの
+   あいだを空けないと、つまみを端まで寄せたときに指がボタンへかかる */
+.memorize-progress-bar{margin-right:6px;}
+.memorize-progress-bar[hidden]{display:none;}
+#screen-memorize .appbar{gap:14px;padding-bottom:18px;}
+/* 左右を続けて押して送るので、二度押しの拡大と文字選択が割り込まないようにする */
+#screen-memorize{touch-action:manipulation;user-select:none;-webkit-user-select:none;}
+/* 送り・戻しで差し替えたことが分かるよう、来た向きから少しだけ滑り込ませる */
+.memorize-card.step-in-right{animation:memorize-step-in-right .22s cubic-bezier(.22,1,.36,1);}
+.memorize-card.step-in-left{animation:memorize-step-in-left .22s cubic-bezier(.22,1,.36,1);}
+@keyframes memorize-step-in-right{from{transform:translateX(26px);opacity:.4;}to{transform:none;opacity:1;}}
+@keyframes memorize-step-in-left{from{transform:translateX(-26px);opacity:.4;}to{transform:none;opacity:1;}}
+@media (prefers-reduced-motion: reduce){
+  .memorize-card.step-in-right, .memorize-card.step-in-left{animation:none;}
+}
 .memorize-hint{font-size:11.5px;color:var(--ink-faint);text-align:center;font-family:'JetBrains Mono',monospace;}
 .memorize-empty{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -859,6 +885,14 @@ select:disabled{opacity:.5;cursor:default;}
 .memorize-detail{display:flex;flex-direction:column;align-items:stretch;gap:14px;width:100%;}
 .memorize-detail .word-meaning{align-self:stretch;}
 .memorize-detail .word-split{justify-content:center;}
+/* 裏面の類義語・対義語。カードの上では押しても飛ばないので、ボタンには見せない */
+.memorize-related{display:flex;flex-direction:column;gap:6px;align-items:center;}
+.memorize-related-line{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;}
+.memorize-related-line .lbl{
+  font-size:11px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-weight:700;margin-right:2px;
+}
+.memorize-related-line .chip{height:26px;padding:0 10px;font-size:12px;}
+.memorize-related-line .chip:active{transform:none;}
 .memorize-card.memorized-tag::after{
   content:"✓ 暗記済み";position:absolute;top:10px;right:14px;
   font-size:10.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;z-index:1;
@@ -869,8 +903,10 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .memorize-extra.show{opacity:1;transform:translateY(0);}
 @media (prefers-reduced-motion: reduce){ .memorize-extra{transition:none;} }
+/* 親指が届きやすい高さまで上げる。画面の下端ぎりぎりだと、iPhoneでは
+   ホームバーの操作と取り合いになる */
 .memorize-actions{
-  position:fixed;left:50%;bottom:34px;transform:translateX(-50%);
+  position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom));transform:translateX(-50%);
   display:flex;gap:24px;z-index:30;
 }
 .memorize-action-btn{
@@ -973,6 +1009,14 @@ select:disabled{opacity:.5;cursor:default;}
   background:none;border:1px solid var(--line);border-radius:999px;padding:7px 12px;
   font-size:11.5px;font-family:'JetBrains Mono',monospace;color:var(--ink-soft);flex-shrink:0;
 }
+/* 別の画面へ移る設定の入口。押すと先があることを、右端の山括弧で示す */
+.settings-link-btn{
+  display:flex;align-items:center;justify-content:space-between;
+  border-radius:12px;padding:13px 14px;font-size:13px;color:var(--ink);background:var(--surface);text-align:left;
+}
+.settings-link-btn span{color:var(--ink-faint);font-size:16px;line-height:1;}
+.mset-row{display:flex;flex-direction:column;gap:8px;}
+.mset-title{font-size:13px;color:var(--ink);}
 .sync-status{
   display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);
   font-family:'JetBrains Mono',monospace;padding:2px 2px;
