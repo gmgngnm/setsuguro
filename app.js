@@ -3426,14 +3426,16 @@ function showScreen(id) {
     memorizeAutoPlay = false;
     clearMemorizeAutoTimer();
   }
-  if (id === "screen-home") {
-    /* CSV出力/読み込みの選択シートや学習モードの選択シートを開いたままホームに
-       戻った場合、次に単語帳を開いた時などに開きっぱなしで残ってしまうため、
-       ホームに戻るタイミングで内部的に必ず閉じておく */
-    const csvSheet = document.getElementById("batch-csv-sheet");
-    if (csvSheet) csvSheet.style.display = "none";
-    const memorizeSheet = document.getElementById("memorize-mode-sheet");
-    if (memorizeSheet) memorizeSheet.style.display = "none";
+  /* 選択シートは画面の中に置いてあるので、画面を移ると見えなくなるだけで
+     開いたまま残る。ホームに戻るときだけ閉じていたころは、単語帳から
+     単語帳を選ぶ画面へ戻って開き直すと、学習モードのシートが出たままだった。
+     画面を移るときは必ず閉じる */
+  const leaving = document.querySelector(".screen.active");
+  if (!leaving || leaving.id !== id) {
+    for (const sheetId of ["batch-csv-sheet", "memorize-mode-sheet"]) {
+      const sheet = document.getElementById(sheetId);
+      if (sheet) sheet.style.display = "none";
+    }
   }
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
@@ -9970,26 +9972,29 @@ function exampleEnHtml(ex, word) {
   return escapeHtml(en);
 }
 
+/* 例文1組の札。単語ページと、暗記カードの裏の下で同じものを使う */
+function buildExampleCard(ex, word) {
+  const card = document.createElement("div");
+  card.className = "example-card";
+  card.innerHTML = `<div class="example-text"><span class="example-en" lang="en">${exampleEnHtml(ex, word)}</span>`
+    + `<span class="example-ja">${escapeHtml(ex.ja)}</span></div>`;
+  const speakBtn = document.createElement("button");
+  speakBtn.type = "button";
+  speakBtn.className = "example-speak";
+  speakBtn.title = "例文を読み上げる";
+  speakBtn.setAttribute("aria-label", speakBtn.title);
+  speakBtn.innerHTML = speakerIconHtml();
+  speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speak(ex.en, null, "en-US"); });
+  card.appendChild(speakBtn);
+  return card;
+}
+
 function renderWordDetailExamples(record) {
   const list = document.getElementById("word-detail-examples");
   if (!list) return;
   const examples = Array.isArray(record.examples) ? record.examples : [];
   list.innerHTML = "";
-  examples.forEach((ex) => {
-    const card = document.createElement("div");
-    card.className = "example-card";
-    card.innerHTML = `<div class="example-text"><span class="example-en" lang="en">${exampleEnHtml(ex, record.word)}</span>`
-      + `<span class="example-ja">${escapeHtml(ex.ja)}</span></div>`;
-    const speakBtn = document.createElement("button");
-    speakBtn.type = "button";
-    speakBtn.className = "example-speak";
-    speakBtn.title = "例文を読み上げる";
-    speakBtn.setAttribute("aria-label", speakBtn.title);
-    speakBtn.innerHTML = speakerIconHtml();
-    speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speak(ex.en, null, "en-US"); });
-    card.appendChild(speakBtn);
-    list.appendChild(card);
-  });
+  examples.forEach((ex) => list.appendChild(buildExampleCard(ex, record.word)));
   document.getElementById("word-detail-example-regen-btn").hidden = !examples.length;
   document.getElementById("word-detail-example-generate-btn").hidden = examples.length > 0;
 }
@@ -10501,8 +10506,9 @@ const MEMORIZE_SETTINGS_DEFAULT = {
   tapForwardOnly: false,  // 左右どちらを押しても次へ進む
   swipe: "light",         // 振り分けに要るスワイプの量
   frontSize: "m",         // 表の単語の大きさ
-  related: true,          // 裏面に類義語・対義語を出す
+  related: true,          // 裏返したらカードの下に類義語・対義語を出す
   speech: "both",         // 読み上げる面（表面だけ／両面）
+  actions: false,         // マルバツボタンを出す（既定は出さない。スワイプで振り分けられる）
 };
 /* スワイプの軽さごとの、振り分けに要る距離(px)。以前は90pxで、
    しっかり動かさないと振り分けられなかった */
@@ -10548,10 +10554,14 @@ document.getElementById("memorize-settings-btn").addEventListener("click", async
   showScreen("screen-memorize-settings");
 });
 
-/* 出題数。0 は「すべて」。始める前のシートで選び、次も同じ数で始まる */
+/* 出題数。0 は「すべて（∞）」。始める前のシートで選び、次も同じ数で始まる。
+   選択肢に無い数（前の版の20・30など）が残っていたら「すべて」に戻す。
+   どれも光っていないのに数だけ効いている、という状態を作らない */
+const MEMORIZE_COUNTS = [10, 25, 50, 100, 200, 0];
 let memorizeCount = 0;
 async function loadMemorizeCount() {
-  memorizeCount = Number(await kvGet("memorize_count", 0)) || 0;
+  const saved = Number(await kvGet("memorize_count", 0)) || 0;
+  memorizeCount = MEMORIZE_COUNTS.includes(saved) ? saved : 0;
 }
 loadMemorizeCount();
 function renderMemorizeCountRow() {
@@ -10657,6 +10667,13 @@ document.getElementById("memorize-entry-btn").addEventListener("click", () => {
   memorizeModeSheet.style.display = "flex";
 });
 document.getElementById("memorize-mode-close").addEventListener("click", () => {
+  memorizeModeSheet.style.display = "none";
+});
+/* シートの外を触ったら閉じる。単語帳の名前を入れるシートと同じ振る舞い。
+   開くのはクリックなので、開いた指の pointerdown でいきなり閉じることはない */
+document.addEventListener("pointerdown", (e) => {
+  if (memorizeModeSheet.style.display === "none") return;
+  if (memorizeModeSheet.contains(e.target)) return;
   memorizeModeSheet.style.display = "none";
 });
 document.getElementById("mode-btn-all").addEventListener("click", () => {
@@ -10803,8 +10820,10 @@ function renderMemorizeCard() {
   swipeEl.style.display = "block";
   /* 自動再生中はタップ/スワイプ操作の説明文は不要なので表示しない */
   hintEl.style.display = memorizeAutoPlay ? "none" : "block";
-  /* 自動再生中はマルバツボタンも表示しない */
-  actionsEl.style.display = memorizeAutoPlay ? "none" : "flex";
+  /* 自動再生中と、設定で消しているときはマルバツボタンを出さない */
+  const showActions = !memorizeAutoPlay && memorizeSettings.actions;
+  actionsEl.style.display = showActions ? "flex" : "none";
+  document.getElementById("screen-memorize").classList.toggle("no-actions", !showActions);
   syncMemorizeProgress();
 
   const record = memorizeQueue[memorizeIndex];
@@ -10828,6 +10847,8 @@ function renderMemorizeCard() {
 
   const detailEl = document.getElementById("memorize-detail");
   detailEl.innerHTML = "";
+  document.getElementById("memorize-face-back-content").style.transform = "";
+  document.getElementById("memorize-face-back").classList.remove("scrolling");
 
   const extraEl = document.getElementById("memorize-extra");
   extraEl.innerHTML = "";
@@ -10854,6 +10875,25 @@ function renderMemorizeCard() {
   }
 
   scheduleMemorizeAutoPlay();
+}
+
+/* 裏面の中身がカードに収まらないときは、カードを伸ばさずに中身を縮める。
+   6割より小さくすると読めないので、それでも収まらないほど長いときは
+   縮めずに裏面の中だけを縦に送れるようにする */
+const MEMORIZE_BACK_MIN_SCALE = 0.6;
+function fitMemorizeBack() {
+  const card = document.getElementById("memorize-card");
+  const face = document.getElementById("memorize-face-back");
+  const content = document.getElementById("memorize-face-back-content");
+  content.style.transform = "";
+  face.classList.remove("scrolling");
+  face.scrollTop = 0;
+  const room = parseFloat(card.style.height) || card.clientHeight;
+  const need = content.offsetHeight;
+  if (!room || need <= room) return;
+  const scale = room / need;
+  if (scale >= MEMORIZE_BACK_MIN_SCALE) content.style.transform = `scale(${scale})`;
+  else face.classList.add("scrolling");
 }
 
 /* カードの高さを表示中の面の実際のコンテンツ高さに合わせる。
@@ -10892,19 +10932,6 @@ function revealMemorizeDetail() {
     meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>`;
     detailEl.appendChild(meaningEl);
   }
-  /* 類義語・対義語は、意味のすぐ下に小さく。設定で消せる */
-  const synonyms = (record.synonyms || []).filter(Boolean);
-  const antonyms = (record.antonyms || []).filter(Boolean);
-  if (memorizeSettings.related && (synonyms.length || antonyms.length)) {
-    const relEl = document.createElement("div");
-    relEl.className = "memorize-related";
-    const line = (label, words) => words.length
-      ? `<div class="memorize-related-line"><span class="lbl">${label}</span>${
-        words.map((w) => `<span class="chip">${escapeHtml(w)}</span>`).join("")}</div>`
-      : "";
-    relEl.innerHTML = line("類義語", synonyms) + line("対義語", antonyms);
-    detailEl.appendChild(relEl);
-  }
 
   const splitEl = document.createElement("div");
   splitEl.className = "word-split";
@@ -10917,8 +10944,36 @@ function revealMemorizeDetail() {
   });
   detailEl.appendChild(splitEl);
 
+  /* カードの中は意味と接辞だけにして、類義語・対義語、覚え方、語呂合わせ、
+     例文はカードの下に並べる。カードの中に詰めると裏返すたびにカードが
+     伸び縮みして、下のものが押し下げられる */
   const extraEl = document.getElementById("memorize-extra");
   extraEl.innerHTML = "";
+  const synonyms = (record.synonyms || []).filter(Boolean);
+  const antonyms = (record.antonyms || []).filter(Boolean);
+  const chipRows = [];
+  if (memorizeSettings.related && (synonyms.length || antonyms.length)) {
+    const relEl = document.createElement("div");
+    relEl.className = "word-related-card";
+    for (const [label, list] of [["類義語", synonyms], ["対義語", antonyms]]) {
+      if (!list.length) continue;
+      const row = document.createElement("div");
+      row.className = "word-related-row";
+      row.innerHTML = `<span class="word-related-label">${label}</span>`;
+      const chips = document.createElement("div");
+      chips.className = "word-related-chips";
+      list.forEach((w) => {
+        const chip = document.createElement("span");
+        chip.className = "word-related-chip";
+        chip.textContent = w;
+        chips.appendChild(chip);
+      });
+      row.appendChild(chips);
+      relEl.appendChild(row);
+      chipRows.push(chips);
+    }
+    extraEl.appendChild(relEl);
+  }
   if (record.word_memory_tip) {
     const tipEl = document.createElement("div");
     tipEl.className = "memory-tip";
@@ -10932,11 +10987,20 @@ function revealMemorizeDetail() {
     goroCard.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     extraEl.appendChild(goroCard);
   }
+  const examples = Array.isArray(record.examples) ? record.examples : [];
+  if (examples.length) {
+    const listEl = document.createElement("div");
+    listEl.className = "example-list";
+    examples.forEach((ex) => listEl.appendChild(buildExampleCard(ex, record.word)));
+    extraEl.appendChild(listEl);
+  }
   const hasExtra = extraEl.children.length > 0;
   extraEl.style.display = hasExtra ? "flex" : "none";
+  /* 1行に収まらないチップは落とす（折り返して2行にしない） */
+  chipRows.forEach((chips) => fitRowChips(chips));
 
-  /* 裏面のコンテンツ高さに合わせてカードの高さを変化させつつ、裏返す */
-  resizeMemorizeCard(document.getElementById("memorize-face-back-content"));
+  /* 裏返してもカードの高さは表のまま。中身が多いときは縮めて収める */
+  fitMemorizeBack();
   document.getElementById("memorize-card").classList.add("flipped");
   if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
@@ -11049,12 +11113,17 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
   });
 })();
 
-/* カードの外側を押したら、押した側で前後へ。ボタンや帯、カードそのものは
-   それぞれの役目があるので除く。左右は画面の真ん中で分ける */
-document.getElementById("screen-memorize").addEventListener("click", (e) => {
+/* カードの外側を押したとき。表のときは裏返し、裏のときは押した側で前後へ
+   （表のまま次へ進むと、答えを見ないまま飛ばしてしまう）。
+   ボタンや帯、カードそのものはそれぞれの役目があるので除く。左右は画面の
+   真ん中で分ける。PCでは画面の左右に余白があるので、そこも拾えるよう
+   画面ではなく文書全体で受ける */
+document.addEventListener("click", (e) => {
   if (!memorizeSettings.sideTap) return;
+  if (!document.getElementById("screen-memorize").classList.contains("active")) return;
   if (!memorizeQueue.length || memorizeIndex >= memorizeQueue.length) return;
-  if (e.target.closest(".memorize-card, button, input, select, a, .appbar, .memorize-actions, .memorize-autoplay-bar, .memorize-empty")) return;
+  if (e.target.closest(".memorize-card, button, input, select, a, .appbar, .memorize-actions, .memorize-autoplay-bar, .memorize-empty, #toast")) return;
+  if (!memorizeRevealed) { revealMemorizeDetail(); return; }
   stepMemorizeByTap(e.clientX, 0, window.innerWidth);
 });
 
@@ -13281,7 +13350,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "280";
+const APP_BUILD = "281";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
