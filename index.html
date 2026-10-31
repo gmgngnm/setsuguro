@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#279</span>
+        <span class="build-tag" id="build-tag">#280</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -132,6 +132,7 @@
         <button class="icon-btn" id="book-select-btn" type="button" title="単語をまとめて選ぶ" aria-label="単語をまとめて選ぶ"><svg class="icon-svg icon-svg-pick" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 7 5 9 9 5"/><polyline points="3 17 5 19 9 15"/><line x1="13" y1="7" x2="21" y2="7"/><line x1="13" y1="17" x2="21" y2="17"/></svg></button>
         <button class="icon-btn" id="deck-edit-btn" type="button" title="この単語帳の名前を変更・削除する" aria-label="この単語帳を編集する" hidden><svg class="icon-svg icon-svg-edit" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
         <button class="icon-btn" id="batch-entry-btn" type="button" title="単語をまとめて登録・生成する" aria-label="単語をまとめて登録・生成する"><svg class="icon-svg icon-svg-add" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+        <button class="icon-btn" id="book-select-example-btn" type="button" title="選んだ単語に例文を付ける" aria-label="選んだ単語に例文を付ける" hidden><svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="13" y2="12"/></svg></button>
         <button class="icon-btn" id="book-select-move-btn" type="button" title="選んだ単語を別の単語帳へ移す" aria-label="選んだ単語を別の単語帳へ移す" hidden><svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></button>
         <button class="icon-btn icon-btn-danger" id="book-select-delete-btn" type="button" title="選んだ単語を消す" aria-label="選んだ単語を消す" hidden><svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
       </div>
@@ -207,6 +208,11 @@
     </div>
     <div class="goro-list" id="word-detail-goro"></div>
     <button class="goro-generate-btn" id="word-detail-goro-generate-btn" type="button" hidden>語呂合わせを作る</button>
+    <div class="section-label" style="margin-top:6px;" id="word-detail-example-section">
+      <span class="goro-label-group">例文<button class="regen-btn" id="word-detail-example-regen-btn" type="button" title="例文を作り直す" aria-label="例文を作り直す" hidden><svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></span>
+    </div>
+    <div class="example-list" id="word-detail-examples"></div>
+    <button class="goro-generate-btn" id="word-detail-example-generate-btn" type="button" hidden>例文を作る</button>
   </section>
 
   <!-- ============ SCREEN 05b: 同じ接辞を含む単語 ============ -->
@@ -341,6 +347,13 @@
       <button class="mode-pill on" data-saved-jump="off">分解から見る</button>
     </div>
     <div class="usage-note">単語帳にある単語は、分解の演出を飛ばしてそのまま単語ページを開けます。</div>
+
+    <div class="section-label" style="margin-top:6px;">単語を登録したときに例文も作る</div>
+    <div class="provider-row" id="example-auto-row">
+      <button class="mode-pill" data-example-auto="on">オン</button>
+      <button class="mode-pill on" data-example-auto="off">オフ</button>
+    </div>
+    <div class="usage-note">オンにすると、保存した単語に例文を2つずつ付けます（10語ごとに1回、Geminiを呼びます）。単語ページや、単語帳でまとめて選んだ単語からも作れます。</div>
 
     <div class="section-label" style="margin-top:6px;">暗記モード</div>
     <button class="btn-ghost settings-link-btn" id="memorize-settings-btn" type="button">暗記モード詳細設定<span aria-hidden="true">›</span></button>

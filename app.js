@@ -8724,8 +8724,11 @@ async function toggleSaveWord() {
       /* 保存先は、結果画面で選んでいる冊 */
       deck: document.getElementById("result-deck-select")?.value || deckForNewWord(),
       memorized: existing ? existing.memorized : false,
+      /* 語呂を作り直して保存し直しても、付けてあった例文は残す */
+      examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
       created_at: existing ? existing.created_at : Date.now(),
     });
+    if (!(existing && Array.isArray(existing.examples) && existing.examples.length)) queueAutoExamples([id]);
     /* ユーザーが良いと判断して保存した語呂合わせを、今後の①Few-shot例・
        ③マンネリ検出の材料として蓄積する。保存操作の成否には影響させない */
     loadApiKey(provider)
@@ -8907,6 +8910,9 @@ function deckForNewWord() {
    上の帯の選択ボタンからは0語で入るし、最後の1つを外しても
    やめるボタンを押すまでは抜けない（選び直しの途中で抜けると戻れない） */
 let bookSelection = new Set();
+/* 選んだ語に例文を作っている最中か。その間は上の帯に進み具合を出す */
+let bookExampleBusy = false;
+let bookBusyText = "";
 let bookSelecting = false;
 /* 一覧に単語が1つもないときは、選ぶボタンを出しても押せることがない */
 let bookHasRows = false;
@@ -8951,7 +8957,8 @@ function syncBookSelectionUi() {
   const edit = document.getElementById("deck-edit-btn");
   const del = document.getElementById("book-select-delete-btn");
   const move = document.getElementById("book-select-move-btn");
-  if (!stats || !back || !cancel || !add || !pick || !edit || !del || !move) return;
+  const example = document.getElementById("book-select-example-btn");
+  if (!stats || !back || !cancel || !add || !pick || !edit || !del || !move || !example) return;
 
   /* 上の帯は1行のまま。選んでいる間だけ、戻る→やめる、
      選ぶ・編集・追加→移す・削除に入れ替える */
@@ -8963,12 +8970,16 @@ function syncBookSelectionUi() {
   edit.hidden = selecting || currentDeck === DECK_ALL;
   del.hidden = !selecting;
   move.hidden = !selecting;
+  example.hidden = !selecting;
   /* 0語のまま押せると、何も起きないボタンになってしまう */
   del.disabled = !bookSelection.size;
   move.disabled = !bookSelection.size;
-  stats.textContent = selecting
+  /* 作っている最中に押し直すと、同じ語に二重に問い合わせる */
+  example.disabled = !bookSelection.size || bookExampleBusy;
+  /* 例文を作っている間は、その進み具合を見せる（選び終えて帯が戻っても出す） */
+  stats.textContent = bookBusyText || (selecting
     ? (bookSelection.size ? `${bookSelection.size}語を選択中` : "単語を選んでください")
-    : bookStatsText;
+    : bookStatsText);
   stats.classList.toggle("selecting", selecting);
 
   document.querySelectorAll("#book-list .book-row").forEach((row) => {
@@ -9820,6 +9831,7 @@ function openWordDetail(record, list = null, origin = null) {
   memoryTipEl.style.display = record.word_memory_tip ? "block" : "none";
 
   renderWordDetailGoro(record);
+  renderWordDetailExamples(record);
 
   showScreen("screen-word-detail");
 }
@@ -9876,6 +9888,289 @@ async function requestWordDetailGoro() {
 
 document.getElementById("word-detail-regen-btn").addEventListener("click", requestWordDetailGoro);
 document.getElementById("word-detail-goro-generate-btn").addEventListener("click", requestWordDetailGoro);
+
+/* ---- 例文 ----
+   単語1つにつき英文と訳を2組。単語ページで1語ずつ作れるほか、単語帳で
+   まとめて選んだ語にも付けられる。まとめて作るときは10語を1回の問い合わせに
+   束ねる（1語ずつ訊くと、語数ぶんだけ待ち時間と回数の上限を食う） */
+const EXAMPLES_PER_WORD = 2;
+const EXAMPLE_CHUNK = 10;
+
+function examplesSystemPrompt() {
+  return [
+    "あなたは英語の先生です。与えられた英単語それぞれについて、その単語を使った自然な英語の例文を作り、日本語訳を付けてください。",
+    `・1語につき例文を${EXAMPLES_PER_WORD}つ。2つは場面を変える。`,
+    "・括弧で示した日本語の意味で使う。意味が複数ある語は、示した意味を優先する。",
+    "・例文は8〜16語程度。実際によく使われる自然な文にし、難しすぎる語は避ける。",
+    "・見出しの単語は、文に合わせて活用させてよい（複数形・過去形・-ing形など）。",
+    "・used には、例文の中で実際に使った形を、例文に出てくるとおりの綴りで入れる。",
+    "・ja は自然な日本語訳。直訳調にしない。",
+    "・word には、渡された綴りをそのまま入れる。",
+    "出力は次のJSON形式のみを返し、それ以外の文章は書かないでください。",
+    '{"items":[{"word":"abandon","examples":[{"en":"They had to abandon the car in the deep snow.","ja":"彼らは深い雪の中で車を乗り捨てなければならなかった。","used":"abandon"}]}]}',
+  ].join("\n");
+}
+
+function examplesUserPrompt(records) {
+  return "単語:\n" + records.map((r) => {
+    const meaning = isWordRecordUnusable(r) ? "" : String(r.word_meaning || "").trim();
+    return `- ${r.word}${meaning ? `（${meaning}）` : ""}`;
+  }).join("\n");
+}
+
+/* 英文と訳がそろっているものだけを残す。多すぎても読まれないので3つまで */
+function cleanExamples(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((e) => ({
+      en: String(e?.en || "").trim(),
+      ja: String(e?.ja || "").trim(),
+      used: String(e?.used || "").trim(),
+    }))
+    .filter((e) => e.en && e.ja)
+    .slice(0, 3);
+}
+
+/* 単語（小文字）→ 例文。返ってこなかった語は入れない */
+async function requestExamples(records, provider, apiKey) {
+  const json = await callAI(provider, apiKey, examplesSystemPrompt(), examplesUserPrompt(records), 0.7, THINKING_MINIMAL);
+  const items = Array.isArray(json.items) ? json.items : [];
+  const byWord = new Map();
+  for (const it of items) {
+    const key = String(it?.word || "").trim().toLowerCase();
+    const ex = cleanExamples(it?.examples);
+    if (key && ex.length && !byWord.has(key)) byWord.set(key, ex);
+  }
+  /* 1語だけ訊いて、綴りを直して返してきたときも取りこぼさない */
+  if (records.length === 1 && !byWord.has(records[0].word.toLowerCase()) && items.length) {
+    const ex = cleanExamples(items[0]?.examples);
+    if (ex.length) byWord.set(records[0].word.toLowerCase(), ex);
+  }
+  return byWord;
+}
+
+function escapeRegExpText(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/* 例文の中の見出し語を太くする。活用していることがあるので、
+   AIが答えた「使った形」→ 見出し語そのもの → 語幹、の順に探す。
+   語の途中に当たらないよう、語の境目で区切って探す */
+function exampleEnHtml(ex, word) {
+  const en = ex.en;
+  const stem = String(word || "").toLowerCase().replace(/(e|y)$/, "");
+  const patterns = [ex.used, word].filter(Boolean)
+    .map((w) => new RegExp(`\\b${escapeRegExpText(w)}\\b`, "i"));
+  if (stem.length >= 3) patterns.push(new RegExp(`\\b${escapeRegExpText(stem)}[a-z]*`, "i"));
+  for (const re of patterns) {
+    const m = re.exec(en);
+    if (!m) continue;
+    const i = m.index;
+    return escapeHtml(en.slice(0, i)) + `<b>${escapeHtml(m[0])}</b>` + escapeHtml(en.slice(i + m[0].length));
+  }
+  return escapeHtml(en);
+}
+
+function renderWordDetailExamples(record) {
+  const list = document.getElementById("word-detail-examples");
+  if (!list) return;
+  const examples = Array.isArray(record.examples) ? record.examples : [];
+  list.innerHTML = "";
+  examples.forEach((ex) => {
+    const card = document.createElement("div");
+    card.className = "example-card";
+    card.innerHTML = `<div class="example-text"><span class="example-en" lang="en">${exampleEnHtml(ex, record.word)}</span>`
+      + `<span class="example-ja">${escapeHtml(ex.ja)}</span></div>`;
+    const speakBtn = document.createElement("button");
+    speakBtn.type = "button";
+    speakBtn.className = "example-speak";
+    speakBtn.title = "例文を読み上げる";
+    speakBtn.setAttribute("aria-label", speakBtn.title);
+    speakBtn.innerHTML = speakerIconHtml();
+    speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speak(ex.en, null, "en-US"); });
+    card.appendChild(speakBtn);
+    list.appendChild(card);
+  });
+  document.getElementById("word-detail-example-regen-btn").hidden = !examples.length;
+  document.getElementById("word-detail-example-generate-btn").hidden = examples.length > 0;
+}
+
+/* 作った例文を、いま開いている単語ページと、送り先の並びにも反映する。
+   並びの中の札は古いままなので、戻ってきたときに例文が消えて見える */
+function reflectExamplesOnScreen(updated) {
+  const byId = new Map(updated.map((r) => [r.id, r]));
+  wordDetailList = wordDetailList.map((r) => byId.get(r.id) || r);
+  if (currentWordDetailRecord && byId.has(currentWordDetailRecord.id)) {
+    currentWordDetailRecord = byId.get(currentWordDetailRecord.id);
+    renderWordDetailExamples(currentWordDetailRecord);
+  }
+}
+
+/* 指定した単語に例文を付ける。保存する直前に読み直すので、作っているあいだに
+   暗記済みにした・語呂を作り直した、といった変更を古い札で上書きしない。
+   途中で失敗したら、そこまでに付けた語数を添えて投げる */
+async function addExamplesToWords(ids, { onProgress } = {}) {
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) throw new Error("APIキーが設定されていません");
+  let done = 0, added = 0;
+  for (const chunk of chunkArray(ids, EXAMPLE_CHUNK)) {
+    try {
+      const records = (await Promise.all(chunk.map((id) => idbGet("words", id)))).filter(Boolean);
+      if (records.length) {
+        const byWord = await requestExamples(records, provider, apiKey);
+        const updated = [];
+        for (const r of records) {
+          const ex = byWord.get(r.word.toLowerCase());
+          if (!ex) continue;
+          const latest = (await idbGet("words", r.id)) || r;
+          updated.push({ ...latest, examples: ex });
+        }
+        if (updated.length) {
+          await saveWordRecords(updated);
+          reflectExamplesOnScreen(updated);
+        }
+        added += updated.length;
+      }
+    } catch (err) {
+      err.added = added;
+      throw err;
+    }
+    done += chunk.length;
+    if (onProgress) onProgress(done, ids.length);
+  }
+  return added;
+}
+
+async function requestWordDetailExamples() {
+  const record = currentWordDetailRecord;
+  if (!record) return;
+  const provider = await getActiveProvider();
+  const apiKey = await loadApiKey(provider);
+  if (!apiKey) {
+    homeError.textContent = "設定画面でAPIキーを登録してください";
+    showScreen("screen-settings");
+    refreshUsageDisplay();
+    return;
+  }
+  const regen = document.getElementById("word-detail-example-regen-btn");
+  const gen = document.getElementById("word-detail-example-generate-btn");
+  const had = Array.isArray(record.examples) && record.examples.length > 0;
+  regen.disabled = true;
+  gen.hidden = true;
+  reportGoroStatus("word-detail-examples", had ? "例文を作り直し中" : "例文を作成中");
+  try {
+    const byWord = await requestExamples([record], provider, apiKey);
+    const ex = byWord.get(record.word.toLowerCase());
+    if (!ex) throw new Error("例文が返ってきませんでした");
+    const latest = (await idbGet("words", record.id)) || record;
+    const next = { ...latest, examples: ex };
+    await saveWordRecord(next);
+    reflectExamplesOnScreen([next]);
+  } catch (err) {
+    console.error(err);
+    const message = `例文を作れませんでした（${aiErrorMessage(err)}）`;
+    if (currentWordDetailRecord && currentWordDetailRecord.id === record.id) {
+      /* 作り直しに失敗しただけなら、前の例文はそのまま見せておく */
+      if (had) { renderWordDetailExamples(currentWordDetailRecord); toast(message); }
+      else {
+        document.getElementById("word-detail-examples").innerHTML = `<div class="empty-note">${escapeHtml(message)}</div>`;
+        gen.hidden = false;
+      }
+    }
+  }
+  regen.disabled = false;
+}
+
+document.getElementById("word-detail-example-regen-btn").addEventListener("click", requestWordDetailExamples);
+document.getElementById("word-detail-example-generate-btn").addEventListener("click", requestWordDetailExamples);
+
+/* 単語を登録したときに例文も作るか。既定はオフ（Geminiを呼ぶ回数が増えるため） */
+async function isExampleAutoEnabled() {
+  return !!(await kvGet("example_auto", false));
+}
+
+/* 登録した語を少し溜めてから、まとめて作る。まとめ生成では1語ずつ保存が
+   続くので、すぐ走らせると1語ごとに問い合わせることになる */
+const exampleAutoQueue = new Set();
+let exampleAutoTimer = null;
+let exampleAutoRunning = false;
+const EXAMPLE_AUTO_DELAY_MS = 1500;
+
+async function queueAutoExamples(ids) {
+  if (!ids.length || !(await isExampleAutoEnabled())) return;
+  ids.forEach((id) => exampleAutoQueue.add(id));
+  clearTimeout(exampleAutoTimer);
+  exampleAutoTimer = setTimeout(runAutoExamples, EXAMPLE_AUTO_DELAY_MS);
+}
+
+async function runAutoExamples() {
+  if (exampleAutoRunning) {
+    exampleAutoTimer = setTimeout(runAutoExamples, EXAMPLE_AUTO_DELAY_MS);
+    return;
+  }
+  exampleAutoRunning = true;
+  try {
+    while (exampleAutoQueue.size) {
+      const ids = [...exampleAutoQueue].slice(0, EXAMPLE_CHUNK);
+      ids.forEach((id) => exampleAutoQueue.delete(id));
+      /* 待っているあいだに消された語・もう例文のある語は飛ばす */
+      const need = [];
+      for (const id of ids) {
+        const r = await idbGet("words", id);
+        if (r && !(Array.isArray(r.examples) && r.examples.length)) need.push(id);
+      }
+      if (need.length) await addExamplesToWords(need);
+    }
+  } catch (err) {
+    /* 保存そのものは済んでいる。例文だけ諦め、上限なら設定画面にも残す */
+    console.warn("例文を自動で作れませんでした:", err);
+    noteQuotaError(err);
+    exampleAutoQueue.clear();
+  } finally {
+    exampleAutoRunning = false;
+  }
+}
+
+/* 単語帳でまとめて選んだ語に例文を付ける。例文の無い語だけに付け、
+   選んだ語がすべて例文を持っていれば、作り直すかどうかを訊く */
+document.getElementById("book-select-example-btn").addEventListener("click", async () => {
+  if (!bookSelection.size || bookExampleBusy) return;
+  const rows = (await Promise.all([...bookSelection].map((id) => idbGet("words", id)))).filter(Boolean);
+  if (!rows.length) return;
+  let targets = rows.filter((r) => !(Array.isArray(r.examples) && r.examples.length));
+  if (!targets.length) {
+    if (!confirm(`選んだ${rows.length}語にはすべて例文があります。作り直しますか？`)) return;
+    targets = rows;
+  }
+  const provider = await getActiveProvider();
+  if (!(await loadApiKey(provider))) {
+    toast("設定画面でAPIキーを登録してください");
+    return;
+  }
+  const already = rows.length - targets.length;
+  bookExampleBusy = true;
+  bookBusyText = `例文を作成中 0/${targets.length}語`;
+  syncBookSelectionUi();
+  try {
+    const added = await addExamplesToWords(targets.map((r) => r.id), {
+      onProgress: (done, total) => { bookBusyText = `例文を作成中 ${done}/${total}語`; syncBookSelectionUi(); },
+    });
+    const missed = targets.length - added;
+    toast(`${added}語に例文を付けました`
+      + (already ? `（${already}語はすでにあったので飛ばしました）` : "")
+      + (missed ? `。${missed}語は作れませんでした` : ""));
+    clearBookSelection();
+  } catch (err) {
+    console.error(err);
+    const done = err.added ? `${err.added}語に付けたところで止まりました。` : "";
+    toast(`${done}例文を作れませんでした（${aiErrorMessage(err)}）`);
+  } finally {
+    bookExampleBusy = false;
+    bookBusyText = "";
+    syncBookSelectionUi();
+    if (document.getElementById("screen-book").classList.contains("active")) await renderBookList();
+  }
+});
 
 /* ---- 接辞タップ → 同じ接辞を含む単語一覧（マイ単語→AI検索の順） ---- */
 const RELATED_WORDS_TARGET = 20;
@@ -10866,6 +11161,11 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.savedJump === (savedJump ? "on" : "off"));
   });
 
+  const exampleAuto = await isExampleAutoEnabled();
+  document.querySelectorAll("#example-auto-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.exampleAuto === (exampleAuto ? "on" : "off"));
+  });
+
   const ragOn = await isRagEnabled();
   document.querySelectorAll("#rag-toggle-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.ragToggle === (ragOn ? "on" : "off"));
@@ -11001,6 +11301,13 @@ document.querySelectorAll("#saved-jump-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async () => {
     await kvSet("saved_jump", pill.dataset.savedJump === "on");
     document.querySelectorAll("#saved-jump-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+  });
+});
+
+document.querySelectorAll("#example-auto-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("example_auto", pill.dataset.exampleAuto === "on");
+    document.querySelectorAll("#example-auto-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
   });
 });
 
@@ -11423,6 +11730,7 @@ const WORDS_COLUMN_SQL = {
   goro_highlight: "goro_highlight jsonb",
   provider: "provider text",
   memorized: "memorized boolean default false",
+  examples: "examples jsonb",
   deck: "deck text not null default '単語帳'",
   deleted: "deleted boolean not null default false",
   created_at: "created_at bigint",
@@ -11509,7 +11817,7 @@ async function withCloudRetry(fn, attempts = 3) {
 const CLOUD_WORD_OPTIONAL_COLUMNS = [
   "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
   "synonyms", "antonyms", "goro_text", "goro_highlight", "provider",
-  "memorized", "deck", "deleted", "created_at", "updated_at",
+  "memorized", "deck", "deleted", "created_at", "updated_at", "examples",
 ];
 
 /* 送っても弾かれると分かった列。1回の応答では1列しか分からないので、
@@ -11604,6 +11912,7 @@ function localWordToCloudRow(w, deleted = false) {
     morphemes: w.morphemes || [], synonyms: w.synonyms || [], antonyms: w.antonyms || [],
     goro_text: w.goro_text || "", goro_highlight: w.goro_highlight || [],
     provider: w.provider || "", memorized: !!w.memorized, deck: deckOf(w), deleted,
+    examples: Array.isArray(w.examples) ? w.examples : [],
     created_at: w.created_at || Date.now(), updated_at: w.updated_at || Date.now(),
   };
   for (const name of cloudMissingColumns) delete row[name];
@@ -11655,7 +11964,12 @@ async function cloudWordsUpsertChunk(records) {
    手元で分けた単語帳がその場で消える（分け方はこちらにしか無い） */
 function cloudRowToLocalWord(r, local = null) {
   const deck = ("deck" in r) ? (r.deck || DEFAULT_DECK) : (local ? deckOf(local) : DEFAULT_DECK);
+  /* 例文も同じ。列の無いサーバーから読んだだけで、手元で作った例文を消さない */
+  const examples = ("examples" in r)
+    ? (Array.isArray(r.examples) ? r.examples : [])
+    : (local && Array.isArray(local.examples) ? local.examples : []);
   return {
+    examples,
     id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
     word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [],
     deck,
@@ -12364,6 +12678,7 @@ function batchRowToWordRecord(row, existing) {
     provider: row.result.provider,
     deck: existing ? deckOf(existing) : (row.deck || DEFAULT_DECK),
     memorized: existing ? existing.memorized : false,
+    examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
     /* 積んだときの時刻をそのまま使う。生成の終わった順ではなく、
        入力に並んでいた順で単語帳に入るようにするため */
     created_at: existing ? existing.created_at : (row.created_at || Date.now()),
@@ -12641,8 +12956,10 @@ async function runBatchGeneration() {
 /* 生成できた1語を単語帳へ保存し、キューから外す */
 async function saveGeneratedBatchRow(row, provider, apiKey) {
   const existing = await idbGet("words", wordCardId(row.result.word));
-  await saveWordRecord(batchRowToWordRecord(row, existing));
+  const record = batchRowToWordRecord(row, existing);
+  await saveWordRecord(record);
   await idbDelete(BATCH_STORE, row.id);
+  if (!record.examples.length) queueAutoExamples([record.id]);
   /* ユーザーが使うと判断した語呂を、今後のFew-shot例・マンネリ検出の
      材料として蓄積する。1語ずつ保存したときと同じ扱いにする */
   growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text,
@@ -12964,7 +13281,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "279";
+const APP_BUILD = "280";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
