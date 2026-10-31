@@ -1456,6 +1456,12 @@ async function refreshGoroButtonSetting() {
   goroButtonVisible = !!(await kvGet("goro_button", true));
 }
 
+/* 単語帳の一覧に語呂合わせを添えるか。既定は添えない（一覧は単語と意味を
+   拾い読みする場所なので、文が並ぶと目当ての語を探しにくくなる） */
+async function isBookGoroEnabled() {
+  return !!(await kvGet("book_goro", false));
+}
+
 function cosineSim(a, b) {
   let dot = 0, na = 0, nb = 0;
   const len = Math.min(a.length, b.length);
@@ -9059,6 +9065,7 @@ async function renderBookList() {
   let rows = await idbGetAll("words");
   if (currentDeck !== DECK_ALL) rows = rows.filter((r) => deckOf(r) === currentDeck);
   sortBookRows(rows);
+  const showGoro = await isBookGoroEnabled();
 
   const memorizedCount = rows.filter((r) => r.memorized).length;
   const memorizedPct = rows.length ? Math.round((memorizedCount / rows.length) * 100) : 0;
@@ -9100,7 +9107,8 @@ async function renderBookList() {
         else openWordDetail(r, rows, "book");
       },
       () => enterBookSelection(r.id),
-      r.morphemes || []);
+      r.morphemes || [],
+      showGoro ? String(r.goro_text || "") : null);
     listEl.appendChild(row);
   });
   syncBookSelectionUi();
@@ -10456,7 +10464,8 @@ function endPressSink() {
 const BOOK_LONGPRESS_MS = 500;
 const BOOK_LONGPRESS_SLOP = 10;
 
-function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes = []) {
+/* goro は、一覧に語呂合わせを添える設定のときだけ文字列で渡す（null なら行ごと出さない） */
+function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes = [], goro = null) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
   wrap.dataset.wordId = id;
@@ -10478,7 +10487,8 @@ function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes =
       <span class="row-check" aria-hidden="true"></span>
       <div class="row-text">
         <div class="w"><span class="word">${escapeHtml(title)}</span>${subHtml}</div>
-        <div class="a">${affixHtml}</div>
+        <div class="a">${affixHtml}</div>${goro === null ? "" : `
+        <div class="r">${escapeHtml(goro)}</div>`}
       </div>
       <div class="date">${dateStr}</div>
     </div>`;
@@ -11252,6 +11262,11 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.goroButton === (goroButtonVisible ? "on" : "off"));
   });
 
+  const bookGoro = await isBookGoroEnabled();
+  document.querySelectorAll("#book-goro-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.bookGoro === (bookGoro ? "on" : "off"));
+  });
+
   const savedJump = await isSavedJumpEnabled();
   document.querySelectorAll("#saved-jump-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.savedJump === (savedJump ? "on" : "off"));
@@ -11390,6 +11405,13 @@ document.querySelectorAll("#goro-button-row .mode-pill").forEach((pill) => {
     document.querySelectorAll("#goro-button-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
     /* 設定を変えたあとに単語ページへ戻っても、前のままにならないよう描き直す */
     if (currentWordDetailRecord) renderWordDetailGoro(currentWordDetailRecord);
+  });
+});
+
+document.querySelectorAll("#book-goro-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("book_goro", pill.dataset.bookGoro === "on");
+    document.querySelectorAll("#book-goro-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
   });
 });
 
@@ -13377,7 +13399,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "282";
+const APP_BUILD = "283";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

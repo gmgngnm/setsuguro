@@ -714,6 +714,15 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .book-row .a .m{color:var(--ink-soft);opacity:.85;}
 .book-row .a .sep{color:var(--accent);opacity:.65;margin:0 4px;}
+/* 一覧に添える語呂合わせ（設定で出したときだけ）。2行まで。
+   語呂の無い語でも2行ぶんの場所は取り、カードの高さを揃える。
+   右下の日付にかからないよう、右を空けておく */
+.book-row .r{
+  font-size:11.5px;line-height:1.5;color:var(--ink);opacity:.82;
+  margin-top:4px;padding-right:34px;min-height:3em;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;
+}
+.book-row .r:empty::before{content:"語呂合わせなし";color:var(--ink-faint);opacity:.7;font-size:10.5px;}
 /* 日付はカードの右下に小さく。読む順のいちばん最後に来るようにする */
 .book-row .date{
   position:absolute;right:12px;bottom:5px;
