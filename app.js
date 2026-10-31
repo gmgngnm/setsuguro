@@ -10787,11 +10787,16 @@ async function startMemorizeMode(mode = "all") {
   /* 単語帳の画面で見ている冊だけを出す。別の冊の語が混ざると、
      冊に分けた意味が無くなる */
   if (currentDeck !== DECK_ALL) words = words.filter((w) => deckOf(w) === currentDeck);
-  const pool = mode === "unlearned" ? words.filter((w) => !w.memorized) : words;
-  memorizeQueue = memorizeRandomOrder ? shuffleCopy(pool) : pool.sort((a, b) => b.created_at - a.created_at);
-  /* 出題数を決めていれば、そのぶんだけにする（ランダムなら毎回違う顔ぶれ） */
+  await loadMemorizeSeen(words);
+  const pool = uniqueByWord(mode === "unlearned" ? words.filter((w) => !w.memorized) : words);
+  memorizeQueue = memorizeRandomOrder
+    ? leastRecentFirst(pool)
+    : pool.sort((a, b) => b.created_at - a.created_at);
+  /* 出題数を決めていれば、そのぶんだけにする。ランダムなら、しばらく
+     出ていない語から選ばれるので、回を重ねるうちに全部の語が一巡する */
   if (memorizeCount > 0) memorizeQueue = memorizeQueue.slice(0, memorizeCount);
   memorizeIndex = 0;
+  memorizeSessionAt = Date.now();
   memorizeAutoPlay = mode === "auto";
   memorizeEmptyMessage = mode === "unlearned"
     ? "未学習のカードはありません"
@@ -10801,6 +10806,66 @@ async function startMemorizeMode(mode = "all") {
   renderMemorizeSpeechToggle();
   showScreen("screen-memorize");
   renderMemorizeCard();
+}
+
+/* ---- ランダム出題の偏りをなくす ----
+   以前は毎回、全体からその場で無作為に選んでいた。それだと前に何を
+   出したかを覚えていないので、50語を10語ずつ5回やっても出るのは
+   33語ほどで、残りは一度も出ず、そのぶん同じ語が何度も出た。
+   語ごとに「最後に出した回」を覚えておき、しばらく出ていない語から
+   順に出す。同じ回に出た語どうしの順番は毎回混ぜ直すので、前の回と
+   同じ並びをなぞることはない。
+   覚えるのは端末の中だけ（同期しない）。端末ごとに一巡すれば足りる */
+let memorizeSeen = null;
+let memorizeSessionAt = 0;
+let memorizeSeenSaveTimer = null;
+
+/* 保存してある記録を読むのは最初の1回だけ。そのあとは手元の方が新しい
+   （書き込みは少し遅らせているので、続けて始めると古い方を読んでしまう）。
+   消した語の記録は持ち越さない */
+async function loadMemorizeSeen(allWords) {
+  if (!memorizeSeen) {
+    const saved = await kvGet("memorize_seen", {});
+    memorizeSeen = {};
+    for (const [id, at] of Object.entries(saved && typeof saved === "object" ? saved : {})) {
+      if (Number.isFinite(at)) memorizeSeen[id] = at;
+    }
+  }
+  const alive = new Set(allWords.map((w) => w.id));
+  for (const id of Object.keys(memorizeSeen)) if (!alive.has(id)) delete memorizeSeen[id];
+}
+
+/* カードを出したら、その語は今回の回で出たことにする。カードを1枚
+   めくるたびに書き込むと重いので、少しまとめてから書く */
+function noteMemorizeSeen(id) {
+  if (!id || !memorizeSessionAt || !memorizeSeen) return;
+  memorizeSeen[id] = memorizeSessionAt;
+  clearTimeout(memorizeSeenSaveTimer);
+  memorizeSeenSaveTimer = setTimeout(() => {
+    kvSet("memorize_seen", memorizeSeen).catch((err) => console.warn("出題の記録を残せませんでした:", err));
+  }, 800);
+}
+
+/* まだ出していない語 → 前に出したのが古い回の語、の順。同じ回どうしは混ぜる */
+function leastRecentFirst(pool) {
+  return shuffleCopy(pool)
+    .map((r, i) => ({ r, at: (memorizeSeen && memorizeSeen[r.id]) || 0, i }))
+    .sort((a, b) => a.at - b.at || a.i - b.i)
+    .map((x) => x.r);
+}
+
+/* 「すべての単語」で見ると、別の単語帳に写した同じ単語が2枚入る。
+   1回の中で同じ単語を2度出さないよう、綴りで1枚にまとめる。
+   どちらを残すかは、しばらく出ていない方 */
+function uniqueByWord(pool) {
+  const byWord = new Map();
+  for (const r of pool) {
+    const key = String(r.word || "").trim().toLowerCase();
+    const kept = byWord.get(key);
+    const at = (id) => (memorizeSeen && memorizeSeen[id]) || 0;
+    if (!kept || at(r.id) < at(kept.id)) byWord.set(key, r);
+  }
+  return [...byWord.values()];
 }
 
 /* sort(() => Math.random() - 0.5) は偏るので、混ぜるのは Fisher–Yates で */
@@ -10932,6 +10997,7 @@ function renderMemorizeCard() {
 
   const record = memorizeQueue[memorizeIndex];
   memorizeRevealed = false;
+  noteMemorizeSeen(record.id);
 
   const card = document.getElementById("memorize-card");
   const cardInner = document.getElementById("memorize-card-inner");
@@ -13478,7 +13544,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "285";
+const APP_BUILD = "286";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
