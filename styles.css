@@ -1205,3 +1205,28 @@ select:disabled{opacity:.5;cursor:default;}
 
 /* 同期の状態の確認結果。原因ごとに直し方(SQL)まで出すので、
    コピーしやすいよう等幅で折り返さずに横スクロールさせる */
+
+/* 左下の戻るボタン（設定で出したときだけ）。親指の届く角に置く。
+   左上の戻るボタンの真下にそろえる。中身の列は最大480pxで、左上の
+   戻るボタンは列の端から36px（画面の空き18px＋帯の空き18px）の位置 */
+.float-back-btn{
+  position:fixed;z-index:35;
+  left:calc(max(0px, 50% - 240px) + 36px + env(safe-area-inset-left));
+  bottom:calc(20px + env(safe-area-inset-bottom));
+  width:48px;height:48px;border-radius:14px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--surface);color:var(--ink-soft);border:1px solid var(--line);box-shadow:var(--shadow);
+}
+.float-back-btn[hidden]{display:none;}
+.float-back-btn:active{transform:scale(.94);}
+.float-back-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+/* 結果画面は下に保存の帯があるので、その上へ逃がす */
+body.float-back-lift .float-back-btn{bottom:calc(84px + env(safe-area-inset-bottom));}
+/* 一番下まで送ったとき、最後の行の左端がボタンの陰に残らないよう下を空ける */
+body.float-back .screen{padding-bottom:calc(84px + env(safe-area-inset-bottom));}
+body.float-back #screen-result{padding-bottom:calc(148px + env(safe-area-inset-bottom));}
+body.float-back #screen-memorize.no-actions{padding-bottom:calc(84px + env(safe-area-inset-bottom));}
+@media (min-width: 860px){
+  /* 広い画面では中身の列が900pxに広がり、画面の空きも32pxになる（32＋18） */
+  .float-back-btn{left:calc(max(0px, 50% - 450px) + 50px);}
+}
