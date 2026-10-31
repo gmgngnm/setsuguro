@@ -10028,6 +10028,81 @@ function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes =
 /* ------------------------------------------------------------------ *
  * 11. 暗記モード（単語帳のカードをスワイプで暗記済み／未暗記に仕分け）
  * ------------------------------------------------------------------ */
+/* 暗記モードの細かい設定。設定画面の「暗記モード詳細設定」にまとめてある。
+   1つのまとまりとして持つので、項目が増えても読み書きの口は1つで済む */
+const MEMORIZE_SETTINGS_DEFAULT = {
+  sideTap: true,          // カードの外側の左右タップで前後へ
+  flippedTap: true,       // 裏返したあとはカードの左右タップでも前後へ
+  tapForwardOnly: false,  // 左右どちらを押しても次へ進む
+  swipe: "light",         // 振り分けに要るスワイプの量
+  frontSize: "m",         // 表の単語の大きさ
+  related: true,          // 裏面に類義語・対義語を出す
+  speech: "both",         // 読み上げる面（表面だけ／両面）
+};
+/* スワイプの軽さごとの、振り分けに要る距離(px)。以前は90pxで、
+   しっかり動かさないと振り分けられなかった */
+const MEMORIZE_SWIPE_PX = { feather: 28, light: 45, normal: 70, firm: 110 };
+const MEMORIZE_FRONT_PX = { s: 20, m: 26, l: 34, xl: 44 };
+let memorizeSettings = { ...MEMORIZE_SETTINGS_DEFAULT };
+
+async function loadMemorizeSettings() {
+  const saved = await kvGet("memorize_settings", {});
+  memorizeSettings = { ...MEMORIZE_SETTINGS_DEFAULT, ...(saved && typeof saved === "object" ? saved : {}) };
+}
+loadMemorizeSettings();
+
+async function setMemorizeSetting(key, value) {
+  memorizeSettings = { ...memorizeSettings, [key]: value };
+  await kvSet("memorize_settings", memorizeSettings);
+}
+
+/* 詳細設定の画面。pillの data-value は文字列なので、真偽値の項目だけ戻す */
+function renderMemorizeSettingsScreen() {
+  document.querySelectorAll("#screen-memorize-settings [data-mset]").forEach((row) => {
+    const key = row.dataset.mset;
+    const current = String(memorizeSettings[key]);
+    row.querySelectorAll(".mode-pill").forEach((p) => p.classList.toggle("on", p.dataset.value === current));
+  });
+}
+
+document.querySelectorAll("#screen-memorize-settings [data-mset]").forEach((row) => {
+  row.querySelectorAll(".mode-pill").forEach((pill) => {
+    pill.addEventListener("click", async () => {
+      const key = row.dataset.mset;
+      const raw = pill.dataset.value;
+      const value = raw === "true" ? true : raw === "false" ? false : raw;
+      await setMemorizeSetting(key, value);
+      renderMemorizeSettingsScreen();
+    });
+  });
+});
+
+document.getElementById("memorize-settings-btn").addEventListener("click", async () => {
+  await loadMemorizeSettings();
+  renderMemorizeSettingsScreen();
+  showScreen("screen-memorize-settings");
+});
+
+/* 出題数。0 は「すべて」。始める前のシートで選び、次も同じ数で始まる */
+let memorizeCount = 0;
+async function loadMemorizeCount() {
+  memorizeCount = Number(await kvGet("memorize_count", 0)) || 0;
+}
+loadMemorizeCount();
+function renderMemorizeCountRow() {
+  document.querySelectorAll("#memorize-count-row .memorize-count-pill").forEach((p) => {
+    p.classList.toggle("on", Number(p.dataset.count) === memorizeCount);
+  });
+}
+document.querySelectorAll("#memorize-count-row .memorize-count-pill").forEach((pill) => {
+  pill.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    memorizeCount = Number(pill.dataset.count) || 0;
+    await kvSet("memorize_count", memorizeCount);
+    renderMemorizeCountRow();
+  });
+});
+
 let memorizeQueue = [];
 let memorizeIndex = 0;
 let memorizeRevealed = false;
@@ -10113,6 +10188,7 @@ function cancelMemorizeSeekBar() {
 const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
 document.getElementById("memorize-entry-btn").addEventListener("click", () => {
   renderMemorizeRandomToggle();
+  renderMemorizeCountRow();
   memorizeModeSheet.style.display = "flex";
 });
 document.getElementById("memorize-mode-close").addEventListener("click", () => {
@@ -10141,22 +10217,85 @@ async function startMemorizeMode(mode = "all") {
      冊に分けた意味が無くなる */
   if (currentDeck !== DECK_ALL) words = words.filter((w) => deckOf(w) === currentDeck);
   const pool = mode === "unlearned" ? words.filter((w) => !w.memorized) : words;
-  memorizeQueue = memorizeRandomOrder ? pool.sort(() => Math.random() - 0.5) : pool.sort((a, b) => b.created_at - a.created_at);
+  memorizeQueue = memorizeRandomOrder ? shuffleCopy(pool) : pool.sort((a, b) => b.created_at - a.created_at);
+  /* 出題数を決めていれば、そのぶんだけにする（ランダムなら毎回違う顔ぶれ） */
+  if (memorizeCount > 0) memorizeQueue = memorizeQueue.slice(0, memorizeCount);
   memorizeIndex = 0;
   memorizeAutoPlay = mode === "auto";
   memorizeEmptyMessage = mode === "unlearned"
     ? "未学習のカードはありません"
     : (currentDeck === DECK_ALL ? "保存された単語がまだありません" : "この単語帳はまだ空です");
   memorizeSpeechOn = await kvGet("memorize_speech_on", true);
+  await loadMemorizeSettings();
   renderMemorizeSpeechToggle();
   showScreen("screen-memorize");
   renderMemorizeCard();
 }
 
+/* sort(() => Math.random() - 0.5) は偏るので、混ぜるのは Fisher–Yates で */
+function shuffleCopy(list) {
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/* 上の帯の進み具合。単語ページと同じ帯を使い、つまみで飛べるようにする */
+function syncMemorizeProgress(previewIndex = null) {
+  const row = document.getElementById("memorize-progress-row");
+  const range = document.getElementById("memorize-range");
+  const label = document.getElementById("memorize-progress-label");
+  if (!row || !range || !label) return;
+  const total = memorizeQueue.length;
+  if (!total || memorizeIndex >= total) { row.hidden = true; return; }
+  row.hidden = false;
+  const index = previewIndex === null ? memorizeIndex : previewIndex;
+  range.min = "1";
+  range.max = String(total);
+  if (previewIndex === null) range.value = String(memorizeIndex + 1);
+  const percent = total > 1 ? Math.round((index / (total - 1)) * 100) : 100;
+  range.style.setProperty("--fill", `${percent}%`);
+  label.textContent = `${index + 1} / ${total}`;
+}
+
+(function attachMemorizeProgress() {
+  const range = document.getElementById("memorize-range");
+  range.addEventListener("input", () => syncMemorizeProgress(Number(range.value) - 1));
+  range.addEventListener("change", () => {
+    const next = Number(range.value) - 1;
+    if (next === memorizeIndex || next < 0 || next >= memorizeQueue.length) { syncMemorizeProgress(); return; }
+    memorizeIndex = next;
+    renderMemorizeCard();
+  });
+})();
+
+/* 判定せずに前後のカードへ移る。前へ戻るのは先頭で止め、次へ進むのは
+   最後のカードの先（＝終わりの画面）まで行ける */
+function stepMemorizeCard(delta) {
+  if (!memorizeQueue.length) return;
+  const next = memorizeIndex + delta;
+  if (next < 0) return;
+  if (next > memorizeQueue.length) return;
+  clearMemorizeAutoTimer();
+  memorizeIndex = next;
+  renderMemorizeCard();
+  const card = document.getElementById("memorize-card");
+  card.classList.remove("step-in-left", "step-in-right");
+  void card.offsetWidth;
+  card.classList.add(delta > 0 ? "step-in-right" : "step-in-left");
+}
+
+/* 押した位置で前後を決める。左右どちらでも進む設定なら、いつも次へ */
+function stepMemorizeByTap(clientX, left, width) {
+  if (memorizeSettings.tapForwardOnly) { stepMemorizeCard(1); return; }
+  stepMemorizeCard(clientX < left + width / 2 ? -1 : 1);
+}
+
 function renderMemorizeCard() {
   const emptyEl = document.getElementById("memorize-empty");
   const swipeEl = document.getElementById("memorize-swipe");
-  const progressEl = document.getElementById("memorize-progress");
   const hintEl = document.getElementById("memorize-hint");
   const actionsEl = document.getElementById("memorize-actions");
 
@@ -10168,7 +10307,7 @@ function renderMemorizeCard() {
     swipeEl.style.display = "none";
     hintEl.style.display = "none";
     actionsEl.style.display = "none";
-    progressEl.textContent = "";
+    syncMemorizeProgress();
     return;
   }
   if (memorizeIndex >= memorizeQueue.length) {
@@ -10191,7 +10330,7 @@ function renderMemorizeCard() {
     swipeEl.style.display = "none";
     hintEl.style.display = "none";
     actionsEl.style.display = "none";
-    progressEl.textContent = "";
+    syncMemorizeProgress();
     return;
   }
 
@@ -10201,7 +10340,7 @@ function renderMemorizeCard() {
   hintEl.style.display = memorizeAutoPlay ? "none" : "block";
   /* 自動再生中はマルバツボタンも表示しない */
   actionsEl.style.display = memorizeAutoPlay ? "none" : "flex";
-  progressEl.textContent = `${memorizeIndex + 1} / ${memorizeQueue.length}`;
+  syncMemorizeProgress();
 
   const record = memorizeQueue[memorizeIndex];
   memorizeRevealed = false;
@@ -10220,6 +10359,7 @@ function renderMemorizeCard() {
 
   const wordEl = document.getElementById("memorize-word");
   wordEl.textContent = record.word;
+  wordEl.style.fontSize = `${MEMORIZE_FRONT_PX[memorizeSettings.frontSize] || MEMORIZE_FRONT_PX.m}px`;
 
   const detailEl = document.getElementById("memorize-detail");
   detailEl.innerHTML = "";
@@ -10287,6 +10427,20 @@ function revealMemorizeDetail() {
     meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>`;
     detailEl.appendChild(meaningEl);
   }
+  /* 類義語・対義語は、意味のすぐ下に小さく。設定で消せる */
+  const synonyms = (record.synonyms || []).filter(Boolean);
+  const antonyms = (record.antonyms || []).filter(Boolean);
+  if (memorizeSettings.related && (synonyms.length || antonyms.length)) {
+    const relEl = document.createElement("div");
+    relEl.className = "memorize-related";
+    const line = (label, words) => words.length
+      ? `<div class="memorize-related-line"><span class="lbl">${label}</span>${
+        words.map((w) => `<span class="chip">${escapeHtml(w)}</span>`).join("")}</div>`
+      : "";
+    relEl.innerHTML = line("類義語", synonyms) + line("対義語", antonyms);
+    detailEl.appendChild(relEl);
+  }
+
   const splitEl = document.createElement("div");
   splitEl.className = "word-split";
   (record.morphemes || []).forEach((m, i) => {
@@ -10321,7 +10475,7 @@ function revealMemorizeDetail() {
   document.getElementById("memorize-card").classList.add("flipped");
   if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
-  if (memorizeSpeechOn && record.word_meaning) {
+  if (memorizeSpeechOn && memorizeSettings.speech === "both" && record.word_meaning) {
     speak(record.word_meaning);
   }
   if (memorizeAutoPlay) {
@@ -10372,17 +10526,20 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
 (function attachMemorizeSwipe() {
   const card = document.getElementById("memorize-card");
   const revealEl = document.getElementById("memorize-reveal");
-  let startX = 0, dx = 0, dragging = false, moved = false;
-  const threshold = 90;
+  let startX = 0, dx = 0, dragging = false, moved = false, lastX = 0;
+  /* 振り分けに要る距離は設定で変えられる。押すたびに読むので、
+     設定を変えて戻ってきたらすぐ効く */
+  const threshold = () => MEMORIZE_SWIPE_PX[memorizeSettings.swipe] || MEMORIZE_SWIPE_PX.light;
   const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
 
   card.addEventListener("pointerdown", (e) => {
-    dragging = true; moved = false; startX = clientX(e); dx = 0;
+    dragging = true; moved = false; startX = clientX(e); lastX = startX; dx = 0;
     card.style.transition = "none";
   });
   card.addEventListener("pointermove", (e) => {
     if (!dragging) return;
-    dx = clientX(e) - startX;
+    lastX = clientX(e);
+    dx = lastX - startX;
     if (Math.abs(dx) > 6) moved = true;
     card.style.transform = `translateX(${dx}px) rotate(${dx / 24}deg)`;
     if (dx < 0) {
@@ -10398,7 +10555,7 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
   const onUp = () => {
     if (!dragging) return;
     dragging = false;
-    if (moved && Math.abs(dx) > threshold) {
+    if (moved && Math.abs(dx) > threshold()) {
       classifyMemorizeCard(dx < 0);
       return;
     }
@@ -10406,8 +10563,14 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
     card.style.transform = "translateX(0)";
     revealEl.classList.remove("reveal-left", "reveal-right");
     if (!moved) {
-      if (memorizeRevealed) hideMemorizeDetail();
-      else revealMemorizeDetail();
+      if (!memorizeRevealed) { revealMemorizeDetail(); return; }
+      /* 裏返したあとは、押した側で前後へ（設定で、表に戻すだけにもできる） */
+      if (memorizeSettings.flippedTap) {
+        const r = card.getBoundingClientRect();
+        stepMemorizeByTap(lastX, r.left, r.width);
+      } else {
+        hideMemorizeDetail();
+      }
     }
   };
   card.addEventListener("pointerup", onUp);
@@ -10420,6 +10583,15 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
     revealEl.classList.remove("reveal-left", "reveal-right");
   });
 })();
+
+/* カードの外側を押したら、押した側で前後へ。ボタンや帯、カードそのものは
+   それぞれの役目があるので除く。左右は画面の真ん中で分ける */
+document.getElementById("screen-memorize").addEventListener("click", (e) => {
+  if (!memorizeSettings.sideTap) return;
+  if (!memorizeQueue.length || memorizeIndex >= memorizeQueue.length) return;
+  if (e.target.closest(".memorize-card, button, input, select, a, .appbar, .memorize-actions, .memorize-autoplay-bar, .memorize-empty")) return;
+  stepMemorizeByTap(e.clientX, 0, window.innerWidth);
+});
 
 /* ------------------------------------------------------------------ *
  * 12. API設定画面
@@ -12622,7 +12794,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "277";
+const APP_BUILD = "278";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
