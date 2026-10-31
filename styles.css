@@ -1230,3 +1230,27 @@ body.float-back #screen-memorize.no-actions{padding-bottom:calc(84px + env(safe-
   /* 広い画面では中身の列が900pxに広がり、画面の空きも32pxになる（32＋18） */
   .float-back-btn{left:calc(max(0px, 50% - 450px) + 50px);}
 }
+
+/* 暗記モードの「前へ」。左下の角、左上の戻るボタンの真下にそろえる
+   （位置の決め方は左下の戻るボタンと同じ） */
+.memorize-prev-btn{
+  position:fixed;z-index:31;
+  left:calc(max(0px, 50% - 240px) + 36px + env(safe-area-inset-left));
+  bottom:calc(20px + env(safe-area-inset-bottom));
+  height:46px;padding:0 16px 0 10px;border-radius:999px;
+  display:flex;align-items:center;gap:4px;
+  background:var(--surface);color:var(--ink-soft);border:1px solid var(--line);box-shadow:var(--shadow);
+  font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;
+}
+.memorize-prev-btn[hidden]{display:none;}
+.memorize-prev-btn:active{transform:scale(.95);}
+.memorize-prev-btn:disabled{opacity:.4;}
+.memorize-prev-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+@media (min-width: 860px){
+  .memorize-prev-btn{left:calc(max(0px, 50% - 450px) + 50px);}
+}
+/* 「前へ」を出しているときは、一番下まで送っても陰に残らないよう下を空ける */
+#screen-memorize.has-prev.no-actions{padding-bottom:calc(84px + env(safe-area-inset-bottom));}
+/* 左下の戻るボタンも出しているときは、「前へ」の上へ一段逃がす */
+body.memorize-prev-shown .float-back-btn{bottom:calc(80px + env(safe-area-inset-bottom));}
+body.float-back.memorize-prev-shown #screen-memorize.no-actions{padding-bottom:calc(144px + env(safe-area-inset-bottom));}

@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#284</span>
+        <span class="build-tag" id="build-tag">#285</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -273,6 +273,9 @@
         <button class="memorize-action-btn wrong" id="memorize-btn-wrong" type="button" aria-label="未暗記にする"><svg class="icon-svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
     </div>
+    <!-- 前のカードへ戻る。判定はつけずに1枚戻る（詳細設定で消せる）。
+         終わりの画面からも最後のカードへ戻れるよう、カードの枠の外に置く -->
+    <button class="memorize-prev-btn" id="memorize-prev-btn" type="button" title="前のカードへ戻る" aria-label="前のカードへ戻る" hidden><svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg><span>前へ</span></button>
   </section>
 
   <!-- ============ SCREEN 07: API設定 ============ -->
@@ -459,6 +462,14 @@
       <div class="usage-note">前のカードへは戻らなくなります。片手で進めたいとき向け。</div>
     </div>
     <div class="mset-row">
+      <div class="mset-title">前のカードへ戻るボタン</div>
+      <div class="provider-row" data-mset="prevButton">
+        <button class="mode-pill" data-value="true">表示</button>
+        <button class="mode-pill" data-value="false">非表示</button>
+      </div>
+      <div class="usage-note">左下に出します。暗記済み・未暗記はつけずに1枚戻ります。</div>
+    </div>
+    <div class="mset-row">
       <div class="mset-title">マルバツボタン</div>
       <div class="provider-row" data-mset="actions">
         <button class="mode-pill" data-value="true">表示</button>
@@ -494,6 +505,13 @@
         <button class="mode-pill" data-value="false">非表示</button>
       </div>
       <div class="usage-note">カードの下に、1行に収まる分だけ出します。</div>
+    </div>
+    <div class="mset-row">
+      <div class="mset-title">裏返したときの語呂合わせ</div>
+      <div class="provider-row" data-mset="goro">
+        <button class="mode-pill" data-value="true">表示</button>
+        <button class="mode-pill" data-value="false">非表示</button>
+      </div>
     </div>
 
     <div class="section-label" style="margin-top:6px;">読み上げ</div>
