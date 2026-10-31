@@ -2,6 +2,10 @@
 
 const ICON_VOLUME_ON = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>';
 const ICON_VOLUME_OFF = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>';
+/* 左下の戻るボタンを出すか（設定）。画面の切り替えのたびに読むので、
+   どこから先に呼ばれても困らないよう、いちばん上で持っておく */
+let floatBackEnabled = false;
+
 function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
@@ -3449,6 +3453,45 @@ async function speak(text, onEnd, lang = "ja-JP", { auto = false } = {}) {
 /* ------------------------------------------------------------------ *
  * 6. 画面遷移
  * ------------------------------------------------------------------ */
+/* ---- 左下の戻るボタン ----
+   画面ごとに戻り先や後始末が違う（単語帳へ戻るときは絞り込みを残す、など）
+   ので、こちらで戻り先を持たず、いま開いている画面の左上の戻るボタンを
+   そのまま押す。左上に戻るボタンが見えていない画面（ホーム、単語を
+   選んでいる最中など）では出さない */
+function currentBackButton() {
+  const screen = document.querySelector(".screen.active");
+  const bar = screen && screen.querySelector(".appbar");
+  if (!bar) return null;
+  return [...bar.querySelectorAll("button")].find((b) => !b.hidden && b.getClientRects().length
+    && (b.querySelector(".icon-svg-back") || b.title === "閉じる")) || null;
+}
+
+function syncFloatBack() {
+  const btn = document.getElementById("float-back-btn");
+  if (!btn) return;
+  const target = floatBackEnabled ? currentBackButton() : null;
+  btn.hidden = !target;
+  if (target) {
+    btn.title = target.title || "戻る";
+    btn.setAttribute("aria-label", btn.title);
+  }
+  document.body.classList.toggle("float-back", floatBackEnabled);
+  /* 結果画面は下に保存の帯がある */
+  document.body.classList.toggle("float-back-lift",
+    !!target && document.getElementById("screen-result").classList.contains("active"));
+}
+
+async function loadFloatBackSetting() {
+  floatBackEnabled = !!(await kvGet("float_back", false));
+  syncFloatBack();
+}
+
+document.getElementById("float-back-btn").addEventListener("click", () => {
+  const target = currentBackButton();
+  if (target) target.click();
+});
+loadFloatBackSetting();
+
 function showScreen(id) {
   if (id !== "screen-memorize" && memorizeAutoPlay) {
     memorizeAutoPlay = false;
@@ -3467,6 +3510,7 @@ function showScreen(id) {
   }
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
+  syncFloatBack();
   /* 画面切り替え時、前の画面のスクロール位置が残ってしまうことがあるため、
      常にページ最上部から表示されるようにする */
   window.scrollTo(0, 0);
@@ -9006,6 +9050,8 @@ function syncBookSelectionUi() {
   move.disabled = !bookSelection.size;
   /* 作っている最中に押し直すと、同じ語に二重に問い合わせる */
   example.disabled = !bookSelection.size || bookExampleBusy;
+  /* 選んでいる間は左上の戻るボタンが「やめる」に替わるので、左下も合わせる */
+  syncFloatBack();
   /* 例文を作っている間は、その進み具合を見せる（選び終えて帯が戻っても出す） */
   stats.textContent = bookBusyText || (selecting
     ? (bookSelection.size ? `${bookSelection.size}語を選択中` : "単語を選んでください")
@@ -11262,6 +11308,10 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.goroButton === (goroButtonVisible ? "on" : "off"));
   });
 
+  document.querySelectorAll("#float-back-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.floatBack === (floatBackEnabled ? "on" : "off"));
+  });
+
   const bookGoro = await isBookGoroEnabled();
   document.querySelectorAll("#book-goro-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.bookGoro === (bookGoro ? "on" : "off"));
@@ -11405,6 +11455,14 @@ document.querySelectorAll("#goro-button-row .mode-pill").forEach((pill) => {
     document.querySelectorAll("#goro-button-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
     /* 設定を変えたあとに単語ページへ戻っても、前のままにならないよう描き直す */
     if (currentWordDetailRecord) renderWordDetailGoro(currentWordDetailRecord);
+  });
+});
+
+document.querySelectorAll("#float-back-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("float_back", pill.dataset.floatBack === "on");
+    document.querySelectorAll("#float-back-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+    await loadFloatBackSetting();
   });
 });
 
@@ -13399,7 +13457,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "283";
+const APP_BUILD = "284";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

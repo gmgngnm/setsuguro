@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#283</span>
+        <span class="build-tag" id="build-tag">#284</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -356,6 +356,13 @@
     </div>
     <div class="usage-note">単語帳にある単語は、分解の演出を飛ばしてそのまま単語ページを開けます。</div>
 
+    <div class="section-label" style="margin-top:6px;">左下の戻るボタン</div>
+    <div class="provider-row" id="float-back-row">
+      <button class="mode-pill" data-float-back="on">表示</button>
+      <button class="mode-pill on" data-float-back="off">非表示</button>
+    </div>
+    <div class="usage-note">片手で届きやすいよう、左上の戻るボタンと同じものを左下にも出します。</div>
+
     <div class="section-label" style="margin-top:6px;">単語を登録したときに例文も作る</div>
     <div class="provider-row" id="example-auto-row">
       <button class="mode-pill" data-example-auto="on">オン</button>
@@ -576,6 +583,10 @@
   </div>
   <div class="deck-name-error" id="deck-name-error" hidden></div>
 </div>
+
+<!-- 左下の戻るボタン（設定で出したときだけ）。押すと、いま開いている画面の
+     左上の戻るボタンと同じことをする -->
+<button class="float-back-btn" id="float-back-btn" type="button" title="戻る" aria-label="戻る" hidden><svg class="icon-svg icon-svg-back" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
 
 <script src="app.js"></script>
 </body>
