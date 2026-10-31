@@ -3510,6 +3510,10 @@ function showScreen(id) {
   }
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
+  /* 暗記モードの「前へ」は暗記モードの画面にだけある。ほかの画面では
+     左下の戻るボタンを元の高さへ戻す */
+  document.body.classList.toggle("memorize-prev-shown",
+    id === "screen-memorize" && !document.getElementById("memorize-prev-btn").hidden);
   syncFloatBack();
   /* 画面切り替え時、前の画面のスクロール位置が残ってしまうことがあるため、
      常にページ最上部から表示されるようにする */
@@ -10587,6 +10591,8 @@ const MEMORIZE_SETTINGS_DEFAULT = {
   related: true,          // 裏返したらカードの下に類義語・対義語を出す
   speech: "both",         // 読み上げる面（表面だけ／両面）
   actions: false,         // マルバツボタンを出す（既定は出さない。スワイプで振り分けられる）
+  prevButton: true,       // 左下に「前へ」（前のカードへ戻る）を出す
+  goro: true,             // 裏返したらカードの下に語呂合わせを出す
 };
 /* スワイプの軽さごとの、振り分けに要る距離(px)。以前は90pxで、
    しっかり動かさないと振り分けられなかった */
@@ -10858,7 +10864,22 @@ function stepMemorizeByTap(clientX, left, width) {
   stepMemorizeCard(clientX < left + width / 2 ? -1 : 1);
 }
 
+/* 左下の「前へ」。設定で出していて、戻れるカードがあるときだけ押せる。
+   終わりの画面でも出す（最後のカードを見直したいことがある） */
+function syncMemorizePrevButton() {
+  const btn = document.getElementById("memorize-prev-btn");
+  const screen = document.getElementById("screen-memorize");
+  const shown = !!memorizeSettings.prevButton && memorizeQueue.length > 0;
+  btn.hidden = !shown;
+  btn.disabled = memorizeIndex <= 0;
+  screen.classList.toggle("has-prev", shown);
+  document.body.classList.toggle("memorize-prev-shown", shown && screen.classList.contains("active"));
+}
+
+document.getElementById("memorize-prev-btn").addEventListener("click", () => stepMemorizeCard(-1));
+
 function renderMemorizeCard() {
+  syncMemorizePrevButton();
   const emptyEl = document.getElementById("memorize-empty");
   const swipeEl = document.getElementById("memorize-swipe");
   const hintEl = document.getElementById("memorize-hint");
@@ -11064,7 +11085,7 @@ function revealMemorizeDetail() {
     extraEl.appendChild(tipEl);
   }
 
-  if (record.goro_text) {
+  if (record.goro_text && memorizeSettings.goro) {
     const goroCard = document.createElement("div");
     goroCard.className = "goro-card";
     goroCard.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
@@ -13457,7 +13478,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "284";
+const APP_BUILD = "285";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
