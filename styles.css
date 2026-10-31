@@ -755,6 +755,27 @@ select:disabled{opacity:.5;cursor:default;}
   font-size:11.5px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;flex-shrink:0;
 }
 .deck-card:active{transform:scale(.98);}
+/* 並べ替えのつまみ。ふだんは出さない */
+.deck-grip{display:none;}
+.deck-pick-list.reordering .deck-grip{
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  width:40px;height:40px;margin:-10px -10px -10px 0;border-radius:10px;
+  color:var(--ink-faint);cursor:grab;
+  /* つまみの上だけは、指の上下を一覧の送りではなく札の移動に使う */
+  touch-action:none;
+}
+.deck-pick-list.reordering .deck-card{cursor:default;}
+.deck-pick-list.reordering .deck-card:active{transform:none;}
+.deck-pick-list.reordering .deck-card .c{margin-left:auto;}
+/* つまんでいる札は、ほかの札より手前に浮かせる。指に付いてくるので
+   位置の移り変わりは付けない（付けると指から遅れる） */
+.deck-pick-list .deck-card.dragging{
+  position:relative;z-index:5;transition:none;
+  box-shadow:var(--shadow);border-color:var(--accent);
+}
+.deck-pick-list .deck-card.dragging .deck-grip{color:var(--accent-ink);cursor:grabbing;}
+/* 並べ替えの最中であることを、ボタンの色でも示す */
+#deck-reorder-btn.on{background:var(--accent);border-color:var(--accent);color:#fff;}
 
 /* 単語帳の名前を入れる欄。押す言葉は欄の右横に並べる */
 .deck-name-row{display:flex;align-items:stretch;gap:8px;}

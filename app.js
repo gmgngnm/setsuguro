@@ -3461,6 +3461,8 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
     }
     if (target === "decks") {
       showScreen("screen-decks");
+      /* 前に並べ替えの途中で離れていても、開き直したらふだんの一覧に戻す */
+      setDeckReordering(false);
       renderDeckPicker();
       /* 冊の数や並びも別の端末で変わる。開くたびに向こうを見に行く
          （待たない。届いた時点で pullAndMergeCloudData が描き直す） */
@@ -8802,6 +8804,11 @@ let deckShelf = [];
 /* 棚を最後に書き換えた時刻。向こうの一覧とどちらが新しいかの判定に使う */
 let deckShelfAt = 0;
 let currentDeck = DECK_ALL;
+/* 単語帳を選ぶ画面で並べ替えている最中か、札をつまんで動かしている最中か。
+   つまんでいるあいだに描き直しを頼まれたら、離したときに描き直す */
+let deckReordering = false;
+let deckDragActive = false;
+let deckPickerStale = false;
 let batchDeck = DEFAULT_DECK;
 /* 調べた単語を保存する先。まとめて登録の追加先とは別に覚える */
 let resultDeck = DEFAULT_DECK;
@@ -8825,11 +8832,20 @@ async function loadDeckState() {
 }
 
 /* 実際に単語が入っている冊と、控えてある空の冊を合わせた一覧。
-   既定の冊は、1語も無くても必ず出す（行き先が1つも無い状態を作らない） */
+   既定の冊は、1語も無くても必ず出す（行き先が1つも無い状態を作らない）。
+   並べ替えたことがあれば、棚の並びがそのまま冊の並びになる。並べ替えると
+   既定の冊も含めて全部の冊を棚へ書くので、既定の冊が棚にあるかどうかで
+   見分ける（棚は端末をまたいで同期されるので、別に印を持つと食い違う）。
+   並べ替えたことが無ければ、これまでどおり名前順 */
 async function listDecks() {
   const rows = await idbGetAll("words");
   const names = new Set([DEFAULT_DECK, ...deckShelf, ...rows.map(deckOf)]);
-  return [...names].sort((a, b) => a.localeCompare(b, "ja"));
+  const byName = (a, b) => a.localeCompare(b, "ja");
+  if (!deckShelf.includes(DEFAULT_DECK)) return [...names].sort(byName);
+  /* 棚に無い冊（別の端末で単語ごと届いた冊など）は、並べた冊の後ろへ名前順に */
+  const ordered = deckShelf.filter((n) => names.has(n));
+  const rest = [...names].filter((n) => !ordered.includes(n)).sort(byName);
+  return [...ordered, ...rest];
 }
 
 /* 棚を書き換えたら必ずここを通す。時刻を一緒に控えておかないと、
@@ -8851,6 +8867,14 @@ async function rememberDeck(name) {
 
 async function forgetDeck(name) {
   await saveDeckShelf(deckShelf.filter((n) => n !== name));
+}
+
+/* 名前を変えても、並べた位置はそのままにする。消してから足すと末尾へ回る */
+async function renameDeckInShelf(from, to) {
+  const next = deckShelf.includes(from) ? deckShelf.map((n) => (n === from ? to : n)) : [...deckShelf, to];
+  /* 既定の冊は名前を変えても一覧に残る。並べ替えたことの印でもあるので棚からも外さない */
+  if (from === DEFAULT_DECK && deckShelf.includes(DEFAULT_DECK)) next.push(DEFAULT_DECK);
+  await saveDeckShelf([...new Set(next)]);
 }
 
 /* 冊を選ぶプルダウンの中身。単語帳の画面では「すべて」と整理の入口も出す */
@@ -9053,6 +9077,9 @@ async function renderBookList() {
 async function renderDeckPicker() {
   const listEl = document.getElementById("deck-pick-list");
   if (!listEl) return;
+  /* 札をつまんで動かしている最中に同期が届いても、描き直さない。
+     描き直すと指の下の札が消える。離したときに描き直す */
+  if (deckDragActive) { deckPickerStale = true; return; }
   const rows = await idbGetAll("words");
   const decks = await listDecks();
 
@@ -9065,8 +9092,11 @@ async function renderDeckPicker() {
     btn.dataset.deck = name;
     const pct = count ? Math.round((memorized / count) * 100) : 0;
     btn.innerHTML = `<span class="n">${escapeHtml(label)}</span>`
-      + `<span class="c">${count}語・暗記済${pct}%</span>`;
+      + `<span class="c">${count}語・暗記済${pct}%</span>`
+      + (name === DECK_ALL ? "" : `<span class="deck-grip" aria-hidden="true">${ICON_GRIP}</span>`);
     btn.addEventListener("click", async () => {
+      /* 並べ替えの最中は開かない。つまみ損ねた指で冊が開くと、並べ替えが途切れる */
+      if (deckReordering) return;
       /* 長押しで整理を開いた直後の指離しを、冊を開く操作にしない */
       if (btn.dataset.held === "1") { btn.dataset.held = ""; return; }
       currentDeck = name;
@@ -9079,8 +9109,11 @@ async function renderDeckPicker() {
       syncBookOnOpen();
     });
 
-    /* 「すべての単語」は名前の変更も削除もない */
-    if (name !== DECK_ALL) bindDeckCardLongPress(btn, name);
+    /* 「すべての単語」は名前の変更も削除もなく、いつも先頭に置く */
+    if (name !== DECK_ALL) {
+      bindDeckCardLongPress(btn, name);
+      bindDeckCardDrag(btn);
+    }
     return btn;
   };
 
@@ -9188,6 +9221,8 @@ function bindDeckCardLongPress(btn, name) {
   let timer = null, startX = 0, startY = 0;
   const clear = () => { clearTimeout(timer); timer = null; endPressSink(); };
   btn.addEventListener("pointerdown", (e) => {
+    /* 並べ替えの最中は、長押しの整理を開かない（つまんで動かすのと取り合う） */
+    if (deckReordering) return;
     startX = e.clientX; startY = e.clientY;
     startPressSink(btn, BOOK_LONGPRESS_MS);
     timer = setTimeout(async () => {
@@ -9208,6 +9243,142 @@ function bindDeckCardLongPress(btn, name) {
   btn.addEventListener("pointerup", clear);
   btn.addEventListener("pointercancel", clear);
   btn.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+/* ---- 単語帳の並べ替え ----
+   上の帯の並べ替えボタンで入る。入っているあいだは、札の右端に出るつまみを
+   上下へ動かして並べる。札全体をつまめるようにすると、冊が多いときに
+   一覧を指で送れなくなるので、つまめるのはつまみだけ */
+const ICON_GRIP = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="8" x2="19" y2="8"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="16" x2="19" y2="16"/></svg>';
+const ICON_REORDER = '<svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="20" x2="8" y2="4"/><polyline points="4 8 8 4 12 8"/><line x1="16" y1="4" x2="16" y2="20"/><polyline points="12 16 16 20 20 16"/></svg>';
+const ICON_DONE = '<svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+const DECK_PICK_HINT = "単語帳を長押しすると、名前の変更や削除ができます";
+const DECK_REORDER_HINT = "右端の ≡ をつまんで上下に動かすと、並びを変えられます";
+function setDeckReordering(on) {
+  deckReordering = on;
+  document.getElementById("deck-pick-list").classList.toggle("reordering", on);
+  const btn = document.getElementById("deck-reorder-btn");
+  btn.innerHTML = on ? ICON_DONE : ICON_REORDER;
+  btn.title = on ? "並べ替えを終える" : "単語帳を並べ替える";
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.classList.toggle("on", on);
+  /* 並べ替えの最中に新しい冊を足すと、どこに入ったのか分かりにくい */
+  document.getElementById("deck-new-btn").hidden = on;
+  document.getElementById("deck-pick-hint").textContent = on ? DECK_REORDER_HINT : DECK_PICK_HINT;
+}
+
+document.getElementById("deck-reorder-btn").addEventListener("click", () => setDeckReordering(!deckReordering));
+
+/* 並べた結果を棚へ書く。棚は同期されるので、ほかの端末でも同じ並びになる */
+async function saveDeckOrderFromList() {
+  const names = [...document.querySelectorAll("#deck-pick-list .deck-card")]
+    .map((b) => b.dataset.deck).filter((n) => n !== DECK_ALL);
+  const same = names.length === deckShelf.length && names.every((n, i) => n === deckShelf[i]);
+  if (same) return;
+  await saveDeckShelf(names);
+  await refreshDeckSelects();
+}
+
+/* 1つ上か下の札と入れ替えられるか。「すべての単語」より上へは行かない */
+function deckNeighbor(btn, dir) {
+  const el = dir < 0 ? btn.previousElementSibling : btn.nextElementSibling;
+  if (!el || el.dataset.deck === DECK_ALL) return null;
+  return el;
+}
+
+function bindDeckCardDrag(btn) {
+  const grip = btn.querySelector(".deck-grip");
+  const list = () => btn.parentElement;
+  let pointerId = null, startY = 0, lastY = 0, scrollTimer = null;
+
+  /* 札を指の下に保つ。入れ替えで札の本来の位置がずれたぶんは startY で打ち消す */
+  const follow = () => {
+    btn.style.transform = `translateY(${lastY - startY}px)`;
+  };
+  /* 指が隣の札の真ん中を越えたら、そちらと入れ替える。速く動かして
+     いくつも越えたときのために、越えなくなるまで繰り返す。
+     動かすのは隣の札のほう。つまんでいる札を抜き差しすると、
+     その時点で指の捕捉が外れて、1つ動いたところで止まってしまう */
+  const settle = () => {
+    for (;;) {
+      const up = deckNeighbor(btn, -1);
+      const down = deckNeighbor(btn, 1);
+      let moved = null;
+      if (up) {
+        const r = up.getBoundingClientRect();
+        if (lastY < r.top + r.height / 2) moved = () => list().insertBefore(up, btn.nextElementSibling);
+      }
+      if (!moved && down) {
+        const r = down.getBoundingClientRect();
+        if (lastY > r.top + r.height / 2) moved = () => list().insertBefore(down, btn);
+      }
+      if (!moved) break;
+      const before = btn.offsetTop;
+      moved();
+      startY += btn.offsetTop - before;
+    }
+    follow();
+  };
+  /* 画面の端まで持っていったら、一覧を送る。冊が画面に収まらないときに、
+     見えていない位置へも動かせるようにする */
+  const autoScroll = () => {
+    clearInterval(scrollTimer);
+    scrollTimer = null;
+    const edge = 72;
+    const dir = lastY < edge ? -1 : lastY > window.innerHeight - edge ? 1 : 0;
+    if (!dir) return;
+    scrollTimer = setInterval(() => {
+      const before = window.scrollY;
+      window.scrollBy(0, dir * 10);
+      startY -= window.scrollY - before;
+      settle();
+    }, 16);
+  };
+  const finish = async () => {
+    if (pointerId === null) return;
+    pointerId = null;
+    clearInterval(scrollTimer);
+    scrollTimer = null;
+    btn.classList.remove("dragging");
+    btn.style.transform = "";
+    deckDragActive = false;
+    await saveDeckOrderFromList();
+    if (deckPickerStale) { deckPickerStale = false; await renderDeckPicker(); }
+  };
+
+  grip.addEventListener("pointerdown", (e) => {
+    if (!deckReordering) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pointerId = e.pointerId;
+    try { grip.setPointerCapture(e.pointerId); } catch { /* 捕まえられなくても動かせる */ }
+    startY = lastY = e.clientY;
+    deckDragActive = true;
+    btn.classList.add("dragging");
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== pointerId) return;
+    lastY = e.clientY;
+    settle();
+    autoScroll();
+  });
+  grip.addEventListener("pointerup", finish);
+  grip.addEventListener("pointercancel", finish);
+  grip.addEventListener("lostpointercapture", finish);
+
+  /* キーボードでは、並べ替えの最中に上下の矢印で1つずつ動かす */
+  btn.addEventListener("keydown", async (e) => {
+    if (!deckReordering) return;
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const dir = e.key === "ArrowUp" ? -1 : 1;
+    const other = deckNeighbor(btn, dir);
+    if (!other) return;
+    /* ここでも隣の札のほうを動かす。押している札を抜き差しするとフォーカスが外れる */
+    list().insertBefore(other, dir < 0 ? btn.nextElementSibling : btn);
+    await saveDeckOrderFromList();
+  });
 }
 
 /* ---- 単語帳の切り替えと整理 ---- */
@@ -9240,8 +9411,7 @@ document.getElementById("deck-rename-btn").addEventListener("click", () => {
       /* 冊の名前は単語そのものが持っているので、入っている単語をすべて書き換える */
       const rows = (await idbGetAll("words")).filter((r) => deckOf(r) === from);
       await saveWordRecords(rows.map((r) => ({ ...r, deck: name })));
-      await forgetDeck(from);
-      await rememberDeck(name);
+      await renameDeckInShelf(from, name);
       if (batchDeck === from) { batchDeck = name; await kvSet("batch_deck", batchDeck); }
       currentDeck = name;
       await kvSet("current_deck", currentDeck);
@@ -12794,7 +12964,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "278";
+const APP_BUILD = "279";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
