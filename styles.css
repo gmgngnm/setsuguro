@@ -835,10 +835,10 @@ select:disabled{opacity:.5;cursor:default;}
   display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:0 2px 8px;font-size:13px;color:var(--ink);
 }
-.memorize-count-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+.memorize-count-pills{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;}
 .memorize-count-pill{
   background:var(--surface-2);border:1px solid var(--line);border-radius:999px;
-  padding:5px 11px;font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink-faint);
+  padding:5px 9px;min-width:34px;font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink-faint);
   font-variant-numeric:tabular-nums;
 }
 .memorize-count-pill.on{background:var(--accent);border-color:var(--accent);color:#fff;}
@@ -847,6 +847,11 @@ select:disabled{opacity:.5;cursor:default;}
   padding:14px 16px;font-size:14px;font-family:'JetBrains Mono',monospace;font-weight:600;
   color:var(--ink);text-align:left;
 }
+/* モードの札と行の頭に置く線の絵。文字の頭がそろうよう、絵の幅と間隔を決めておく */
+#memorize-mode-sheet .memorize-mode-btn{display:flex;align-items:center;gap:12px;}
+.memorize-mode-icon{flex-shrink:0;color:var(--accent-ink);}
+.memorize-row-label{display:flex;align-items:center;gap:10px;min-width:0;}
+.memorize-row-label .memorize-mode-icon{color:var(--ink-soft);}
 .memorize-mode-btn:active{transform:scale(.98);}
 .memorize-mode-close{
   background:none;border:none;color:var(--ink-faint);
@@ -922,20 +927,22 @@ select:disabled{opacity:.5;cursor:default;}
 .memorize-detail{display:flex;flex-direction:column;align-items:stretch;gap:14px;width:100%;}
 .memorize-detail .word-meaning{align-self:stretch;}
 .memorize-detail .word-split{justify-content:center;}
-/* 裏面の類義語・対義語。カードの上では押しても飛ばないので、ボタンには見せない */
-.memorize-related{display:flex;flex-direction:column;gap:6px;align-items:center;}
-.memorize-related-line{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;}
-.memorize-related-line .lbl{
-  font-size:11px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-weight:700;margin-right:2px;
-}
-.memorize-related-line .chip{height:26px;padding:0 10px;font-size:12px;}
-.memorize-related-line .chip:active{transform:none;}
+/* 裏返したときにカードの下へ出す類義語・対義語。単語ページと同じ並びで、
+   1行に収まる分だけ残す。ここでは押しても飛ばないので、押せる見た目にしない */
+.memorize-extra .word-related-card{margin-top:0;}
+.memorize-extra .word-related-chip:active{transform:none;}
+/* 裏面の中身が多いときは、カードを伸ばさずに中身を縮めて収める。
+   縮めても読めないほど長いときだけ、裏面の中を縦に送る */
+.memorize-face-back .memorize-face-content{transform-origin:center center;}
+.memorize-face-back.scrolling{align-items:flex-start;overflow-y:auto;overscroll-behavior:contain;}
+/* マルバツを出さないときは、そのぶん下の余白も要らない */
+#screen-memorize.no-actions{padding-bottom:calc(40px + env(safe-area-inset-bottom));}
 .memorize-card.memorized-tag::after{
   content:"✓ 暗記済み";position:absolute;top:10px;right:14px;
   font-size:10.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;z-index:1;
 }
 .memorize-extra{
-  display:flex;flex-direction:column;gap:14px;
+  display:flex;flex-direction:column;gap:14px;margin-top:16px;
   opacity:0;transform:translateY(6px);transition:opacity .3s ease,transform .3s ease;
 }
 .memorize-extra.show{opacity:1;transform:translateY(0);}
