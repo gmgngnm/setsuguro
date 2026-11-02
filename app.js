@@ -11175,6 +11175,24 @@ function fillMemorizeBack(record) {
     splitEl.appendChild(tile);
   });
   detailEl.appendChild(splitEl);
+  fitMorphRow(splitEl);
+}
+
+/* 接辞を1列に収める。札を縮めても綴りが入りきらないときは、綴りの文字を
+   1pxずつ小さくする（11pxまで）。札の余白と意味の文字も合わせて詰める */
+function fitMorphRow(split) {
+  for (const name of ["--morph-part-size", "--morph-meaning-size", "--morph-pad"]) split.style.removeProperty(name);
+  /* 列ごとのはみ出しに加えて、縮んだ札から綴りがはみ出していないかも見る
+     （札は中身より狭くまで縮めるので、列の幅だけでは気づけない） */
+  const overflowing = () => split.scrollWidth > split.clientWidth + 1
+    || [...split.children].some((t) => t.scrollWidth > t.clientWidth + 1);
+  let size = 18;
+  while (overflowing() && size > 11) {
+    size -= 1;
+    split.style.setProperty("--morph-part-size", `${size}px`);
+    split.style.setProperty("--morph-meaning-size", `${Math.max(9, Math.round(size * 6) / 10)}px`);
+    split.style.setProperty("--morph-pad", `${size >= 15 ? 7 : 5}px`);
+  }
 }
 
 /* カードの高さ。以前は中身に関係なく320pxあり、裏返したときにカードの下に
@@ -13721,7 +13739,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "290";
+const APP_BUILD = "291";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
