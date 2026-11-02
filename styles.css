@@ -904,8 +904,9 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .memorize-reveal.reveal-left{background:var(--accent);opacity:1;}
 .memorize-reveal.reveal-right{background:var(--danger);opacity:1;}
+/* 高さは中身に合わせて JS（sizeMemorizeCard）が決める */
 .memorize-card{
-  position:relative;min-height:320px;box-shadow:var(--shadow);overflow:hidden;border-radius:18px;
+  position:relative;min-height:180px;box-shadow:var(--shadow);overflow:hidden;border-radius:18px;
   touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   perspective:1200px;transition:height .32s cubic-bezier(.22,1,.36,1);
 }
@@ -923,8 +924,8 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .memorize-face-back{transform:rotateY(180deg);}
 .memorize-face-content{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
-  width:100%;padding:24px;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  width:100%;padding:20px 18px;box-sizing:border-box;
 }
 @media (prefers-reduced-motion: reduce){
   .memorize-card, .memorize-card-inner{transition:none;}
@@ -936,6 +937,12 @@ select:disabled{opacity:.5;cursor:default;}
 .memorize-detail{display:flex;flex-direction:column;align-items:stretch;gap:14px;width:100%;}
 .memorize-detail .word-meaning{align-self:stretch;}
 .memorize-detail .word-split{justify-content:center;}
+/* カードの下の例文は、単語ページより一回り小さく詰める。裏返したときに
+   画面に収まる量を増やす */
+.memorize-extra .example-card{padding:10px 10px 10px 14px;gap:8px;}
+.memorize-extra .example-en{font-size:13px;line-height:1.5;}
+.memorize-extra .example-ja{font-size:12px;line-height:1.55;}
+.memorize-extra .example-speak{width:30px;height:30px;}
 /* 裏返したときにカードの下へ出す類義語・対義語。単語ページと同じ並びで、
    1行に収まる分だけ残す。ここでは押しても飛ばないので、押せる見た目にしない */
 .memorize-extra .word-related-card{margin-top:0;}
