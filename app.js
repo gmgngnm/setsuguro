@@ -11119,8 +11119,10 @@ function renderMemorizeCard() {
   wordEl.textContent = record.word;
   wordEl.style.fontSize = `${MEMORIZE_FRONT_PX[memorizeSettings.frontSize] || MEMORIZE_FRONT_PX.m}px`;
 
-  const detailEl = document.getElementById("memorize-detail");
-  detailEl.innerHTML = "";
+  /* 裏面もここで組んでおく。高さを決めるのに要る。めくるまでは読み上げ
+     ソフトにも答えを読ませない */
+  fillMemorizeBack(record);
+  document.getElementById("memorize-face-back").setAttribute("aria-hidden", "true");
   document.getElementById("memorize-face-back-content").style.transform = "";
   document.getElementById("memorize-face-back").classList.remove("scrolling");
 
@@ -11129,7 +11131,7 @@ function renderMemorizeCard() {
   extraEl.classList.remove("show");
   extraEl.style.display = "none";
 
-  resizeMemorizeCard(document.getElementById("memorize-face-front-content"));
+  sizeMemorizeCard();
   /* リセット直後に transition を戻し、以降の裏返し操作はアニメーションさせる */
   requestAnimationFrame(() => {
     card.style.transition = "";
@@ -11151,6 +11153,44 @@ function renderMemorizeCard() {
   scheduleMemorizeAutoPlay();
 }
 
+/* 裏面（意味と接辞）。めくる前にも組んでおき、カードの高さを表と裏の
+   どちらにも足りる分に決めるのに使う */
+function fillMemorizeBack(record) {
+  const detailEl = document.getElementById("memorize-detail");
+  detailEl.innerHTML = "";
+  if (record.word_meaning) {
+    const phoneticHtml = record.word_phonetic ? `<span class="phonetic">[${escapeHtml(record.word_phonetic)}]</span>` : "";
+    const meaningEl = document.createElement("div");
+    meaningEl.className = "word-meaning";
+    meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>`;
+    detailEl.appendChild(meaningEl);
+  }
+  const splitEl = document.createElement("div");
+  splitEl.className = "word-split";
+  (record.morphemes || []).forEach((m, i) => {
+    const tile = document.createElement("div");
+    tile.className = `morph shatter-in${morphTileClass(m.part, m.meaning)}`;
+    tile.style.animationDelay = `${i * 0.08}s`;
+    tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml(m.meaning || "")}</div>`;
+    splitEl.appendChild(tile);
+  });
+  detailEl.appendChild(splitEl);
+}
+
+/* カードの高さ。以前は中身に関係なく320pxあり、裏返したときにカードの下に
+   出す例文などが画面に収まらなかった。表と裏の中身のうち高い方にぴったり
+   合わせる（裏返しても高さは変わらない）。とても長い意味の語でカードが
+   画面を占めないよう上限を設け、それを超えるぶんは fitMemorizeBack で収める */
+const MEMORIZE_CARD_MIN = 180;
+const MEMORIZE_CARD_MAX = 340;
+function sizeMemorizeCard() {
+  const card = document.getElementById("memorize-card");
+  const front = document.getElementById("memorize-face-front-content").offsetHeight;
+  const back = document.getElementById("memorize-face-back-content").offsetHeight;
+  const want = Math.max(MEMORIZE_CARD_MIN, Math.min(MEMORIZE_CARD_MAX, back), front);
+  card.style.height = `${Math.ceil(want)}px`;
+}
+
 /* 裏面の中身がカードに収まらないときは、カードを伸ばさずに中身を縮める。
    6割より小さくすると読めないので、それでも収まらないほど長いときは
    縮めずに裏面の中だけを縦に送れるようにする */
@@ -11170,13 +11210,6 @@ function fitMemorizeBack() {
   else face.classList.add("scrolling");
 }
 
-/* カードの高さを表示中の面の実際のコンテンツ高さに合わせる。
-   表と裏で高さが異なっても、裏返しアニメーションと同時に滑らかに
-   高さも変化するため、周囲の要素が瞬間的にずれることがない */
-function resizeMemorizeCard(faceEl) {
-  const card = document.getElementById("memorize-card");
-  card.style.height = `${Math.max(320, faceEl.offsetHeight)}px`;
-}
 
 function scheduleMemorizeAutoPlay() {
   clearMemorizeAutoTimer();
@@ -11197,26 +11230,10 @@ function revealMemorizeDetail() {
   if (!record) return;
   memorizeRevealed = true;
 
-  const detailEl = document.getElementById("memorize-detail");
-  detailEl.innerHTML = "";
-  if (record.word_meaning) {
-    const phoneticHtml = record.word_phonetic ? `<span class="phonetic">[${escapeHtml(record.word_phonetic)}]</span>` : "";
-    const meaningEl = document.createElement("div");
-    meaningEl.className = "word-meaning";
-    meaningEl.innerHTML = `<div class="word-meaning-word">${escapeHtml(record.word)}${phoneticHtml}</div><div class="word-meaning-text">${escapeHtml(record.word_meaning)}</div>`;
-    detailEl.appendChild(meaningEl);
-  }
-
-  const splitEl = document.createElement("div");
-  splitEl.className = "word-split";
-  (record.morphemes || []).forEach((m, i) => {
-    const tile = document.createElement("div");
-    tile.className = `morph shatter-in${morphTileClass(m.part, m.meaning)}`;
-    tile.style.animationDelay = `${i * 0.08}s`;
-    tile.innerHTML = `<div class="morph-part">${escapeHtml(m.part)}</div><div class="morph-meaning show">${escapeHtml(m.meaning || "")}</div>`;
-    splitEl.appendChild(tile);
-  });
-  detailEl.appendChild(splitEl);
+  /* 裏面はカードを出したときに組んであるが、接辞の札が順に現れる動きを
+     見せたいので、めくるときに組み直す（中身は同じなので高さは変わらない） */
+  fillMemorizeBack(record);
+  document.getElementById("memorize-face-back").removeAttribute("aria-hidden");
 
   /* カードの中は意味と接辞だけにして、類義語・対義語、覚え方、語呂合わせ、
      例文はカードの下に並べる。カードの中に詰めると裏返すたびにカードが
@@ -11295,8 +11312,8 @@ function hideMemorizeDetail() {
   memorizeRevealed = false;
   clearMemorizeAutoTimer();
 
-  resizeMemorizeCard(document.getElementById("memorize-face-front-content"));
   document.getElementById("memorize-card").classList.remove("flipped");
+  document.getElementById("memorize-face-back").setAttribute("aria-hidden", "true");
 
   /* 接辞を踏まえた一文・語呂合わせは、一度裏返して表示させたら
      表に戻しても表示したままにしておく */
@@ -13704,7 +13721,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "289";
+const APP_BUILD = "290";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
