@@ -12358,6 +12358,28 @@ function cloudRowToLocalWord(r, local = null) {
   };
 }
 
+/* 例文と復習の記録は、どの端末にも「消す」操作が無い（作り直す・判定し直す
+   だけ）。片方の札にだけあるのは、もう片方がまだ受け取っていないということ。
+   単語は札ごと新しい方で上書きするので、そのままだと、例文を受け取る前の
+   端末で暗記の判定をしただけで、別の端末で作った例文がサーバーからも
+   その端末からも消えていた。無い側の札で上書きせず、ある側のものを残す */
+const CARRY_FIELDS = ["examples", "srs"];
+function hasCarryField(record, field) {
+  const v = record && record[field];
+  return Array.isArray(v) ? v.length > 0 : !!(v && typeof v === "object");
+}
+/* target に無くて source にあるものを写す。写したら true */
+function carryOver(target, source, fields) {
+  let carried = false;
+  for (const f of fields) {
+    if (!hasCarryField(target, f) && hasCarryField(source, f)) { target[f] = source[f]; carried = true; }
+  }
+  return carried;
+}
+/* その行が持っている（＝サーバーに列がある）ものだけを見る。列の無いサーバーの
+   行は、もともと手元のものを残して読んでいる（cloudRowToLocalWord） */
+const carryFieldsOf = (row) => CARRY_FIELDS.filter((f) => row && f in row);
+
 /* 同じアカウントの単語帳を1つに統合する突き合わせ。両方にある単語は
    updated_at が新しい方を採用し（last-write-wins）、片方にしか無い単語は
    両方に行き渡らせる。削除は目印(tombstone)として伝わる。
@@ -12408,6 +12430,9 @@ async function runCloudMerge({ quiet = false } = {}) {
          「クラウドに無い単語をアップロードする」で拾い直して復活させて
          しまわないよう、除外するために覚えておく */
       const removedHere = new Set();
+      /* 例文・復習の記録を手元から補った札。時刻を新しくして送り直し、
+         ほかの端末にも行き渡らせる */
+      const healed = [];
       for (const remote of remoteWords || []) {
         const local = localById.get(remote.id);
         const remoteAt = remote.updated_at || 0;
@@ -12421,15 +12446,28 @@ async function runCloudMerge({ quiet = false } = {}) {
           continue;
         }
         if (!local || remoteAt > (local.updated_at || 0)) {
-          await idbPut("words", cloudRowToLocalWord(remote, local));
+          const incoming = cloudRowToLocalWord(remote, local);
+          if (local && carryOver(incoming, local, carryFieldsOf(remote))) healed.push(incoming);
+          else await idbPut("words", incoming);
+        } else if (local && remoteAt === (local.updated_at || 0)) {
+          /* 同じ版なのにサーバーの行にだけ無い。列が無かった間に作った例文
+             などは、時刻だけ先に届いて中身が落ちている。送り直す */
+          const missing = carryFieldsOf(remote)
+            .filter((f) => hasCarryField(local, f) && !hasCarryField(remote, f));
+          if (missing.length) healed.push({ ...local });
         }
       }
-      const toUpload = localWords.filter((w) => {
-        if (removedHere.has(w.id)) return false;
+      const toUpload = [];
+      for (const w of localWords) {
+        if (removedHere.has(w.id)) continue;
         const remote = remoteById.get(w.id);
-        return !remote || (w.updated_at || 0) > (remote.updated_at || 0);
-      });
+        if (remote && (w.updated_at || 0) <= (remote.updated_at || 0)) continue;
+        /* 手元の方が新しくても、サーバーにだけある例文・記録は消さずに持って行く */
+        if (remote && !remote.deleted && carryOver(w, remote, carryFieldsOf(remote))) await idbPut("words", w);
+        toUpload.push(w);
+      }
       if (toUpload.length) await cloudWordsUpsert(toUpload);
+      if (healed.length) await saveWordRecords(healed);
 
       /* 引いた時刻で突き合わせるので、どちらの端末から走らせても
          同じ並びに落ち着く。落ち着いた結果を双方が持つよう、
@@ -12614,6 +12652,7 @@ function queueRemoteWordChange(payload) {
 }
 
 async function applyRemoteWordChanges(payloads) {
+  const healedHere = [];
   let added = 0;
   let removed = 0;
   let changed = 0;
@@ -12637,9 +12676,13 @@ async function applyRemoteWordChanges(payloads) {
       continue;
     }
     if (local && (row.updated_at || 0) <= (local.updated_at || 0)) continue;
-    await idbPut("words", cloudRowToLocalWord(row, local));
+    const incoming = cloudRowToLocalWord(row, local);
+    /* 例文を受け取る前の端末からの行でも、手元の例文・記録は消さない */
+    if (local && carryOver(incoming, local, carryFieldsOf(row))) healedHere.push(incoming);
+    else await idbPut("words", incoming);
     if (local) changed++; else added++;
   }
+  if (healedHere.length) await saveWordRecords(healedHere);
   if (!added && !removed && !changed) return;
   renderBookList();
   if (added) toast(`他の端末の単語を${added}件取り込みました`);
@@ -13661,7 +13704,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "288";
+const APP_BUILD = "289";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
