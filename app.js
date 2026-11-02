@@ -11054,7 +11054,6 @@ function renderMemorizeCard() {
   syncMemorizePrevButton();
   const emptyEl = document.getElementById("memorize-empty");
   const swipeEl = document.getElementById("memorize-swipe");
-  const hintEl = document.getElementById("memorize-hint");
   const actionsEl = document.getElementById("memorize-actions");
 
   if (!memorizeQueue.length) {
@@ -11063,7 +11062,6 @@ function renderMemorizeCard() {
     emptyEl.textContent = memorizeEmptyMessage;
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
-    hintEl.style.display = "none";
     actionsEl.style.display = "none";
     syncMemorizeProgress();
     return;
@@ -11086,7 +11084,6 @@ function renderMemorizeCard() {
     emptyEl.appendChild(finishBtn);
     emptyEl.style.display = "flex";
     swipeEl.style.display = "none";
-    hintEl.style.display = "none";
     actionsEl.style.display = "none";
     syncMemorizeProgress();
     return;
@@ -11094,8 +11091,6 @@ function renderMemorizeCard() {
 
   emptyEl.style.display = "none";
   swipeEl.style.display = "block";
-  /* 自動再生中はタップ/スワイプ操作の説明文は不要なので表示しない */
-  hintEl.style.display = memorizeAutoPlay ? "none" : "block";
   /* 自動再生中と、設定で消しているときはマルバツボタンを出さない */
   const showActions = !memorizeAutoPlay && memorizeSettings.actions;
   actionsEl.style.display = showActions ? "flex" : "none";
@@ -13666,7 +13661,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "287";
+const APP_BUILD = "288";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
