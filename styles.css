@@ -936,7 +936,19 @@ select:disabled{opacity:.5;cursor:default;}
 }
 .memorize-detail{display:flex;flex-direction:column;align-items:stretch;gap:14px;width:100%;}
 .memorize-detail .word-meaning{align-self:stretch;}
-.memorize-detail .word-split{justify-content:center;}
+/* とても長い語（antidisestablishmentarianism など）が枠の外へはみ出さないよう、枠の中で折り返す */
+.memorize-detail .word-meaning-word{overflow-wrap:anywhere;}
+/* 裏の接辞は折り返さずに1列に押し込む。札は中身の幅を目安に、足りなければ
+   それぞれ縮む。接辞の綴りは途中で折らない（意味の方は札の中で折り返す）。
+   それでも入りきらないときは、fitMorphRow が文字を小さくして収める */
+.memorize-detail .word-split{flex-wrap:nowrap;gap:6px;width:100%;align-items:stretch;justify-content:center;}
+.memorize-detail .morph{
+  flex:0 1 auto;min-width:0;max-width:none;justify-content:center;
+  padding:9px var(--morph-pad, 8px);border-radius:10px;
+  word-break:normal;overflow-wrap:normal;
+}
+.memorize-detail .morph-part{font-size:var(--morph-part-size, 18px);white-space:nowrap;}
+.memorize-detail .morph-meaning{font-size:var(--morph-meaning-size, 10.5px);overflow-wrap:anywhere;text-align:center;}
 /* カードの下の例文は、単語ページより一回り小さく詰める。裏返したときに
    画面に収まる量を増やす */
 .memorize-extra .example-card{padding:10px 10px 10px 14px;gap:8px;}
