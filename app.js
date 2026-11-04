@@ -3415,7 +3415,28 @@ async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
    onEndは自動再生の進行に使われるため、どの経路でも必ず呼ぶ。
    auto: true は、押されて読むのではなく画面を出したついでに読むとき。
    失敗しても知らせを出さない（speakWithBrowser の説明を参照） */
+/* 読み上げのたびに、ほかのアプリ（音楽や動画）の音量をiPhoneが下げる。
+   Safariの navigator.audioSession で "ambient" にすると、ほかの音と混ぜて
+   鳴らし、相手を小さくしないよう頼める（対応していないブラウザでは何もしない）。
+   代わりに、消音モードの間はこちらの読み上げも鳴らなくなる。
+   既定は「そのまま（小さくしない）」。設定で元に戻せる */
+let audioMixEnabled = true;
+async function loadAudioMixSetting() {
+  audioMixEnabled = (await kvGet("audio_mix", true)) !== false;
+  applyAudioSession();
+}
+function applyAudioSession() {
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = audioMixEnabled ? "ambient" : "auto";
+  } catch (err) {
+    console.warn("音の鳴らし方を変えられませんでした:", err);
+  }
+}
+loadAudioMixSetting();
+
 async function speak(text, onEnd, lang = "ja-JP", { auto = false } = {}) {
+  /* 読む直前にも頼み直す。ほかの画面の音（試聴など）で戻っていることがある */
+  applyAudioSession();
   stopSpeaking();
   const gen = ttsGeneration;
   const spoken = spokenTextOf(text);
@@ -8815,6 +8836,7 @@ async function toggleSaveWord() {
       /* 語呂を作り直して保存し直しても、付けてあった例文と復習の記録は残す */
       examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
       srs: existing && existing.srs ? existing.srs : null,
+      starred: !!(existing && existing.starred),
       created_at: existing ? existing.created_at : Date.now(),
     });
     if (!(existing && Array.isArray(existing.examples) && existing.examples.length)) queueAutoExamples([id]);
@@ -9169,7 +9191,8 @@ async function renderBookList() {
       },
       () => enterBookSelection(r.id),
       r.morphemes || [],
-      showGoro ? String(r.goro_text || "") : null);
+      showGoro ? String(r.goro_text || "") : null,
+      !!r.starred);
     listEl.appendChild(row);
   });
   syncBookSelectionUi();
@@ -10526,7 +10549,7 @@ const BOOK_LONGPRESS_MS = 500;
 const BOOK_LONGPRESS_SLOP = 10;
 
 /* goro は、一覧に語呂合わせを添える設定のときだけ文字列で渡す（null なら行ごと出さない） */
-function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes = [], goro = null) {
+function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes = [], goro = null, starred = false) {
   const wrap = document.createElement("div");
   wrap.className = "book-row";
   wrap.dataset.wordId = id;
@@ -10547,7 +10570,7 @@ function buildBookRow(id, title, sub, createdAt, onTap, onLongPress, morphemes =
     <div class="row-body">
       <span class="row-check" aria-hidden="true"></span>
       <div class="row-text">
-        <div class="w"><span class="word">${escapeHtml(title)}</span>${subHtml}</div>
+        <div class="w">${starred ? '<span class="star" aria-label="★付き">★</span>' : ""}<span class="word">${escapeHtml(title)}</span>${subHtml}</div>
         <div class="a">${affixHtml}</div>${goro === null ? "" : `
         <div class="r">${escapeHtml(goro)}</div>`}
       </div>
@@ -11210,6 +11233,7 @@ function renderMemorizeCard() {
 
   const card = document.getElementById("memorize-card");
   const cardInner = document.getElementById("memorize-card-inner");
+  document.getElementById("memorize-star").hidden = !record.starred;
   const relearn = memorizeRelearn.has(record);
   card.classList.toggle("relearn-tag", relearn);
   card.classList.toggle("memorized-tag", !!record.memorized && !relearn);
@@ -11476,42 +11500,77 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
 (function attachMemorizeSwipe() {
   const card = document.getElementById("memorize-card");
   const revealEl = document.getElementById("memorize-reveal");
-  let startX = 0, dx = 0, dragging = false, moved = false, lastX = 0;
+  let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false, lastX = 0;
+  /* 動かし始めの向きで、横（暗記済み・未暗記）か縦（あとでもう一度）かを決める。
+     途中で向きが変わっても切り替えない（斜めに払ったときに両方が混ざらない） */
+  let axis = "";
   /* 振り分けに要る距離は設定で変えられる。押すたびに読むので、
      設定を変えて戻ってきたらすぐ効く */
   const threshold = () => MEMORIZE_SWIPE_PX[memorizeSettings.swipe] || MEMORIZE_SWIPE_PX.light;
-  const clientX = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
+  const clearReveal = () => revealEl.classList.remove("reveal-left", "reveal-right", "reveal-up");
+  const snapBack = () => {
+    card.style.transition = "transform .18s ease";
+    card.style.transform = "translateX(0)";
+    clearReveal();
+  };
 
   card.addEventListener("pointerdown", (e) => {
-    dragging = true; moved = false; startX = clientX(e); lastX = startX; dx = 0;
+    /* ★はそれ自体がボタン。押しても裏返したり払ったりしない */
+    if (e.target.closest(".memorize-star")) return;
+    dragging = true; moved = false; axis = "";
+    startX = e.clientX; startY = e.clientY; lastX = startX; dx = 0; dy = 0;
     card.style.transition = "none";
+    /* 指（マウス）がカードの外へ出ても、離すまでこのカードで受ける。
+       受けないと、カードの外で離したときに「カードの外を押した」扱いになり、
+       払っただけで裏返ってしまう */
+    try { card.setPointerCapture(e.pointerId); } catch { /* 受けられなくても払える */ }
   });
   card.addEventListener("pointermove", (e) => {
     if (!dragging) return;
-    lastX = clientX(e);
+    lastX = e.clientX;
     dx = lastX - startX;
-    if (Math.abs(dx) > 6) moved = true;
+    dy = e.clientY - startY;
+    if (!axis && Math.max(Math.abs(dx), Math.abs(dy)) > 6) {
+      moved = true;
+      axis = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
+    }
+    if (axis === "y") {
+      /* 上へだけ動かす。下へ払っても何もしない */
+      const up = Math.min(0, dy);
+      card.style.transform = `translateY(${up}px)`;
+      if (up < 0) {
+        revealEl.textContent = "★ あとでもう一度";
+        revealEl.classList.add("reveal-up");
+        revealEl.classList.remove("reveal-left", "reveal-right");
+      } else {
+        clearReveal();
+      }
+      return;
+    }
+    if (axis !== "x") return;
     card.style.transform = `translateX(${dx}px) rotate(${dx / 24}deg)`;
     if (dx < 0) {
       revealEl.textContent = "✓ 暗記済み";
       revealEl.classList.add("reveal-left");
-      revealEl.classList.remove("reveal-right");
+      revealEl.classList.remove("reveal-right", "reveal-up");
     } else if (dx > 0) {
       revealEl.textContent = "📕 未暗記";
       revealEl.classList.add("reveal-right");
-      revealEl.classList.remove("reveal-left");
+      revealEl.classList.remove("reveal-left", "reveal-up");
     }
   });
   const onUp = () => {
     if (!dragging) return;
     dragging = false;
-    if (moved && Math.abs(dx) > threshold()) {
+    if (moved && axis === "x" && Math.abs(dx) > threshold()) {
       classifyMemorizeCard(dx < 0);
       return;
     }
-    card.style.transition = "transform .18s ease";
-    card.style.transform = "translateX(0)";
-    revealEl.classList.remove("reveal-left", "reveal-right");
+    if (moved && axis === "y" && -dy > threshold()) {
+      starAndRequeueMemorizeCard();
+      return;
+    }
+    snapBack();
     if (!moved) {
       if (!memorizeRevealed) { revealMemorizeDetail(); return; }
       /* 裏返したあとは、押した側で前後へ（設定で、表に戻すだけにもできる） */
@@ -11528,11 +11587,45 @@ document.getElementById("memorize-btn-wrong").addEventListener("click", () => cl
   card.addEventListener("pointerleave", () => {
     if (!dragging) return;
     dragging = false;
-    card.style.transition = "transform .18s ease";
-    card.style.transform = "translateX(0)";
-    revealEl.classList.remove("reveal-left", "reveal-right");
+    snapBack();
   });
 })();
+
+/* 上にスワイプしたカードは★を付け、決めた数のカードを全部やり終えたあと
+   （並びのいちばん後ろ）にもう一度出す。暗記済み・未暗記の判定はつけない。
+   同じカードがすでに後ろに控えていれば、そちらは外して入れ直す */
+async function starAndRequeueMemorizeCard() {
+  const record = memorizeQueue[memorizeIndex];
+  if (!record) return;
+  clearMemorizeAutoTimer();
+  for (const r of memorizeQueue) if (r.id === record.id) r.starred = true;
+  for (let i = memorizeQueue.length - 1; i > memorizeIndex; i--) {
+    if (memorizeQueue[i].id === record.id) memorizeQueue.splice(i, 1);
+  }
+  memorizeQueue.push({ ...record });
+  const latest = (await idbGet("words", record.id)) || record;
+  if (!latest.starred) await saveWordRecord({ ...latest, starred: true });
+
+  const card = document.getElementById("memorize-card");
+  card.style.transition = "transform .25s ease, opacity .25s ease";
+  card.style.transform = "translateY(-120%)";
+  card.style.opacity = "0";
+  await sleep(220);
+  memorizeIndex++;
+  renderMemorizeCard();
+}
+
+/* ★を押すと外す（もう一度出すことにした分は、そのまま後ろに残す） */
+document.getElementById("memorize-star").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const record = memorizeQueue[memorizeIndex];
+  if (!record) return;
+  for (const r of memorizeQueue) if (r.id === record.id) r.starred = false;
+  e.currentTarget.hidden = true;
+  const latest = (await idbGet("words", record.id)) || record;
+  await saveWordRecord({ ...latest, starred: false });
+  toast("★を外しました");
+});
 
 /* カードの外側を押したとき。表のときは裏返し、裏のときは押した側で前後へ
    （表のまま次へ進むと、答えを見ないまま飛ばしてしまう）。
@@ -11648,6 +11741,10 @@ async function initSettingsScreen() {
 
   document.querySelectorAll("#float-back-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.floatBack === (floatBackEnabled ? "on" : "off"));
+  });
+
+  document.querySelectorAll("#audio-mix-row .mode-pill").forEach((p) => {
+    p.classList.toggle("on", p.dataset.audioMix === (audioMixEnabled ? "on" : "off"));
   });
 
   const bookGoro = await isBookGoroEnabled();
@@ -11801,6 +11898,14 @@ document.querySelectorAll("#float-back-row .mode-pill").forEach((pill) => {
     await kvSet("float_back", pill.dataset.floatBack === "on");
     document.querySelectorAll("#float-back-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
     await loadFloatBackSetting();
+  });
+});
+
+document.querySelectorAll("#audio-mix-row .mode-pill").forEach((pill) => {
+  pill.addEventListener("click", async () => {
+    await kvSet("audio_mix", pill.dataset.audioMix === "on");
+    document.querySelectorAll("#audio-mix-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
+    await loadAudioMixSetting();
   });
 });
 
@@ -12246,6 +12351,7 @@ const WORDS_COLUMN_SQL = {
   memorized: "memorized boolean default false",
   examples: "examples jsonb",
   srs: "srs jsonb",
+  starred: "starred boolean not null default false",
   deck: "deck text not null default '単語帳'",
   deleted: "deleted boolean not null default false",
   created_at: "created_at bigint",
@@ -12332,7 +12438,7 @@ async function withCloudRetry(fn, attempts = 3) {
 const CLOUD_WORD_OPTIONAL_COLUMNS = [
   "word_meaning", "word_phonetic", "word_memory_tip", "morphemes",
   "synonyms", "antonyms", "goro_text", "goro_highlight", "provider",
-  "memorized", "deck", "deleted", "created_at", "updated_at", "examples", "srs",
+  "memorized", "deck", "deleted", "created_at", "updated_at", "examples", "srs", "starred",
 ];
 
 /* 送っても弾かれると分かった列。1回の応答では1列しか分からないので、
@@ -12429,6 +12535,7 @@ function localWordToCloudRow(w, deleted = false) {
     provider: w.provider || "", memorized: !!w.memorized, deck: deckOf(w), deleted,
     examples: Array.isArray(w.examples) ? w.examples : [],
     srs: w.srs && typeof w.srs === "object" ? w.srs : null,
+    starred: !!w.starred,
     created_at: w.created_at || Date.now(), updated_at: w.updated_at || Date.now(),
   };
   for (const name of cloudMissingColumns) delete row[name];
@@ -12488,9 +12595,13 @@ function cloudRowToLocalWord(r, local = null) {
   const srs = ("srs" in r)
     ? (r.srs && typeof r.srs === "object" ? r.srs : null)
     : (local && local.srs ? local.srs : null);
+  /* ★は外す操作があるので、例文と違って新しい方の値をそのまま使う。
+     列の無いサーバーから読んだときだけ、手元の値を残す */
+  const starred = ("starred" in r) ? !!r.starred : !!(local && local.starred);
   return {
     examples,
     srs,
+    starred,
     id: r.id, word: r.word, word_meaning: r.word_meaning || "", word_phonetic: r.word_phonetic || "",
     word_memory_tip: r.word_memory_tip || "", morphemes: r.morphemes || [],
     deck,
@@ -13244,6 +13355,7 @@ function batchRowToWordRecord(row, existing) {
     memorized: existing ? existing.memorized : false,
     examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
     srs: existing && existing.srs ? existing.srs : null,
+    starred: !!(existing && existing.starred),
     /* 積んだときの時刻をそのまま使う。生成の終わった順ではなく、
        入力に並んでいた順で単語帳に入るようにするため */
     created_at: existing ? existing.created_at : (row.created_at || Date.now()),
@@ -13846,7 +13958,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "293";
+const APP_BUILD = "294";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
