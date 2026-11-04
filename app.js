@@ -10721,6 +10721,7 @@ document.querySelectorAll("#memorize-order-row .memorize-count-pill").forEach((p
     e.stopPropagation();
     memorizeOrder = pill.dataset.order;
     await kvSet("memorize_order", memorizeOrder);
+    if (memorizeOrder !== "random") await kvSet("memorize_order_base", memorizeOrder);
     renderMemorizeOrderRow();
   });
 });
@@ -10920,6 +10921,7 @@ async function startMemorizeMode(mode = "all") {
     : (currentDeck === DECK_ALL ? "保存された単語がまだありません" : "この単語帳はまだ空です");
   memorizeSpeechOn = await kvGet("memorize_speech_on", true);
   await loadMemorizeSettings();
+  await loadMemorizeLoop();
   renderMemorizeSpeechToggle();
   showScreen("screen-memorize");
   renderMemorizeCard();
@@ -11060,8 +11062,102 @@ function syncMemorizePrevButton() {
 
 document.getElementById("memorize-prev-btn").addEventListener("click", () => stepMemorizeCard(-1));
 
+/* ---- 学習中のスイッチ（ランダム・自動送り・ループ） ----
+   始める前のシートで選ぶのとは別に、学習の途中でもすぐ切り替えられるようにする。
+   ランダム … 今のカードより後ろを混ぜ直す。切ると、元の並び（復習優先か新しい順）に
+             並べ直す。次からの学習の並びとしても覚える
+   自動送り … その場で再生を始める・止める（カードを出し直さない）
+   ループ   … 最後まで行ったら、終わりの画面を出さずに最初から。次からも覚える */
+let memorizeLoop = false;
+async function loadMemorizeLoop() {
+  memorizeLoop = !!(await kvGet("memorize_loop", false));
+}
+loadMemorizeLoop();
+
+function syncMemorizeToggles() {
+  const state = { random: memorizeOrder === "random", auto: memorizeAutoPlay, loop: memorizeLoop };
+  document.querySelectorAll("#memorize-toggles .memo-switch").forEach((btn) => {
+    btn.setAttribute("aria-checked", state[btn.dataset.toggle] ? "true" : "false");
+  });
+}
+
+/* 今のカードより後ろだけを並べ直す。見ているカードは動かさない */
+function reorderRestOfQueue(order) {
+  const head = memorizeQueue.slice(0, memorizeIndex + 1);
+  const rest = memorizeQueue.slice(memorizeIndex + 1);
+  const sorted = order === "random" ? shuffleCopy(rest)
+    : order === "srs" ? srsOrder(rest)
+    : [...rest].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  memorizeQueue = [...head, ...sorted];
+}
+
+async function setMemorizeRandom(on) {
+  const base = await kvGet("memorize_order_base", "srs");
+  memorizeOrder = on ? "random" : (MEMORIZE_ORDERS.includes(base) && base !== "random" ? base : "srs");
+  await kvSet("memorize_order", memorizeOrder);
+  reorderRestOfQueue(memorizeOrder);
+  syncMemorizeProgress();
+}
+
+/* 自動送りをその場で入れる・切る。入れたときは、今のカードの続きから進める
+   （まだ表なら少し待って裏返し、裏ならしばらくして次へ） */
+function setMemorizeAutoPlay(on) {
+  memorizeAutoPlay = on;
+  clearMemorizeAutoTimer();
+  const autoplayBar = document.getElementById("memorize-autoplay-bar");
+  const showActions = !memorizeAutoPlay && memorizeSettings.actions;
+  const atCard = memorizeQueue.length && memorizeIndex < memorizeQueue.length;
+  document.getElementById("memorize-actions").style.display = showActions && atCard ? "flex" : "none";
+  document.getElementById("screen-memorize").classList.toggle("no-actions", !showActions);
+  if (!on || !atCard) {
+    autoplayBar.style.display = "none";
+    cancelMemorizeSeekBar();
+    return;
+  }
+  renderMemorizeSpeedBtn();
+  autoplayBar.style.display = "flex";
+  startMemorizeSeekBar();
+  if (memorizeRevealed) {
+    memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, MEMORIZE_ADVANCE_DELAY / memorizeAutoSpeed);
+  } else {
+    scheduleMemorizeAutoPlay();
+  }
+}
+
+/* ループで最初に戻る。同じ回に「もう一度」で足した札は1枚にまとめ、判定の
+   入った一番新しい札を使う。並びは今の設定で組み直す（ランダムなら混ぜ直す） */
+function restartMemorizeLoop() {
+  const byId = new Map();
+  for (const r of memorizeQueue) byId.set(r.id, r);
+  const pool = [...byId.values()].map((r) => ({ ...r }));
+  memorizeQueue = memorizeOrder === "srs" ? srsOrder(pool)
+    : memorizeOrder === "random" ? shuffleCopy(pool)
+    : pool.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  memorizeIndex = 0;
+  memorizeSessionAt = Date.now();
+}
+
+document.querySelectorAll("#memorize-toggles .memo-switch").forEach((btn) => {
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const on = btn.getAttribute("aria-checked") !== "true";
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+    const which = btn.dataset.toggle;
+    if (which === "random") await setMemorizeRandom(on);
+    else if (which === "auto") setMemorizeAutoPlay(on);
+    else if (which === "loop") {
+      memorizeLoop = on;
+      await kvSet("memorize_loop", on);
+      /* 終わりの画面で入れたら、そのまま最初から始める */
+      if (on && memorizeQueue.length && memorizeIndex >= memorizeQueue.length) renderMemorizeCard();
+    }
+    syncMemorizeToggles();
+  });
+});
+
 function renderMemorizeCard() {
   syncMemorizePrevButton();
+  syncMemorizeToggles();
   const emptyEl = document.getElementById("memorize-empty");
   const swipeEl = document.getElementById("memorize-swipe");
   const actionsEl = document.getElementById("memorize-actions");
@@ -11076,6 +11172,7 @@ function renderMemorizeCard() {
     syncMemorizeProgress();
     return;
   }
+  if (memorizeIndex >= memorizeQueue.length && memorizeLoop) restartMemorizeLoop();
   if (memorizeIndex >= memorizeQueue.length) {
     clearMemorizeAutoTimer();
     cancelMemorizeSeekBar();
@@ -13749,7 +13846,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "292";
+const APP_BUILD = "293";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
