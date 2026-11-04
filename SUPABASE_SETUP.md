@@ -39,6 +39,7 @@ create table public.words (
   memorized boolean default false,
   examples jsonb,
   srs jsonb,
+  starred boolean not null default false,
   deleted boolean not null default false,
   created_at bigint,
   updated_at bigint,
@@ -159,6 +160,19 @@ notify pgrst, 'reload schema';
 ```sql
 alter table public.words
   add column if not exists srs jsonb;
+
+notify pgrst, 'reload schema';
+```
+
+### 既存プロジェクトへの追加（starred 列）
+
+暗記モードで上にスワイプして付ける★を持つ `starred` 列。無くてもアプリは
+止まらないが、★はその端末の中だけに残り、他の端末には届かない。
+SQL Editorで以下を一度だけ実行する。
+
+```sql
+alter table public.words
+  add column if not exists starred boolean not null default false;
 
 notify pgrst, 'reload schema';
 ```

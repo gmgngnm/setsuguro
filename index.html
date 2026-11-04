@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#293</span>
+        <span class="build-tag" id="build-tag">#294</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -264,6 +264,8 @@
       <div class="memorize-card-wrap">
         <div class="memorize-reveal" id="memorize-reveal"></div>
         <div class="memorize-card" id="memorize-card">
+          <!-- 上にスワイプして付けた★。押すと外せる -->
+          <button class="memorize-star" id="memorize-star" type="button" title="★を外す" aria-label="★を外す" hidden>★</button>
           <div class="memorize-card-inner" id="memorize-card-inner">
             <div class="memorize-face memorize-face-front" id="memorize-face-front">
               <div class="memorize-face-content" id="memorize-face-front-content">
@@ -407,6 +409,13 @@
       <button class="btn-ghost" id="tts-preview-btn" type="button">試聴</button>
     </div>
     <div class="usage-note" id="tts-note"></div>
+
+    <div class="section-label" style="margin-top:6px;">読み上げ中のほかのアプリの音</div>
+    <div class="provider-row" id="audio-mix-row">
+      <button class="mode-pill on" data-audio-mix="on">そのまま</button>
+      <button class="mode-pill" data-audio-mix="off">小さくする</button>
+    </div>
+    <div class="usage-note">「そのまま」は、読み上げのたびに音楽などの音量を下げないようiPhoneに頼みます（Safariが対応しているときだけ効きます）。このとき、iPhoneを消音モードにしている間は読み上げも鳴りません。</div>
 
     <div class="section-label" style="margin-top:6px;">表示モード</div>
     <div class="provider-row" id="mode-row">
