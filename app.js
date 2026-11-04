@@ -11098,7 +11098,8 @@ async function loadMemorizeLoop() {
 loadMemorizeLoop();
 
 function syncMemorizeToggles() {
-  const state = { random: memorizeOrder === "random", auto: memorizeAutoPlay, loop: memorizeLoop };
+  const state = { random: memorizeOrder === "random", auto: memorizeAutoPlay, loop: memorizeLoop,
+    speech: memorizeSettings.speech === "both" };
   document.querySelectorAll("#memorize-toggles .memo-switch").forEach((btn) => {
     btn.setAttribute("aria-checked", state[btn.dataset.toggle] ? "true" : "false");
   });
@@ -11168,6 +11169,8 @@ document.querySelectorAll("#memorize-toggles .memo-switch").forEach((btn) => {
     const which = btn.dataset.toggle;
     if (which === "random") await setMemorizeRandom(on);
     else if (which === "auto") setMemorizeAutoPlay(on);
+    /* 両面音声：オンで裏の意味も読む、オフで表の単語だけ。詳細設定の「読み上げる面」と同じもの */
+    else if (which === "speech") await setMemorizeSetting("speech", on ? "both" : "front");
     else if (which === "loop") {
       memorizeLoop = on;
       await kvSet("memorize_loop", on);
@@ -13958,7 +13961,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "294";
+const APP_BUILD = "295";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

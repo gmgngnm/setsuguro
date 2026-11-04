@@ -1305,12 +1305,14 @@ body.float-back.memorize-prev-shown #screen-memorize.no-actions{padding-bottom:c
 
 /* 暗記モードの上のスイッチ（ランダム・自動送り・ループ）。押すとその場で効く。
    つまみが左右に滑り、オンのときは溝がテーマ色に塗られる */
-.memorize-toggles{display:flex;justify-content:center;gap:8px;margin-top:-6px;flex-wrap:wrap;}
+/* 4つを同じ幅で1列に。横に並べると狭い画面に入りきらないので、ラベルの下につまみを置く */
+.memorize-toggles{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:6px;margin-top:-6px;}
 .memo-switch{
-  display:flex;align-items:center;gap:7px;
-  background:var(--surface);border:1px solid var(--line);border-radius:999px;
-  padding:5px 6px 5px 12px;font-size:12px;font-weight:700;color:var(--ink-soft);
+  display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:6px 4px 7px;font-size:11.5px;font-weight:700;color:var(--ink-soft);
 }
+.memo-switch-label{white-space:nowrap;}
 .memo-switch[aria-checked="true"]{color:var(--accent-ink);border-color:color-mix(in srgb, var(--accent) 45%, var(--line));}
 .memo-switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 .memo-switch-track{
