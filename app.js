@@ -10964,7 +10964,7 @@ async function startMemorizeMode(mode = "all") {
   await loadMemorizeSeen(words);
   const pool = uniqueByWord(mode === "unlearned" ? words.filter((w) => !w.memorized) : words);
   memorizeQueue = memorizeOrder === "srs" ? srsOrder(pool)
-    : memorizeOrder === "random" ? leastRecentFirst(pool)
+    : memorizeOrder === "random" ? leastShownFirst(pool)
     : pool.sort((a, b) => b.created_at - a.created_at);
   /* 出題数を決めていれば、そのぶんだけにする。復習優先なら時期の来た語から、
      ランダムならしばらく出ていない語から選ばれるので、回を重ねても偏らない */
@@ -10999,6 +10999,9 @@ let memorizeSeenSaveTimer = null;
 /* 保存してある記録を読むのは最初の1回だけ。そのあとは手元の方が新しい
    （書き込みは少し遅らせているので、続けて始めると古い方を読んでしまう）。
    消した語の記録は持ち越さない */
+/* 語ごとに、暗記モードで出した回数も数える（同じ回の中で前へ戻ったり
+   「もう一度」で出たりしても1回）。ランダムでは、回数の少ない語から出す */
+let memorizeShownCount = null;
 async function loadMemorizeSeen(allWords) {
   if (!memorizeSeen) {
     const saved = await kvGet("memorize_seen", {});
@@ -11007,18 +11010,33 @@ async function loadMemorizeSeen(allWords) {
       if (Number.isFinite(at)) memorizeSeen[id] = at;
     }
   }
+  if (!memorizeShownCount) {
+    const saved = await kvGet("memorize_shown_count", {});
+    memorizeShownCount = {};
+    for (const [id, n] of Object.entries(saved && typeof saved === "object" ? saved : {})) {
+      if (Number.isFinite(n)) memorizeShownCount[id] = n;
+    }
+  }
   const alive = new Set(allWords.map((w) => w.id));
   for (const id of Object.keys(memorizeSeen)) if (!alive.has(id)) delete memorizeSeen[id];
+  for (const id of Object.keys(memorizeShownCount)) if (!alive.has(id)) delete memorizeShownCount[id];
 }
 
 /* カードを出したら、その語は今回の回で出たことにする。カードを1枚
    めくるたびに書き込むと重いので、少しまとめてから書く */
 function noteMemorizeSeen(id) {
   if (!id || !memorizeSessionAt || !memorizeSeen) return;
+  /* この回で初めて出したときだけ数える */
+  if (memorizeShownCount && memorizeSeen[id] !== memorizeSessionAt) {
+    memorizeShownCount[id] = (memorizeShownCount[id] || 0) + 1;
+  }
   memorizeSeen[id] = memorizeSessionAt;
   clearTimeout(memorizeSeenSaveTimer);
   memorizeSeenSaveTimer = setTimeout(() => {
     kvSet("memorize_seen", memorizeSeen).catch((err) => console.warn("出題の記録を残せませんでした:", err));
+    if (memorizeShownCount) {
+      kvSet("memorize_shown_count", memorizeShownCount).catch((err) => console.warn("出した回数を残せませんでした:", err));
+    }
   }, 800);
 }
 
@@ -11027,6 +11045,16 @@ function leastRecentFirst(pool) {
   return shuffleCopy(pool)
     .map((r, i) => ({ r, at: (memorizeSeen && memorizeSeen[r.id]) || 0, i }))
     .sort((a, b) => a.at - b.at || a.i - b.i)
+    .map((x) => x.r);
+}
+
+/* ランダムの並び。出した回数の少ない語から。回数が同じなら、しばらく
+   出ていない語から。それも同じなら混ぜる */
+function leastShownFirst(pool) {
+  const count = (id) => (memorizeShownCount && memorizeShownCount[id]) || 0;
+  return shuffleCopy(pool)
+    .map((r, i) => ({ r, n: count(r.id), at: (memorizeSeen && memorizeSeen[r.id]) || 0, i }))
+    .sort((a, b) => a.n - b.n || a.at - b.at || a.i - b.i)
     .map((x) => x.r);
 }
 
@@ -11143,7 +11171,7 @@ function syncMemorizeToggles() {
 function reorderRestOfQueue(order) {
   const head = memorizeQueue.slice(0, memorizeIndex + 1);
   const rest = memorizeQueue.slice(memorizeIndex + 1);
-  const sorted = order === "random" ? shuffleCopy(rest)
+  const sorted = order === "random" ? leastShownFirst(rest)
     : order === "srs" ? srsOrder(rest)
     : [...rest].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   memorizeQueue = [...head, ...sorted];
@@ -11189,7 +11217,7 @@ function restartMemorizeLoop() {
   for (const r of memorizeQueue) byId.set(r.id, r);
   const pool = [...byId.values()].map((r) => ({ ...r }));
   memorizeQueue = memorizeOrder === "srs" ? srsOrder(pool)
-    : memorizeOrder === "random" ? shuffleCopy(pool)
+    : memorizeOrder === "random" ? leastShownFirst(pool)
     : pool.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   memorizeIndex = 0;
   memorizeSessionAt = Date.now();
@@ -13983,7 +14011,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "296";
+const APP_BUILD = "297";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
