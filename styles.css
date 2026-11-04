@@ -844,37 +844,11 @@ select:disabled{opacity:.5;cursor:default;}
   box-shadow:var(--shadow);
 }
 .memorize-mode-hint{font-size:12.5px;color:var(--ink-soft);font-family:var(--font-sans);text-align:center;}
-.memorize-random-row{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:2px 2px 8px;font-size:13px;color:var(--ink);
-}
-.memorize-count-row{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:0 2px 8px;font-size:13px;color:var(--ink);
-}
-.memorize-count-pills{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;}
-.memorize-count-pill{
-  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;
-  padding:5px 9px;min-width:34px;font-size:12px;font-family:var(--font-sans);font-weight:700;color:var(--ink-faint);
-  font-variant-numeric:tabular-nums;
-}
-.memorize-count-pill.on{background:var(--accent);border-color:var(--accent);color:#fff;}
-/* 復習優先のときだけ、今日の復習の量を添える */
-.memorize-srs-note{
-  margin:-4px 2px 8px;font-size:11.5px;color:var(--ink-soft);text-align:right;
-  font-family:var(--font-sans);font-variant-numeric:tabular-nums;
-}
-.memorize-srs-note[hidden]{display:none;}
 .memorize-mode-btn{
   background:var(--surface-2);border:1px solid var(--line);border-radius:14px;
   padding:14px 16px;font-size:14px;font-family:var(--font-sans);font-weight:600;
   color:var(--ink);text-align:left;
 }
-/* モードの札と行の頭に置く線の絵。文字の頭がそろうよう、絵の幅と間隔を決めておく */
-#memorize-mode-sheet .memorize-mode-btn{display:flex;align-items:center;gap:12px;}
-.memorize-mode-icon{flex-shrink:0;color:var(--accent-ink);}
-.memorize-row-label{display:flex;align-items:center;gap:10px;min-width:0;}
-.memorize-row-label .memorize-mode-icon{color:var(--ink-soft);}
 .memorize-mode-btn:active{transform:scale(.98);}
 .memorize-mode-close{
   background:none;border:none;color:var(--ink-faint);
@@ -1324,3 +1298,6 @@ body.float-back.memorize-prev-shown #screen-memorize.no-actions{padding-bottom:c
 .memo-switch[aria-checked="true"]{background:var(--accent);border-color:var(--accent);color:#fff;}
 .memo-switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 @media (prefers-reduced-motion: reduce){ .memo-switch{transition:none;} }
+/* 出題数の6つは1行に収める（折り返すと2段目の2つだけ幅が広がって見える） */
+.provider-row#memorize-count-row{flex-wrap:nowrap;gap:6px;}
+.provider-row#memorize-count-row .mode-pill{min-width:0;padding:12px 2px;}

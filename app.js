@@ -3556,7 +3556,7 @@ function showScreen(id) {
      画面を移るときは必ず閉じる */
   const leaving = document.querySelector(".screen.active");
   if (!leaving || leaving.id !== id) {
-    for (const sheetId of ["batch-csv-sheet", "memorize-mode-sheet"]) {
+    for (const sheetId of ["batch-csv-sheet"]) {
       const sheet = document.getElementById(sheetId);
       if (sheet) sheet.style.display = "none";
     }
@@ -10652,6 +10652,7 @@ const MEMORIZE_SETTINGS_DEFAULT = {
   related: true,          // 裏返したらカードの下に類義語・対義語を出す
   speech: "both",         // 読み上げる面（表面だけ／両面）
   actions: false,         // マルバツボタンを出す（既定は出さない。スワイプで振り分けられる）
+  range: "all",           // 出題範囲（すべて／未学習のみ）
   prevButton: true,       // 左下に「前へ」（前のカードへ戻る）を出す
   goro: true,             // 裏返したらカードの下に語呂合わせを出す
 };
@@ -10695,7 +10696,11 @@ document.querySelectorAll("#screen-memorize-settings [data-mset]").forEach((row)
 
 document.getElementById("memorize-settings-btn").addEventListener("click", async () => {
   await loadMemorizeSettings();
+  await loadMemorizeOrder();
+  await loadMemorizeCount();
   renderMemorizeSettingsScreen();
+  renderMemorizeOrderRow();
+  renderMemorizeCountRow();
   showScreen("screen-memorize-settings");
 });
 
@@ -10710,11 +10715,11 @@ async function loadMemorizeCount() {
 }
 loadMemorizeCount();
 function renderMemorizeCountRow() {
-  document.querySelectorAll("#memorize-count-row .memorize-count-pill").forEach((p) => {
+  document.querySelectorAll("#memorize-count-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", Number(p.dataset.count) === memorizeCount);
   });
 }
-document.querySelectorAll("#memorize-count-row .memorize-count-pill").forEach((pill) => {
+document.querySelectorAll("#memorize-count-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async (e) => {
     e.stopPropagation();
     memorizeCount = Number(pill.dataset.count) || 0;
@@ -10764,12 +10769,12 @@ async function loadMemorizeOrder() {
 loadMemorizeOrder();
 
 function renderMemorizeOrderRow() {
-  document.querySelectorAll("#memorize-order-row .memorize-count-pill").forEach((p) => {
+  document.querySelectorAll("#memorize-order-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.order === memorizeOrder);
   });
   renderMemorizeSrsNote();
 }
-document.querySelectorAll("#memorize-order-row .memorize-count-pill").forEach((pill) => {
+document.querySelectorAll("#memorize-order-row .mode-pill").forEach((pill) => {
   pill.addEventListener("click", async (e) => {
     e.stopPropagation();
     memorizeOrder = pill.dataset.order;
@@ -10915,41 +10920,14 @@ function cancelMemorizeSeekBar() {
   if (memorizeSeekRAF) { cancelAnimationFrame(memorizeSeekRAF); memorizeSeekRAF = null; }
 }
 
-const memorizeModeSheet = document.getElementById("memorize-mode-sheet");
+/* 学習開始を押したら、そのまま単語カードを始める。以前はここで出し方を選ぶ
+   シートを出していたが、順番・出題数・出題範囲は詳細設定に、自動送りは学習中の
+   auto の札に移した。押した流れのうちに読み上げと無音の再生を起こしておく
+   （startMemorizeMode の中では await を挟むので間に合わない） */
 document.getElementById("memorize-entry-btn").addEventListener("click", () => {
-  renderMemorizeOrderRow();
-  renderMemorizeCountRow();
-  memorizeModeSheet.style.display = "flex";
-});
-document.getElementById("memorize-mode-close").addEventListener("click", () => {
-  memorizeModeSheet.style.display = "none";
-});
-/* シートの外を触ったら閉じる。単語帳の名前を入れるシートと同じ振る舞い。
-   開くのはクリックなので、開いた指の pointerdown でいきなり閉じることはない */
-document.addEventListener("pointerdown", (e) => {
-  if (memorizeModeSheet.style.display === "none") return;
-  if (memorizeModeSheet.contains(e.target)) return;
-  memorizeModeSheet.style.display = "none";
-});
-/* 押した流れのうちに読み上げを起こしておく（primeBrowserSpeech の説明を参照）。
-   startMemorizeMode の中では await を挟むので、そこでは間に合わない */
-document.getElementById("mode-btn-all").addEventListener("click", () => {
-  memorizeModeSheet.style.display = "none";
   primeBrowserSpeech();
   if (memorizeSpeechOn) startContinuousDuck();
-  startMemorizeMode("all");
-});
-document.getElementById("mode-btn-unlearned").addEventListener("click", () => {
-  memorizeModeSheet.style.display = "none";
-  primeBrowserSpeech();
-  if (memorizeSpeechOn) startContinuousDuck();
-  startMemorizeMode("unlearned");
-});
-document.getElementById("mode-btn-auto").addEventListener("click", () => {
-  memorizeModeSheet.style.display = "none";
-  primeBrowserSpeech();
-  if (memorizeSpeechOn) startContinuousDuck();
-  startMemorizeMode("auto");
+  startMemorizeMode(memorizeSettings.range === "unlearned" ? "unlearned" : "all");
 });
 
 function clearMemorizeAutoTimer() {
@@ -14011,7 +13989,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "297";
+const APP_BUILD = "298";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
