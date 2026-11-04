@@ -5,6 +5,10 @@ const ICON_VOLUME_OFF = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><l
 /* 左下の戻るボタンを出すか（設定）。画面の切り替えのたびに読むので、
    どこから先に呼ばれても困らないよう、いちばん上で持っておく */
 let floatBackEnabled = false;
+/* 暗記モード中に無音を鳴らし続けるための音の箱（startContinuousDuck）。画面の
+   切り替えから止めることがあるので、いちばん上で持っておく */
+let duckCtx = null;
+let duckSource = null;
 
 /* 画面の文字と同じ書体。キャンバスに文字を描く演出でも、CSSで決めた書体
    （--font-sans）をそのまま使う。書体を変えるときに直すのはCSSの1か所で済む */
@@ -3415,28 +3419,49 @@ async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
    onEndは自動再生の進行に使われるため、どの経路でも必ず呼ぶ。
    auto: true は、押されて読むのではなく画面を出したついでに読むとき。
    失敗しても知らせを出さない（speakWithBrowser の説明を参照） */
-/* 読み上げのたびに、ほかのアプリ（音楽や動画）の音量をiPhoneが下げる。
-   Safariの navigator.audioSession で "ambient" にすると、ほかの音と混ぜて
-   鳴らし、相手を小さくしないよう頼める（対応していないブラウザでは何もしない）。
-   代わりに、消音モードの間はこちらの読み上げも鳴らなくなる。
-   既定は「そのまま（小さくしない）」。設定で元に戻せる */
-let audioMixEnabled = true;
-async function loadAudioMixSetting() {
-  audioMixEnabled = (await kvGet("audio_mix", true)) !== false;
-  applyAudioSession();
-}
-function applyAudioSession() {
+/* 読み上げのたびに、iPhoneはほかのアプリ（音楽や動画）の音量を下げ、読み終わると
+   戻す。音量が上下し続けて聞きづらい。混ぜて鳴らすよう頼む形（ambient）では端末の
+   声に効かなかったので、暗記モードで読み上げがオンの間は、無音を鳴らし続けて
+   「ずっと音を出している」とiPhoneに思わせ、ほかの音を下げたままにする。
+   無音を鳴らし始めるには押した操作が要るので、モードのボタンと読み上げのボタンを
+   押したときに始める。navigator.audioSession の無いブラウザでは、鳴らすと
+   ほかのアプリの再生を止めてしまうおそれがあるので何もしない */
+function startContinuousDuck() {
+  if (!navigator.audioSession) return;
   try {
-    if (navigator.audioSession) navigator.audioSession.type = audioMixEnabled ? "ambient" : "auto";
+    navigator.audioSession.type = "transient";
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!duckCtx) duckCtx = new Ctx();
+    if (!duckSource) {
+      const silence = duckCtx.createBuffer(1, duckCtx.sampleRate, duckCtx.sampleRate);
+      duckSource = duckCtx.createBufferSource();
+      duckSource.buffer = silence;
+      duckSource.loop = true;
+      duckSource.connect(duckCtx.destination);
+      duckSource.start();
+    }
+    if (duckCtx.state !== "running") duckCtx.resume().catch(() => {});
   } catch (err) {
-    console.warn("音の鳴らし方を変えられませんでした:", err);
+    console.warn("無音を鳴らし続けられませんでした:", err);
   }
 }
-loadAudioMixSetting();
+function stopContinuousDuck() {
+  try {
+    if (duckCtx && duckCtx.state === "running") duckCtx.suspend().catch(() => {});
+    if (navigator.audioSession && navigator.audioSession.type === "transient") navigator.audioSession.type = "auto";
+  } catch (err) {
+    console.warn("無音を止められませんでした:", err);
+  }
+}
+/* 暗記モードを開いていて、読み上げがオンのときだけ鳴らし続ける */
+function syncContinuousDuck() {
+  const memorizing = document.getElementById("screen-memorize").classList.contains("active");
+  if (memorizing && memorizeSpeechOn) startContinuousDuck();
+  else stopContinuousDuck();
+}
 
 async function speak(text, onEnd, lang = "ja-JP", { auto = false } = {}) {
-  /* 読む直前にも頼み直す。ほかの画面の音（試聴など）で戻っていることがある */
-  applyAudioSession();
   stopSpeaking();
   const gen = ttsGeneration;
   const spoken = spokenTextOf(text);
@@ -3543,6 +3568,8 @@ function showScreen(id) {
   document.body.classList.toggle("memorize-prev-shown",
     id === "screen-memorize" && !document.getElementById("memorize-prev-btn").hidden);
   syncFloatBack();
+  /* 暗記モードを離れたら、ほかのアプリの音を元に戻す */
+  if (id !== "screen-memorize") stopContinuousDuck();
   /* 画面切り替え時、前の画面のスクロール位置が残ってしまうことがあるため、
      常にページ最上部から表示されるようにする */
   window.scrollTo(0, 0);
@@ -10703,6 +10730,8 @@ let memorizeAutoPlay = false;
 let memorizeAutoTimer = null;
 let memorizeEmptyMessage = "保存された単語がまだありません";
 let memorizeSpeechOn = true;
+/* 押した瞬間に無音を鳴らし始めるかを決めるのに要るので、先に読んでおく */
+kvGet("memorize_speech_on", true).then((v) => { memorizeSpeechOn = v !== false; }).catch(() => {});
 
 function renderMemorizeSpeechToggle() {
   const icon = document.getElementById("memorize-speech-icon");
@@ -10714,6 +10743,7 @@ function renderMemorizeSpeechToggle() {
 
 document.getElementById("memorize-speech-toggle").addEventListener("click", async () => {
   memorizeSpeechOn = !memorizeSpeechOn;
+  syncContinuousDuck();
   await kvSet("memorize_speech_on", memorizeSpeechOn);
   renderMemorizeSpeechToggle();
 });
@@ -10847,7 +10877,7 @@ function requeueForRelearn(record) {
    待ち時間の基準値を、この倍率で割ったものを実際の待ち時間として使う） */
 const MEMORIZE_REVEAL_DELAY = 1800;
 const MEMORIZE_ADVANCE_DELAY = 3800;
-const MEMORIZE_SPEED_STEPS = [1, 1.5, 2, 0.5];
+const MEMORIZE_SPEED_STEPS = [1, 1.5, 2, 3, 0.5];
 let memorizeAutoSpeed = 1;
 async function loadMemorizeAutoSpeedSetting() {
   memorizeAutoSpeed = await kvGet("memorize_auto_speed", 1);
@@ -10906,16 +10936,19 @@ document.addEventListener("pointerdown", (e) => {
 document.getElementById("mode-btn-all").addEventListener("click", () => {
   memorizeModeSheet.style.display = "none";
   primeBrowserSpeech();
+  if (memorizeSpeechOn) startContinuousDuck();
   startMemorizeMode("all");
 });
 document.getElementById("mode-btn-unlearned").addEventListener("click", () => {
   memorizeModeSheet.style.display = "none";
   primeBrowserSpeech();
+  if (memorizeSpeechOn) startContinuousDuck();
   startMemorizeMode("unlearned");
 });
 document.getElementById("mode-btn-auto").addEventListener("click", () => {
   memorizeModeSheet.style.display = "none";
   primeBrowserSpeech();
+  if (memorizeSpeechOn) startContinuousDuck();
   startMemorizeMode("auto");
 });
 
@@ -10947,6 +10980,7 @@ async function startMemorizeMode(mode = "all") {
   await loadMemorizeLoop();
   renderMemorizeSpeechToggle();
   showScreen("screen-memorize");
+  syncContinuousDuck();
   renderMemorizeCard();
 }
 
@@ -11746,10 +11780,6 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.floatBack === (floatBackEnabled ? "on" : "off"));
   });
 
-  document.querySelectorAll("#audio-mix-row .mode-pill").forEach((p) => {
-    p.classList.toggle("on", p.dataset.audioMix === (audioMixEnabled ? "on" : "off"));
-  });
-
   const bookGoro = await isBookGoroEnabled();
   document.querySelectorAll("#book-goro-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.bookGoro === (bookGoro ? "on" : "off"));
@@ -11901,14 +11931,6 @@ document.querySelectorAll("#float-back-row .mode-pill").forEach((pill) => {
     await kvSet("float_back", pill.dataset.floatBack === "on");
     document.querySelectorAll("#float-back-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
     await loadFloatBackSetting();
-  });
-});
-
-document.querySelectorAll("#audio-mix-row .mode-pill").forEach((pill) => {
-  pill.addEventListener("click", async () => {
-    await kvSet("audio_mix", pill.dataset.audioMix === "on");
-    document.querySelectorAll("#audio-mix-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
-    await loadAudioMixSetting();
   });
 });
 
@@ -13961,7 +13983,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "295";
+const APP_BUILD = "296";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

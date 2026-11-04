@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#295</span>
+        <span class="build-tag" id="build-tag">#296</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -245,16 +245,16 @@
           <div class="word-progress-label" id="memorize-progress-label"></div>
         </div>
       </div>
+      <!-- 学習中にすぐ切り替えるスイッチ。押すとその場で効く。帯を1行に収めるため短い名前で -->
+      <div class="memorize-toggles" id="memorize-toggles">
+        <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="random" title="ランダム" aria-label="ランダム">rand</button>
+        <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="auto" title="自動送り" aria-label="自動送り">auto</button>
+        <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="loop" title="ループ" aria-label="ループ">loop</button>
+        <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="speech" title="両面音声（オンで両面、オフで表だけを読み上げる）" aria-label="両面音声">vois</button>
+      </div>
       <div class="nav-icons">
         <button class="icon-btn" id="memorize-speech-toggle" type="button" title="読み上げ切替" aria-label="読み上げ切替"><svg class="icon-svg icon-svg-mic" id="memorize-speech-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button>
       </div>
-    </div>
-    <!-- 学習中にすぐ切り替えるスイッチ。押すとその場で効く -->
-    <div class="memorize-toggles" id="memorize-toggles">
-      <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="random"><span class="memo-switch-label">ランダム</span><span class="memo-switch-track" aria-hidden="true"><span class="memo-switch-knob"></span></span></button>
-      <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="auto"><span class="memo-switch-label">自動送り</span><span class="memo-switch-track" aria-hidden="true"><span class="memo-switch-knob"></span></span></button>
-      <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="loop"><span class="memo-switch-label">ループ</span><span class="memo-switch-track" aria-hidden="true"><span class="memo-switch-knob"></span></span></button>
-      <button class="memo-switch" type="button" role="switch" aria-checked="false" data-toggle="speech" title="オンで両面、オフで表だけを読み上げる"><span class="memo-switch-label">両面音声</span><span class="memo-switch-track" aria-hidden="true"><span class="memo-switch-knob"></span></span></button>
     </div>
     <div class="memorize-empty" id="memorize-empty" style="display:none;"></div>
     <div class="memorize-swipe" id="memorize-swipe" style="display:none;">
@@ -410,13 +410,6 @@
       <button class="btn-ghost" id="tts-preview-btn" type="button">試聴</button>
     </div>
     <div class="usage-note" id="tts-note"></div>
-
-    <div class="section-label" style="margin-top:6px;">読み上げ中のほかのアプリの音</div>
-    <div class="provider-row" id="audio-mix-row">
-      <button class="mode-pill on" data-audio-mix="on">そのまま</button>
-      <button class="mode-pill" data-audio-mix="off">小さくする</button>
-    </div>
-    <div class="usage-note">「そのまま」は、読み上げのたびに音楽などの音量を下げないようiPhoneに頼みます（Safariが対応しているときだけ効きます）。このとき、iPhoneを消音モードにしている間は読み上げも鳴りません。</div>
 
     <div class="section-label" style="margin-top:6px;">表示モード</div>
     <div class="provider-row" id="mode-row">
