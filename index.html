@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#297</span>
+        <span class="build-tag" id="build-tag">#298</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -143,35 +143,6 @@
       <button class="memorize-mode-close" id="deck-move-close" type="button">✕ 閉じる</button>
     </div>
     <button class="memorize-entry-btn" id="memorize-entry-btn">学習開始</button>
-    <div class="memorize-mode-sheet" id="memorize-mode-sheet" style="display:none;">
-      <div class="memorize-mode-hint">暗記カードのモードを選択</div>
-      <!-- 出題の順番。復習優先は、覚えた度合いに合わせて忘れかけたころに出す -->
-      <div class="memorize-random-row">
-        <span class="memorize-row-label"><svg class="icon-svg memorize-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>出題の順番</span>
-        <div class="memorize-count-pills" id="memorize-order-row">
-          <button class="memorize-count-pill" type="button" data-order="srs">復習優先</button>
-          <button class="memorize-count-pill" type="button" data-order="random">ランダム</button>
-          <button class="memorize-count-pill" type="button" data-order="newest">新しい順</button>
-        </div>
-      </div>
-      <div class="memorize-srs-note" id="memorize-srs-note" hidden></div>
-      <!-- 何語やるか。始める前に決めて、そのまま覚えておく -->
-      <div class="memorize-count-row">
-        <span class="memorize-row-label"><svg class="icon-svg memorize-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>出題数</span>
-        <div class="memorize-count-pills" id="memorize-count-row">
-          <button class="memorize-count-pill" type="button" data-count="10">10</button>
-          <button class="memorize-count-pill" type="button" data-count="25">25</button>
-          <button class="memorize-count-pill" type="button" data-count="50">50</button>
-          <button class="memorize-count-pill" type="button" data-count="100">100</button>
-          <button class="memorize-count-pill" type="button" data-count="200">200</button>
-          <button class="memorize-count-pill" type="button" data-count="0" title="すべて" aria-label="すべて">∞</button>
-        </div>
-      </div>
-      <button class="memorize-mode-btn" id="mode-btn-all" type="button"><svg class="icon-svg memorize-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>すべてのカード</button>
-      <button class="memorize-mode-btn" id="mode-btn-unlearned" type="button"><svg class="icon-svg memorize-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>未学習のカードのみ</button>
-      <button class="memorize-mode-btn" id="mode-btn-auto" type="button"><svg class="icon-svg memorize-mode-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>カード自動再生</button>
-      <button class="memorize-mode-close" id="memorize-mode-close" type="button">閉じる</button>
-    </div>
     <div class="book-tools" id="book-tools" hidden>
       <input class="book-search" id="book-search" type="search" inputmode="search"
         placeholder="単語・意味で絞り込む" autocomplete="off" autocapitalize="off"
@@ -450,7 +421,38 @@
       </div>
     </div>
 
-    <div class="section-label">操作</div>
+    <div class="section-label">出題</div>
+    <div class="mset-row">
+      <div class="mset-title">出題の順番</div>
+      <div class="provider-row" id="memorize-order-row">
+        <button class="mode-pill" type="button" data-order="srs">復習優先</button>
+        <button class="mode-pill" type="button" data-order="random">ランダム</button>
+        <button class="mode-pill" type="button" data-order="newest">新しい順</button>
+      </div>
+      <div class="usage-note" id="memorize-srs-note" hidden></div>
+      <div class="usage-note">学習中は、上の rndm の札でもランダムを入れたり切ったりできます。</div>
+    </div>
+    <div class="mset-row">
+      <div class="mset-title">出題数</div>
+      <div class="provider-row" id="memorize-count-row">
+        <button class="mode-pill" type="button" data-count="10">10</button>
+        <button class="mode-pill" type="button" data-count="25">25</button>
+        <button class="mode-pill" type="button" data-count="50">50</button>
+        <button class="mode-pill" type="button" data-count="100">100</button>
+        <button class="mode-pill" type="button" data-count="200">200</button>
+        <button class="mode-pill" type="button" data-count="0" title="すべて" aria-label="すべて">∞</button>
+      </div>
+    </div>
+    <div class="mset-row">
+      <div class="mset-title">出題範囲</div>
+      <div class="provider-row" data-mset="range">
+        <button class="mode-pill" data-value="all">すべて</button>
+        <button class="mode-pill" data-value="unlearned">未学習のみ</button>
+      </div>
+      <div class="usage-note">自動で次へ送るには、学習中に上の auto の札を入れます。</div>
+    </div>
+
+    <div class="section-label" style="margin-top:6px;">操作</div>
     <div class="mset-row">
       <div class="mset-title">カードの外側をタップして操作</div>
       <div class="provider-row" data-mset="sideTap">
