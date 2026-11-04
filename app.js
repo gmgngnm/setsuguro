@@ -6,6 +6,13 @@ const ICON_VOLUME_OFF = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><l
    どこから先に呼ばれても困らないよう、いちばん上で持っておく */
 let floatBackEnabled = false;
 
+/* 画面の文字と同じ書体。キャンバスに文字を描く演出でも、CSSで決めた書体
+   （--font-sans）をそのまま使う。書体を変えるときに直すのはCSSの1か所で済む */
+function appFontFamily() {
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim();
+  return v || "sans-serif";
+}
+
 function speakerIconHtml() {
   return `<svg class="icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_VOLUME_ON}</svg>`;
 }
@@ -4567,18 +4574,21 @@ function reducedMotion() {
   return !animationsEnabled || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
-/* .morphのテキストはWebフォント(JetBrains Mono)で描画されるが、フォントの読み込みが
-   間に合わないうちに幅を計測すると、フォールバックフォントの狭い幅で亀裂/ハサミの
+/* .morphのテキストはWebフォント(Noto Sans JP)で描画されるが、フォントの読み込みが
+   間に合わないうちに幅を計測すると、フォールバックフォントの幅で亀裂/ハサミの
    位置を計算してしまい、フォント切り替わり後に実際の文字幅とずれてしまう。
    （デコンポーズ画面への遷移直後はAPI待ち時間が無く、特に発生しやすい）
-   計測前にフォントの読み込み完了を待つことでこれを防ぐ */
+   計測前にフォントの読み込み完了を待つことでこれを防ぐ。
+   Noto Sans JP は文字の範囲ごとに分けて配られるので、接辞の綴りに使う
+   英字の分を名指しで読み込む */
 let morphFontReady = null;
+const MORPH_FONT_SAMPLE = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-";
 function ensureMorphFontLoaded() {
   if (!morphFontReady) {
     morphFontReady = (document.fonts && document.fonts.load)
       ? Promise.all([
-          document.fonts.load('700 20px "JetBrains Mono"'),
-          document.fonts.load('400 20px "JetBrains Mono"'),
+          document.fonts.load('700 20px "Noto Sans JP"', MORPH_FONT_SAMPLE),
+          document.fonts.load('400 20px "Noto Sans JP"', MORPH_FONT_SAMPLE),
         ]).catch(() => {})
       : Promise.resolve();
   }
@@ -4643,7 +4653,7 @@ async function runCrackShatter(placeholder, word, morphemes, rect) {
   const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
   const radius = parseFloat(cs.borderTopLeftRadius) || 12;
   const textColor = cs.color;
-  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || appFontFamily()}`;
 
   /* 元絵(無傷のカード)を一度だけオフスクリーンに描き、破片を切り抜く元画像にする */
   const srcCanvas = document.createElement("canvas");
@@ -5024,7 +5034,7 @@ async function runBurstExplosion(placeholder, word, morphemes, rect) {
   /* ---- 接辞の境目。字送りの実測から求める（細胞分裂・不死鳥・折り紙と
      同じ理由で、文字数の比では境目が文字の途中に来てしまう） ---- */
   const meas = document.createElement("canvas").getContext("2d");
-  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || appFontFamily()}`;
   const textW = meas.measureText(word).width;
   const textX0 = (rect.width - textW) / 2;
   let prefix = "";
@@ -5497,7 +5507,7 @@ async function runMatrixDissolve(placeholder, word, morphemes, rect) {
   const borderWidth = parseFloat(cs.borderTopWidth) || 1.5;
   const radius = parseFloat(cs.borderTopLeftRadius) || 12;
   const textColor = cs.color;
-  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || appFontFamily()}`;
 
   /* 無傷のカードを一度だけオフスクリーンに描き、消去ラインの下側を
      そのまま切り出して見せるための元絵にする */
@@ -5624,7 +5634,7 @@ async function runMatrixDissolve(placeholder, word, morphemes, rect) {
 
       /* 消去ラインに寄り添いながら緑の数字が滝のように流れ落ちる。
          各コラムは自分が属するセグメントの消去タイミングに従う */
-      ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+      ctx.font = `700 ${CELL - 2}px ${appFontFamily()}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       columns.forEach((col) => {
@@ -5695,7 +5705,7 @@ async function runMatrixTileResolve(el, delayMs) {
   const textColor = cs.color;
   const partText = partEl ? partEl.textContent : "";
   const partCs = partEl ? getComputedStyle(partEl) : cs;
-  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || "'JetBrains Mono',monospace"}`;
+  const font = `${partCs.fontWeight || 700} ${partCs.fontSize || "20px"} ${partCs.fontFamily || appFontFamily()}`;
 
   const srcCanvas = document.createElement("canvas");
   srcCanvas.width = Math.round(rect.width * dpr);
@@ -5793,7 +5803,7 @@ async function runMatrixTileResolve(el, delayMs) {
         ctx.rect(0, Math.max(0, lineY), rect.width, rect.height - Math.max(0, lineY));
         ctx.clip();
         const fadeIn = Math.min(1, t / 90);
-        ctx.font = `700 ${CELL - 2}px 'JetBrains Mono',monospace`;
+        ctx.font = `700 ${CELL - 2}px ${appFontFamily()}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         columns.forEach((col) => {
@@ -5915,7 +5925,7 @@ function renderCardOffscreen(cs, text, textCs, rect, textCenterY, dpr, filled = 
     g.strokeStyle = cs.borderTopColor;
     g.stroke();
   }
-  g.font = `${textCs.fontWeight || 700} ${textCs.fontSize || "20px"} ${textCs.fontFamily || "'JetBrains Mono',monospace"}`;
+  g.font = `${textCs.fontWeight || 700} ${textCs.fontSize || "20px"} ${textCs.fontFamily || appFontFamily()}`;
   g.fillStyle = textCs.color || cs.color;
   g.textAlign = "center";
   g.textBaseline = "middle";
@@ -6559,7 +6569,7 @@ async function runMitosisDissolve(placeholder, word, morphemes, rect) {
      余白があるため、文字数の比で切ると境目が文字の途中に来てしまう
      （"post|graduate" が "pos|tgraduate" になる） */
   const meas = document.createElement("canvas").getContext("2d");
-  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || appFontFamily()}`;
   const textW = meas.measureText(word).width;
   const textX0 = (rect.width - textW) / 2;
   let prefix = "";
@@ -6951,7 +6961,7 @@ async function runPhoenixDissolve(placeholder, word, morphemes, rect) {
   /* ---- 接辞の境目。字送りの実測から求める（細胞分裂と同じ理由で、
      文字数の比だと境目が文字の途中に来てしまうため） ---- */
   const meas = document.createElement("canvas").getContext("2d");
-  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || appFontFamily()}`;
   const textW = meas.measureText(word).width;
   const textX0 = (rect.width - textW) / 2;
   let prefix = "";
@@ -7620,7 +7630,7 @@ async function runOrigamiDissolve(placeholder, word, morphemes, rect) {
   /* ---- 折り目＝接辞の境目。字送りの実測から求める（不死鳥・細胞分裂と
      同じ理由で、文字数の比では境目が文字の途中に来てしまう） ---- */
   const meas = document.createElement("canvas").getContext("2d");
-  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || "'JetBrains Mono',monospace"}`;
+  meas.font = `${cs.fontWeight || 700} ${cs.fontSize || "20px"} ${cs.fontFamily || appFontFamily()}`;
   const textW = meas.measureText(word).width;
   const textX0 = (rect.width - textW) / 2;
   let prefix = "";
@@ -13739,7 +13749,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "291";
+const APP_BUILD = "292";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
