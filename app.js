@@ -9,6 +9,9 @@ let floatBackEnabled = false;
    切り替えから止めることがあるので、いちばん上で持っておく */
 let duckCtx = null;
 let duckSource = null;
+/* 自動再生をバックグラウンドで続けるための無音の再生（startBackgroundKeepAlive） */
+let keepAliveAudio = null;
+let keepAliveOn = false;
 
 /* 画面の文字と同じ書体。キャンバスに文字を描く演出でも、CSSで決めた書体
    （--font-sans）をそのまま使う。書体を変えるときに直すのはCSSの1か所で済む */
@@ -3429,7 +3432,8 @@ async function fetchTtsAudioUrl(endpoint, apiKey, speaker, spoken) {
 function startContinuousDuck() {
   if (!navigator.audioSession) return;
   try {
-    navigator.audioSession.type = "transient";
+    /* 自動再生をバックグラウンドで続けている間は "playback" のままにする */
+    if (!keepAliveOn) navigator.audioSession.type = "transient";
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     if (!duckCtx) duckCtx = new Ctx();
@@ -3449,11 +3453,68 @@ function startContinuousDuck() {
 function stopContinuousDuck() {
   try {
     if (duckCtx && duckCtx.state === "running") duckCtx.suspend().catch(() => {});
-    if (navigator.audioSession && navigator.audioSession.type === "transient") navigator.audioSession.type = "auto";
+    if (!keepAliveOn && navigator.audioSession && navigator.audioSession.type === "transient") navigator.audioSession.type = "auto";
   } catch (err) {
     console.warn("無音を止められませんでした:", err);
   }
 }
+/* ---- 自動再生をバックグラウンドでも続ける ----
+   iPhoneは、画面を消したり別のアプリへ移ったりすると、ページの処理を止める。
+   止められないのは、メディアを再生しているページ（音楽アプリと同じ扱い）だけ。
+   自動再生の間は無音を「再生中のメディア」として流し続け、ロック画面の再生操作
+   （一時停止・次へ・前へ）にも単語と意味を出す。
+   iPhoneでは、こちらがメディアを再生すると、ほかのアプリの音楽は止まることがある */
+function startBackgroundKeepAlive() {
+  try {
+    if (!keepAliveAudio) {
+      keepAliveAudio = new Audio(URL.createObjectURL(pcmToWavBlob(new Uint8Array(16000), 8000)));
+      keepAliveAudio.loop = true;
+      keepAliveAudio.setAttribute("playsinline", "");
+    }
+    keepAliveOn = true;
+    if (navigator.audioSession) navigator.audioSession.type = "playback";
+    const played = keepAliveAudio.play();
+    if (played && played.catch) played.catch((err) => console.warn("バックグラウンド用の再生を始められませんでした:", err));
+    setupMemorizeMediaSession();
+    if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing";
+    /* 途中で入れたときも、いま出ているカードをすぐロック画面に出す */
+    updateMemorizeMediaSession(memorizeQueue[memorizeIndex]);
+  } catch (err) {
+    console.warn("バックグラウンド用の再生を始められませんでした:", err);
+  }
+}
+function stopBackgroundKeepAlive() {
+  if (!keepAliveOn) return;
+  keepAliveOn = false;
+  try {
+    if (keepAliveAudio) keepAliveAudio.pause();
+    if (navigator.mediaSession) navigator.mediaSession.playbackState = "paused";
+    if (navigator.audioSession && navigator.audioSession.type === "playback") navigator.audioSession.type = "auto";
+  } catch (err) {
+    console.warn("バックグラウンド用の再生を止められませんでした:", err);
+  }
+  syncContinuousDuck();
+}
+/* ロック画面・コントロールセンターの再生操作 */
+let memorizeMediaSessionReady = false;
+function setupMemorizeMediaSession() {
+  if (!navigator.mediaSession || memorizeMediaSessionReady) return;
+  memorizeMediaSessionReady = true;
+  const handle = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* 対応していない操作は無視 */ } };
+  handle("play", () => { setMemorizeAutoPlay(true); syncMemorizeToggles(); });
+  handle("pause", () => { setMemorizeAutoPlay(false); syncMemorizeToggles(); });
+  handle("nexttrack", () => stepMemorizeCard(1));
+  handle("previoustrack", () => stepMemorizeCard(-1));
+}
+function updateMemorizeMediaSession(record) {
+  if (!keepAliveOn || !navigator.mediaSession || !record) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: record.word, artist: firstMeaning(record.word_meaning), album: "EnGoloyd 自動再生",
+    });
+  } catch { /* 表示できなくても再生は続ける */ }
+}
+
 /* 暗記モードを開いていて、読み上げがオンのときだけ鳴らし続ける */
 function syncContinuousDuck() {
   const memorizing = document.getElementById("screen-memorize").classList.contains("active");
@@ -3550,6 +3611,7 @@ function showScreen(id) {
     memorizeAutoPlay = false;
     clearMemorizeAutoTimer();
   }
+  if (id !== "screen-memorize") stopBackgroundKeepAlive();
   /* 選択シートは画面の中に置いてあるので、画面を移ると見えなくなるだけで
      開いたまま残る。ホームに戻るときだけ閉じていたころは、単語帳から
      単語帳を選ぶ画面へ戻って開き直すと、学習モードのシートが出たままだった。
@@ -11168,6 +11230,8 @@ async function setMemorizeRandom(on) {
 function setMemorizeAutoPlay(on) {
   memorizeAutoPlay = on;
   clearMemorizeAutoTimer();
+  /* 押した流れのうちに始める（あとからでは再生させてもらえない） */
+  if (on) startBackgroundKeepAlive(); else stopBackgroundKeepAlive();
   const autoplayBar = document.getElementById("memorize-autoplay-bar");
   const showActions = !memorizeAutoPlay && memorizeSettings.actions;
   const atCard = memorizeQueue.length && memorizeIndex < memorizeQueue.length;
@@ -11242,6 +11306,7 @@ function renderMemorizeCard() {
   if (memorizeIndex >= memorizeQueue.length) {
     clearMemorizeAutoTimer();
     cancelMemorizeSeekBar();
+    stopBackgroundKeepAlive();
     emptyEl.innerHTML = "";
     const msgEl = document.createElement("div");
     msgEl.textContent = "お疲れさまでした！全カードをチェックしました。";
@@ -11273,6 +11338,7 @@ function renderMemorizeCard() {
   const record = memorizeQueue[memorizeIndex];
   memorizeRevealed = false;
   noteMemorizeSeen(record.id);
+  updateMemorizeMediaSession(record);
 
   const card = document.getElementById("memorize-card");
   const cardInner = document.getElementById("memorize-card-inner");
@@ -11325,6 +11391,15 @@ function renderMemorizeCard() {
   }
 
   scheduleMemorizeAutoPlay();
+}
+
+/* 意味の1つ目。「一夫多妻（一妻多夫）制、複婚」なら「一夫多妻制」。
+   括弧の中の読点で切らないよう、括弧書きを先に落としてから区切る */
+function firstMeaning(text) {
+  const raw = String(text || "");
+  const plain = raw.replace(/[（(][^）)]*[）)]/g, "");
+  const head = plain.split(/[、，,；;／/]/)[0].trim();
+  return head || raw.trim();
 }
 
 /* 裏面（意味と接辞）。めくる前にも組んでおき、カードの高さを表と裏の
@@ -11488,7 +11563,7 @@ function revealMemorizeDetail() {
   if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
   if (memorizeSpeechOn && memorizeSettings.speech === "both" && record.word_meaning) {
-    speak(record.word_meaning, null, "ja-JP", { auto: true });
+    speak(firstMeaning(record.word_meaning), null, "ja-JP", { auto: true });
   }
   if (memorizeAutoPlay) {
     clearMemorizeAutoTimer();
@@ -13989,7 +14064,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "298";
+const APP_BUILD = "299";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
