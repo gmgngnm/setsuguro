@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#299</span>
+        <span class="build-tag" id="build-tag">#300</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -143,6 +143,12 @@
       <button class="memorize-mode-close" id="deck-move-close" type="button">✕ 閉じる</button>
     </div>
     <button class="memorize-entry-btn" id="memorize-entry-btn">学習開始</button>
+    <!-- 何枚やるか。左端が10、右端が∞（すべて）。動かすとそのまま覚える -->
+    <div class="book-count" id="book-count">
+      <div class="book-count-head"><span>出題数</span><b id="book-count-value">∞</b></div>
+      <input type="range" id="book-count-range" min="0" max="8" step="1" value="8" aria-label="出題数">
+      <div class="book-count-scale" aria-hidden="true"><span>10</span><span>20</span><span>30</span><span>50</span><span>100</span><span>200</span><span>300</span><span>500</span><span>∞</span></div>
+    </div>
     <div class="book-tools" id="book-tools" hidden>
       <input class="book-search" id="book-search" type="search" inputmode="search"
         placeholder="単語・意味で絞り込む" autocomplete="off" autocapitalize="off"
@@ -433,17 +439,6 @@
       <div class="usage-note">学習中は、上の rndm の札でもランダムを入れたり切ったりできます。</div>
     </div>
     <div class="mset-row">
-      <div class="mset-title">出題数</div>
-      <div class="provider-row" id="memorize-count-row">
-        <button class="mode-pill" type="button" data-count="10">10</button>
-        <button class="mode-pill" type="button" data-count="25">25</button>
-        <button class="mode-pill" type="button" data-count="50">50</button>
-        <button class="mode-pill" type="button" data-count="100">100</button>
-        <button class="mode-pill" type="button" data-count="200">200</button>
-        <button class="mode-pill" type="button" data-count="0" title="すべて" aria-label="すべて">∞</button>
-      </div>
-    </div>
-    <div class="mset-row">
       <div class="mset-title">出題範囲</div>
       <div class="provider-row" data-mset="range">
         <button class="mode-pill" data-value="all">すべて</button>
@@ -492,6 +487,14 @@
         <button class="mode-pill" data-value="false">非表示</button>
       </div>
       <div class="usage-note">非表示でも、左右のスワイプで暗記済み・未暗記に振り分けられます。</div>
+    </div>
+    <div class="mset-row">
+      <div class="mset-title">自動送りで裏の読み上げを待つ</div>
+      <div class="provider-row" data-mset="waitSpeech">
+        <button class="mode-pill" data-value="true">待つ</button>
+        <button class="mode-pill" data-value="false">待たない</button>
+      </div>
+      <div class="usage-note">待つにすると、裏の意味を読み終えてから次のカードへ進みます。</div>
     </div>
     <div class="mset-row">
       <div class="mset-title">スワイプの軽さ</div>
