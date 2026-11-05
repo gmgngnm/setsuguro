@@ -10712,6 +10712,7 @@ const MEMORIZE_SETTINGS_DEFAULT = {
   swipe: "light",         // 振り分けに要るスワイプの量
   frontSize: "m",         // 表の単語の大きさ
   related: true,          // 裏返したらカードの下に類義語・対義語を出す
+  waitSpeech: true,       // 自動送りで、裏の意味を読み終えるまで待ってから次へ
   speech: "both",         // 読み上げる面（表面だけ／両面）
   actions: false,         // マルバツボタンを出す（既定は出さない。スワイプで振り分けられる）
   range: "all",           // 出題範囲（すべて／未学習のみ）
@@ -10759,35 +10760,40 @@ document.querySelectorAll("#screen-memorize-settings [data-mset]").forEach((row)
 document.getElementById("memorize-settings-btn").addEventListener("click", async () => {
   await loadMemorizeSettings();
   await loadMemorizeOrder();
-  await loadMemorizeCount();
   renderMemorizeSettingsScreen();
   renderMemorizeOrderRow();
-  renderMemorizeCountRow();
   showScreen("screen-memorize-settings");
 });
 
-/* 出題数。0 は「すべて（∞）」。始める前のシートで選び、次も同じ数で始まる。
-   選択肢に無い数（前の版の20・30など）が残っていたら「すべて」に戻す。
-   どれも光っていないのに数だけ効いている、という状態を作らない */
-const MEMORIZE_COUNTS = [10, 25, 50, 100, 200, 0];
+/* 出題数。0 は「すべて（∞）」。単語帳の学習開始の下のバーで選び、次も同じ数で
+   始まる。バーの目盛りに無い数（前の版の25など）が残っていたら「すべて」に戻す。
+   どこにも合わないのに数だけ効いている、という状態を作らない */
+const MEMORIZE_COUNTS = [10, 20, 30, 50, 100, 200, 300, 500, 0];
 let memorizeCount = 0;
 async function loadMemorizeCount() {
   const saved = Number(await kvGet("memorize_count", 0)) || 0;
   memorizeCount = MEMORIZE_COUNTS.includes(saved) ? saved : 0;
+  renderMemorizeCountRow();
 }
 loadMemorizeCount();
 function renderMemorizeCountRow() {
-  document.querySelectorAll("#memorize-count-row .mode-pill").forEach((p) => {
-    p.classList.toggle("on", Number(p.dataset.count) === memorizeCount);
-  });
+  const range = document.getElementById("book-count-range");
+  if (!range) return;
+  const step = MEMORIZE_COUNTS.indexOf(memorizeCount);
+  range.value = String(step < 0 ? MEMORIZE_COUNTS.length - 1 : step);
+  syncBookCountLabel();
 }
-document.querySelectorAll("#memorize-count-row .mode-pill").forEach((pill) => {
-  pill.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    memorizeCount = Number(pill.dataset.count) || 0;
-    await kvSet("memorize_count", memorizeCount);
-    renderMemorizeCountRow();
-  });
+function syncBookCountLabel() {
+  const range = document.getElementById("book-count-range");
+  const n = MEMORIZE_COUNTS[Number(range.value)] ?? 0;
+  document.getElementById("book-count-value").textContent = n ? `${n}枚` : "∞（すべて）";
+  range.style.setProperty("--fill", `${(Number(range.value) / (MEMORIZE_COUNTS.length - 1)) * 100}%`);
+}
+document.getElementById("book-count-range").addEventListener("input", syncBookCountLabel);
+document.getElementById("book-count-range").addEventListener("change", async (e) => {
+  memorizeCount = MEMORIZE_COUNTS[Number(e.target.value)] ?? 0;
+  await kvSet("memorize_count", memorizeCount);
+  syncBookCountLabel();
 });
 
 let memorizeQueue = [];
@@ -11562,14 +11568,29 @@ function revealMemorizeDetail() {
   document.getElementById("memorize-card").classList.add("flipped");
   if (hasExtra) requestAnimationFrame(() => extraEl.classList.add("show"));
 
-  if (memorizeSpeechOn && memorizeSettings.speech === "both" && record.word_meaning) {
-    speak(firstMeaning(record.word_meaning), null, "ja-JP", { auto: true });
+  const willSpeak = memorizeSpeechOn && memorizeSettings.speech === "both" && record.word_meaning;
+  /* 自動送りで「読み上げを待つ」なら、読み終えてから少し置いて次へ。
+     読み終わりの知らせが来ない端末で止まらないよう、30秒で見切る */
+  const waitForSpeech = memorizeAutoPlay && willSpeak && memorizeSettings.waitSpeech;
+  let finished = false;
+  const afterSpeech = () => {
+    if (finished) return;
+    finished = true;
+    if (!memorizeAutoPlay || memorizeQueue[memorizeIndex] !== record || !memorizeRevealed) return;
+    clearMemorizeAutoTimer();
+    memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, MEMORIZE_AFTER_SPEECH_MS / memorizeAutoSpeed);
+  };
+  if (willSpeak) {
+    speak(firstMeaning(record.word_meaning), waitForSpeech ? afterSpeech : null, "ja-JP", { auto: true });
   }
   if (memorizeAutoPlay) {
     clearMemorizeAutoTimer();
-    memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, MEMORIZE_ADVANCE_DELAY / memorizeAutoSpeed);
+    if (waitForSpeech) memorizeAutoTimer = setTimeout(afterSpeech, 30000);
+    else memorizeAutoTimer = setTimeout(advanceMemorizeAutoPlay, MEMORIZE_ADVANCE_DELAY / memorizeAutoSpeed);
   }
 }
+/* 読み上げを待つとき、読み終えてから次へ進むまでに置く間 */
+const MEMORIZE_AFTER_SPEECH_MS = 800;
 
 /* 裏面を表示中に再タップされた時、表面(単語のみ)に戻す */
 function hideMemorizeDetail() {
@@ -14064,7 +14085,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "299";
+const APP_BUILD = "300";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
