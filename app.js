@@ -3621,6 +3621,8 @@ async function runDecompose(rawWord) {
   if (savedCard && await isSavedJumpEnabled()) {
     currentWord = savedCard.word;
     openWordDetail(savedCard, null, "home");
+    /* 例文は検索のたびに作り直す。単語ページへ直接入ったときも同じにする */
+    if (await loadApiKey(await getActiveProvider())) requestWordDetailExamples();
     return;
   }
 
@@ -3764,6 +3766,11 @@ async function runDecompose(rawWord) {
     currentCandidates = [{ text: savedCard.goro_text, highlight: savedCard.goro_highlight || [] }];
   }
   renderGoroList();
+
+  /* 例文は検索のたびに作る。分解アニメーションの間に裏で進めておき、
+     届いたら結果画面へ出す。キーが無いときは、札にある例文をそのまま出す */
+  if (apiKey && !demo) loadResultExamples(provider, apiKey);
+  else showStoredResultExamples(savedCard);
 
   const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
   /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
@@ -8041,6 +8048,58 @@ function renderGoroList() {
   });
 }
 
+/* ---- 結果画面の例文 ----
+   検索のたびに新しく作る。同じ語を引き直したときに同じ例文ばかり
+   見ることにならないよう、単語帳にある語でも作り直し、届いた例文で
+   札の例文も入れ替える */
+let currentExamples = [];
+/* 作っている最中に別の語を引いたら、遅れて届いた前の語の例文は捨てる */
+let resultExamplesToken = 0;
+let resultExamplesLoading = false;
+
+function renderResultExamples() {
+  const list = document.getElementById("result-examples");
+  list.innerHTML = "";
+  currentExamples.forEach((ex) => list.appendChild(buildExampleCard(ex, currentWord)));
+  document.getElementById("result-example-section").hidden = !currentExamples.length;
+}
+
+function showStoredResultExamples(savedCard) {
+  resultExamplesToken++;
+  resultExamplesLoading = false;
+  currentExamples = savedCard && Array.isArray(savedCard.examples) ? savedCard.examples : [];
+  renderResultExamples();
+}
+
+async function loadResultExamples(provider, apiKey) {
+  const token = ++resultExamplesToken;
+  const word = currentWord;
+  const meaning = currentWordMeaning;
+  currentExamples = [];
+  resultExamplesLoading = true;
+  document.getElementById("result-example-section").hidden = false;
+  reportGoroStatus("result-examples", "例文を作成中");
+  try {
+    const byWord = await requestExamples([{ word, word_meaning: meaning }], provider, apiKey);
+    if (token !== resultExamplesToken) return;
+    const ex = byWord.get(word.toLowerCase());
+    if (!ex) throw new Error("例文が返ってきませんでした");
+    currentExamples = ex;
+    resultExamplesLoading = false;
+    renderResultExamples();
+    /* 単語帳にある語は、どの冊に置いた札も新しい例文にする。保存する直前に
+       読み直すので、待っている間に付けた印などは上書きしない */
+    const cards = (await idbGetAll("words")).filter((r) => wordCardId(r.word) === wordCardId(word));
+    if (cards.length) await saveWordRecords(cards.map((r) => ({ ...r, examples: ex })));
+  } catch (err) {
+    if (token !== resultExamplesToken) return;
+    resultExamplesLoading = false;
+    console.error(err);
+    document.getElementById("result-examples").innerHTML =
+      `<div class="empty-note">${escapeHtml(`例文を作れませんでした（${aiErrorMessage(err)}）`)}</div>`;
+  }
+}
+
 /* 単語帳のレコードIDは単語そのものだけで決める(語呂合わせの内容を含めない)。
    含めてしまうと、同じ単語を語呂合わせを変えて後から保存した際に別レコードとして
    二重登録されてしまう */
@@ -8121,13 +8180,18 @@ async function toggleSaveWord() {
       /* 保存先は、結果画面で選んでいる冊 */
       deck: document.getElementById("result-deck-select")?.value || deckForNewWord(),
       memorized: existing ? existing.memorized : false,
-      /* 語呂を書き直して保存し直しても、付けてあった例文と復習の記録は残す */
-      examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
+      /* 検索で作った例文があればそれを入れる。まだ届いていないときは
+         付けてあった例文を残し、届いた時点で loadResultExamples が入れ替える。
+         語呂を書き直して保存し直しても、復習の記録は残す */
+      examples: currentExamples.length ? currentExamples
+        : (existing && Array.isArray(existing.examples) ? existing.examples : []),
       srs: existing && existing.srs ? existing.srs : null,
       starred: !!(existing && existing.starred),
       created_at: existing ? existing.created_at : Date.now(),
     });
-    if (!(existing && Array.isArray(existing.examples) && existing.examples.length)) queueAutoExamples([id]);
+    /* 作っている最中なら、届いたぶんが入るので重ねて頼まない */
+    if (!currentExamples.length && !resultExamplesLoading
+      && !(existing && Array.isArray(existing.examples) && existing.examples.length)) queueAutoExamples([id]);
   }
   await refreshSaveWordBtn();
 }
@@ -13185,7 +13249,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "301";
+const APP_BUILD = "302";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");

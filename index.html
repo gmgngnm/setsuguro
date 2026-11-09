@@ -26,7 +26,7 @@
     <div class="home-logo">
       <button class="logo-img-btn" data-nav="home" aria-label="ホームへ">
         <img class="logo-img" src="icons/Engoloyd_logo.png" alt="EnGoloyd">
-        <span class="build-tag" id="build-tag">#301</span>
+        <span class="build-tag" id="build-tag">#302</span>
       </button>
     </div>
     <div class="s-input-row">
@@ -96,6 +96,10 @@
       <input id="add-goro-input" type="text" placeholder="自分で考えた語呂合わせを入力" autocomplete="off">
       <button id="add-goro-submit" class="btn-solid">追加</button>
     </div>
+    <div class="section-label" style="margin-top:6px;" id="result-example-section" hidden>
+      <span class="goro-label-group">例文</span>
+    </div>
+    <div class="example-list" id="result-examples"></div>
     <div class="bottom-actions" id="result-bottom-actions">
       <button class="save-word-btn" id="save-word-btn">💾 単語を保存</button>
       <!-- 保存先は保存ボタンの右隣。押す直前にどこへ入るか見えるようにする -->
@@ -353,7 +357,7 @@
       <button class="mode-pill" data-example-auto="on">オン</button>
       <button class="mode-pill on" data-example-auto="off">オフ</button>
     </div>
-    <div class="usage-note">オンにすると、保存した単語に例文を2つずつ付けます（10語ごとに1回、Geminiを呼びます）。単語ページや、単語帳でまとめて選んだ単語からも作れます。</div>
+    <div class="usage-note">検索した単語には、この設定によらず毎回例文を作ります。オンにすると、まとめて登録した単語など例文の無い単語にも2つずつ付けます（10語ごとに1回、Geminiを呼びます）。単語ページや、単語帳でまとめて選んだ単語からも作れます。</div>
 
     <div class="section-label" style="margin-top:6px;">暗記モード</div>
     <button class="btn-ghost settings-link-btn" id="memorize-settings-btn" type="button">暗記モード詳細設定<span aria-hidden="true">›</span></button>
