@@ -14085,7 +14085,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "300";
+const APP_BUILD = "301";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -14104,13 +14104,29 @@ function startDecomposeFromQuery() {
   startDecompose(word);
 }
 
+/* 同じアドオンの「保存」から ?add=本文 で開かれる。向こうは読んでいる
+   ページから離れずに語を溜めたいので、ここでは**まとめて登録の列に積むだけ**
+   で生成はしない。読んでいる最中にAPIを叩かせないため。
+   文のまま渡されることもあるが、parseBatchWordInput が英単語だけを拾う */
+async function queueWordsFromQuery() {
+  const text = new URLSearchParams(location.search).get("add");
+  if (!text) return;
+  /* ?w= と同じ理由でURLから外す。残すと開き直すたびに積み直す */
+  history.replaceState({}, "", location.pathname + location.hash);
+  /* 積む先の冊は覚えてある物を使う。読む前に積むと既定の冊へ入ってしまう */
+  await loadDeckState();
+  await openBatchScreen();
+  await addBatchWords(parseBatchWordInput(text));
+}
+
 renderRecentChips();
 applyThemeMode();
 /* 保存値の読み替えは、それを読む処理より先に済ませておく */
 migrateToGeminiOnce()
   .then(() => migrateTtsSpeakerDefaultOnce())
   /* 読み替えの前に走らせると、providerが古い名前のままキーを探しに行く */
-  .then(startDecomposeFromQuery);
+  .then(startDecomposeFromQuery)
+  .then(queueWordsFromQuery);
 restoreCloudSession();
 refreshBuildTag();
 refreshGeminiKeyAvailability();
