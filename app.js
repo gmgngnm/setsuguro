@@ -186,9 +186,9 @@ function startDecomposeLoadingSequence(containerId, writePhrase) {
   };
 }
 
-/* 語呂合わせ生成の待ち時間表示。こちらはgenerateGoro自身が今実際に
-   実行している処理を都度reportGoroStatusで報告してくるのを、
-   そのままラベルへ反映するだけ（タイマーによる自走はしていない）。
+/* 例文づくりの待ち時間表示。呼び出し元が今実際に実行している処理を
+   都度報告してくるのを、そのままラベルへ反映するだけ（タイマーによる
+   自走はしていない）。
    コンテナに読み込み中の枠がまだ無ければここで作る */
 function reportGoroStatus(containerId, phrase) {
   const container = document.getElementById(containerId);
@@ -290,7 +290,7 @@ function pencilIconHtml() {
    EnGoloyd — app.js
    仕様書 (SPEC-01) に基づくプロトタイプ実装。
    - Stage 1: 接辞分解プロンプト（軽量・即時実行）
-   - Stage 2: 語呂合わせ生成プロンプト（Stage1完了後、裏側で先行実行）
+   - 語呂合わせはAIでは作らない（デモの語呂と、自分で書いたものだけ）
    - ローカル接辞辞書とのハイブリッド構成で表記・読みのブレを抑える
    - IndexedDB でローカルファースト保存（単語帳 / 接辞帳）
    - APIキーは Web Crypto (AES-GCM) で暗号化して端末内にのみ保存
@@ -823,9 +823,9 @@ function openDB() {
          意味を正としてvector（meaningのembedding）とともに保存する */
       if (!db.objectStoreNames.contains("affixes")) db.createObjectStore("affixes", { keyPath: "part" });
       if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv", { keyPath: "key" });
-      /* 語呂合わせの動的Few-shot・マンネリ検出用コーパス（ローカルのみ、
-         クラウド同期はしない）。DEMO_WORD_DATAの種データ＋ユーザーが
-         保存した語呂を、意味のembeddingとともに蓄積する */
+      /* 語呂合わせをAIで作っていた頃のお手本用コーパス。もう使わない
+         （dropGoroCorpusOnceで中身を捨てる）が、ストアを消すにはDBの版上げが
+         要るので、作る処理だけ残しておく */
       if (!db.objectStoreNames.contains("goro_corpus")) db.createObjectStore("goro_corpus", { keyPath: "id" });
       /* まとめて登録した単語の待ち行列（ローカルのみ、クラウド同期はしない）。
          登録しただけの単語と、生成は済んだがまだ確認していない結果を持つ。
@@ -1000,130 +1000,6 @@ const DECOMPOSE_SYS_TEMPLATE = (knownAffixes) => [
   '{"word_exists":true,"corrected_word":"investigation","was_corrected":false,"word_meaning":"調査する・捜査する","word_phonetic":"ɪnˌvɛstɪˈɡeɪʃən","memory_tip":"in(中へ)+vestig(足跡を)+ation(たどること)で、痕跡を中まで追う=調査する、と覚える。vestigは元は獣の足跡のことで、vestige(名残・痕跡)も同じ語根。","synonyms":["inquiry","probe","examination"],"antonyms":["neglect"],"morphemes":[{"part":"dict","reading":"ジクト","meaning":"言う","origin":"ラテン語 dicere","phonetic":"dɪkt"},{"part":"ion","reading":"イオン","meaning":"名詞化（〜すること）","origin":"ラテン語 -io","phonetic":"ən"}]}',
   ...DECOMPOSE_EXAMPLES,
 ].join("\n");
-
-/* 語呂合わせプロンプトのうち、対象の単語によらず常に同じ規則。
-   1語ずつ作る goroSystemPrompt と、複数語を1リクエストにまとめる
-   batchGoroSystemPrompt が、まったく同じ文面をここから使う。
-   まとめ生成のために規則を書き写してしまうと、片方だけ手を入れた
-   ときにまとめ生成の精度だけが静かに落ちるため、必ず共有する */
-const GORO_RULE_MATERIAL = [
-  "各接辞の【意味の直訳】ではなく【カタカナ読み（音）】を素材にしてください。読みはひとまとまりの単語として丸ごと使おうとせず、1〜2音程度の断片に分解し、実在する別々の日本語表現の中に散りばめてください。",
-  /* 音の扱い。「省略してよい」と書いていたら接辞の音がごっそり
-  抜け落ちるようになったため、崩すのは自由・省略は不可、と
-  はっきり分ける */
-  "【重要】どの接辞も省略せず、全ての接辞の音を必ず一文の中に登場させてください。ただし元の発音に忠実である必要はまったくありません。pre(プレ)を「プリッ」、sent(セント)を「せんと」、ation(エーション)を「A賞」のように、日本語として面白く自然になるなら大胆に音を崩して構いません。崩すのは自由、省略は不可です。",
-  /* 出力書式。どの音がどの接辞に対応するかを読み手に示すため、
-  音の直後に接辞の綴りをカッコで添えさせる。この注釈は表示上の
-  補助であって本文ではないので、文字数には数えない */
-  "音を担っている箇所の直後に、対応する接辞の綴りを半角カッコで添えてください（例:「プリッ(pre)と」）。カッコに入れてよいのは接辞の綴りだけで、意味の日本語訳を書いてはいけません。このカッコは表示上の補助なので、文字数には数えません。",
-  "【重要】注釈は1つの接辞につき1箇所だけです。その接辞の音はひとまとまりの箇所でまとめて担わせてください。1音ずつ区切って同じ注釈を繰り返してはいけません（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。",
-  "接辞が1つしかない単語（それ以上分解できない語）の場合も同じで、注釈は1箇所だけ付けます。",
-  "お手本: pre(プレ)/sent(セント)/ation(エーション)、意味「発表」 → 「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」",
-  "お手本: dict(ジクト)/ion(イオン)/ary(アリー)、意味「辞書」 → 「軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！」",
-].join("\n");
-
-/* 「意味を連想できる情景にする」だけでは、読みの断片化に気を取られて
-   意味と無関係な場面になりがちだったため、意味を表す言葉そのものを
-   本文にそのまま含めるよう明示する。単語ごとの具体的な意味は、この
-   定数の外側（1語ずつの経路ならプロンプト冒頭、まとめ経路なら
-   単語ごとのブロック）で既に示されているため、ここでは特定の単語の
-   意味を書き写さず「上記で示した意味」とだけ参照する（1語ずつ/
-   まとめ両方の経路から同じ文面で共有するため） */
-const GORO_RULE_MEANING_ALIGN = "一文の中に、単語全体の意味（上記で示した日本語）を表す言葉そのものを、読みの断片とは別にそのまま含めてください。単語に複数の意味がある場合は、全てを1文に詰め込もうとせず、自然に組み込める意味を1つだけ選んでください。読みの音を成立させるためだけのこじつけの情景にはせず、音と意味の両方をこの一文だけで思い出せるようにしてください。";
-
-/* wordMeaningを「・」「/」区切りで複数の意味に分ける。区切りが無ければ
-   全体を1つの意味として扱う（demo_words.csvの意味欄はこの書式で複数の
-   意味を持たせている。例:「混乱・障害」「試写・下見」） */
-function splitWordMeanings(wordMeaning) {
-  return String(wordMeaning || "").split(/[・/]/).map((s) => s.trim()).filter(Boolean);
-}
-
-/* 複数の意味を持つ単語を作り直す(avoidTexts有り)場合、既に使われた意味を
-   避けて別の意味を選ぶよう促す。「複数の意味がある場合は無理がなければ
-   複数の文章に分けて含める」という狙いを、作り直しのたびに違う意味へ
-   誘導することで実現する（1回の一文に全部詰め込ませるのは不自然になる
-   ため避ける）。1つ目の生成(avoidTextsが空)や意味が1つしか無い場合、
-   全ての意味が既に出尽くしている場合は何もしない */
-function goroUnusedMeaningHint(wordMeaning, avoidTexts) {
-  const senses = splitWordMeanings(wordMeaning);
-  if (senses.length < 2 || !avoidTexts || !avoidTexts.length) return "";
-  const usedSenses = senses.filter((s) => avoidTexts.some((t) => stripGoroAnnotations(t).includes(s)));
-  const unusedSenses = senses.filter((s) => !usedSenses.includes(s));
-  if (!usedSenses.length || !unusedSenses.length) return "";
-  return `この単語の複数の意味のうち「${usedSenses.join("」「")}」は既に登場済みです。今回は「${unusedSenses.join("」「")}」側の意味を含めることを優先してください（自然に書けない場合は無理に含めなくて構いません）。`;
-}
-
-const GORO_RULE_BAD_PATTERNS = [
-  "次のパターンは日本語として不自然になるため禁止します。いずれも「読みをカタカナの塊のまま置く」ことが原因なので、上の断片化の指示を徹底すれば避けられます。",
-  "✗ 意味の日本語訳をカッコ書きで注釈する:「セイシェイション（飽食）して」「エーター（刑務所）へ」 → ○ カッコに入れるのは接辞の綴りだけ。意味は情景そのもので伝える。",
-  "✗ 隣り合う接辞の読みをそのまま連結し、対象単語や既存の外来語をなぞる:「インター」+「アクト」→「インターアクト」 → ○ 読みは互いに離し、それぞれ別の日本語表現の一部にする。",
-  "✗ 読みをそのまま実在しない一単語として使い、助詞を付けて主語・修飾語にする:「オクシールは」「イアリーな」「オノミが」 → ○ 読みの音は、実在する日本語の言葉の一部分の音として溶け込ませる。",
-  "✗ 読みを人名・人物のように扱う。「〜さん」「〜くん」といった呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせることも含む:「オノミが分類法を教えた」 → ○ 人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）の実在する言葉で表現する。",
-  "✗ 音を似せるためだけの不自然なカタカナ語（外来語）で無理やり埋める → ○ 読み以外はふつうの日本語（和語・漢語）で自然に構成する。",
-  "✗ カタカナ語に「する」を付けて動詞にする:「マッシュしたら」「ジクトして」 → ○ 「マッシュポテトを潰す」のように、実在する日本語の動詞で動作を表す。実在の外来語（テストする、セットする など）以外は、カタカナを動詞にしない。",
-  "✗ 意味のつながらない出来事を「〜したら、〜」で並べる:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」（何が起きたのか読み手に伝わらない） → ○ 描くのは一つの出来事だけにし、原因と結果が自然につながった一場面にする。",
-].join("\n");
-
-const GORO_RULE_FINAL = [
-  "最優先事項として、日本語として文法的に自然で、一つの筋が通った情景・出来事を描写する一文にしてください。意味のつながらない不自然な文は不可とします。誰が読んでも情景がすっと思い浮かぶ、破綻のない一文にしてください。",
-  /* 「音は合っているが何を言っているのか分からない」候補を防ぐ最終確認。
-  抽象的に「自然に」と言うより、読み手がその場面を絵にできるか、
-  という具体的な合格条件に落とした方が守られやすい */
-  "出力する前に必ず自分で読み返し、この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられるか確認してください。思い浮かべられないなら、音を大胆に崩してでも、日常にありふれた分かりやすい出来事に書き直してください（崩すのは自由ですが、接辞を省略してはいけません）。",
-  "描くのは一つの出来事だけにしてください。関係のない場面を「〜したら、〜」「〜して、〜」でつなげて複数並べないでください。",
-  "接辞の注釈を除いて10〜18文字程度、長くても22文字までに収めてください。短ければ短いほど覚えやすいので、意味が通る限り短くしてください。",
-  "【重要】書き終えたら、無くても意味が通る語を全て削ってください。特に、情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」「なんてね」など）や、飾りだけの修飾語は不要です（✗「コードが燃えるぜ、みんな！」→ ○「コードが燃えるぜ！」）。",
-  /* ユーモアと文体。「面白く」とだけ言うと、どれも
-  「〜して、〜した」の淡々とした説明文になりがちなので、
-  具体的な笑いの作り方と、使ってよい文末の型を並べて示す */
-  "【重要】覚えやすさは面白さから生まれます。読んだ人が思わずニヤリとする一文にしてください。大げさな誇張、ばかばかしい取り合わせ、身も蓋もない本音、ずっこけるオチ、あるあるネタなどを積極的に使ってください。擬音語・擬態語（ドカン、ジンジン、ぐらぐら など）も歓迎です。下品・差別的な表現は避けてください。",
-  "【重要】文体を毎回変えてください。「〜して、〜した」という淡々とした説明調ばかりにならないよう、次のような型から、その単語に合うものを選んでください: 呼びかけ・警告（「〜せんと〜ないぞ！」）、感嘆（「〜だ！」）、疑問・ツッコミ（「〜なのか!?」）、ぼやき（「〜、あーあ」）、伝聞（「〜だってさ」）、体言止め、セリフ調。",
-].join("\n");
-
-const GORO_RULE_SELF_CHECK = "出力前に最後の確認: (1)全ての接辞の綴りが1回ずつカッコで登場しているか (2)注釈を除いた本文が22文字以内か (3)読んだ人が情景を思い浮かべられるか (4)説明調になっていないか (5)削れる語が残っていないか。";
-
-/* 動的Few-shotの例示と、機械チェックで不合格になった候補のフィードバック。
-   1語ずつの経路とまとめ経路で同じ見せ方をする */
-const GORO_EXAMPLE_BLOCK = (examples) => `参考として、意味が近い単語で過去に作れた語呂合わせの例を示します。読みを断片化して自然な日本語に溶け込ませる「作り方」、接辞の綴りをカッコで添える書式、面白さと文体の付け方を参考にしてください。ただし言い回しや情景はこの単語向けに必ず変えてください（例の使い回し・丸写しは不可）:\n${examples.map((e) => `- ${e.word}（${e.meaning}）→「${e.goroText}」`).join("\n")}`;
-
-const GORO_REJECTED_BLOCK = (rejectedNotes) => `【重要】直前の試行で作った次の候補は、機械的なチェックで不合格になりました。指摘された点を必ず直し、同じ失敗を繰り返さないでください:\n${rejectedNotes.map((n, i) => `${i + 1}. 「${n.text}」\n   → 不合格の理由: ${n.reasons.join(" / ")}`).join("\n")}`;
-
-function goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples) {
-  const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
-  return [
-    "あなたは日本語の語呂合わせ作家です。",
-    `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
-    wordMeaning ? `この単語全体の意味は「${wordMeaning}」です。` : "",
-
-    /* ①動的Few-shot。過去の語呂合わせ例から無作為に抽出して見せる。
-       丸写しされると新しいマンネリの元になるため、型だけ参考にして
-       言い回しは変えるよう明示する */
-    (examples && examples.length)
-      ? GORO_EXAMPLE_BLOCK(examples)
-      : "",
-
-    GORO_RULE_MATERIAL,
-
-    wordMeaning ? GORO_RULE_MEANING_ALIGN : "",
-    wordMeaning ? goroUnusedMeaningHint(wordMeaning, avoidTexts) : "",
-
-    GORO_RULE_BAD_PATTERNS,
-
-    (avoidTexts && avoidTexts.length)
-      ? `この単語では既に次の語呂合わせ候補が使われましたが、ユーザーが気に入らず作り直しを求めています。同じような言い回し・情景・オチの焼き直しは不可です。読みの活かし方・情景・オチの方向性を意図的に変え、明確に異なる新しい一文を考えてください:\n${avoidTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}`
-      : "",
-
-    GORO_RULE_FINAL,
-
-    (rejectedNotes && rejectedNotes.length)
-      ? GORO_REJECTED_BLOCK(rejectedNotes)
-      : "",
-    "候補を1件作ってください。文法的に自然で意味の通った一文になるよう、時間をかけてよく考えてから出力してください。意味のつながらない不自然な候補は不可とします。",
-    GORO_RULE_SELF_CHECK,
-    "候補を1件、次のJSON形式のみを返してください。それ以外の文章は書かないでください。",
-    '{"candidates":[{"text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！","highlight":[{"part":"dict","in_text":"軸"}]}]}',
-  ].filter(Boolean).join("\n");
-}
 
 function extractJson(text) {
   const start = text.indexOf("{");
@@ -1453,20 +1329,13 @@ async function isSavedJumpEnabled() {
   return !!(await kvGet("saved_jump", false));
 }
 
-/* 設定画面の「語呂合わせの自動生成」。オフのときは分解だけで止め、
-   単語ページの「語呂合わせを作る」を押したときだけ生成する */
 /* まとめて登録の「分解できない単語を省く」。接辞に分かれなかった語
    （1つも取れない／単語まるごとで1つ）を、単語帳に入れずに落とす */
 async function isBatchSkipUnsplitEnabled() {
   return !!(await kvGet("batch_skip_unsplit", false));
 }
 
-async function isGoroAutoEnabled() {
-  return !!(await kvGet("goro_auto", true));
-}
-
-/* 単語ページに語呂合わせを出すか。オフにすると、作るボタンだけでなく
-   出来上がった語呂も出さない（接辞だけを見たい人のための設定なので、
+/* 単語ページに語呂合わせを出すか（接辞だけを見たい人のための設定なので、
    ボタンだけ消しても場所を取るものが残ってしまう）。
    単語ページは同期で描くので、その場で設定を読みに行けない。先に読んでおく */
 let goroButtonVisible = true;
@@ -1680,6 +1549,9 @@ async function reconcileUnknownAffix(part, aiEntry, meaningVec) {
 
 async function reconcileWithLocalDict(morphemes, provider, apiKey) {
   const ragOn = (EMBEDDING_ENDPOINTS[provider] && apiKey) ? await isRagEnabled() : false;
+  /* 以前は語呂合わせのお手本の準備の中で走らせていた。語呂を作らなくなったので、
+     ベクトルを使うここで先に済ませる */
+  if (ragOn) await purgeStaleEmbeddingsOnce();
 
   /* まず辞書で片付くものを片付け、embeddingが要るものだけ集める */
   const entries = (morphemes || []).map((m) => {
@@ -2220,235 +2092,14 @@ async function validateDecomposition(word, morphemes, provider, apiKey, memoryTi
   }
 }
 
-/* ------------------------------------------------------------------ *
- * 4.5 語呂合わせの機械的な品質チェック
- *   プロンプトに禁止事項として書くだけではAIが守りきれない不良パターンの
- *   うち、コード側で確定的に判定できるものをここで検出する。検出された
- *   候補はそのまま採用せず、不合格の理由をAIに伝えて作り直させる
- *   （goroSystemPrompt の rejectedNotes / generateGoro の再生成ループ）。
- * ------------------------------------------------------------------ */
-
-/* 接辞の読みと一致しうるカタカナ語のうち、日本語として実在し、そのまま
-   一単語として文中で使っても自然なもの。これらは造語判定の対象外とする。
-   （例: tax(タックス) を「タックスを払う」と使うのは正しい語呂合わせ） */
-const GORO_REAL_KATAKANA_WORDS = new Set([
-  "イオン", "タックス", "ビール", "ポスト", "トランス", "ポート", "サブ", "インター",
-  "テスト", "ミット", "アウト", "セット", "カード", "コース", "ライト", "レース",
-  "ボール", "ドア", "ガス", "パス", "ペース", "メーター", "モーター", "センター",
-  "オーバー", "ケース", "コート", "サイン", "スープ", "チーム", "データ", "ネット",
-  "パート", "ページ", "ベース", "ホール", "マーク", "ルート", "レベル", "ワイン",
-  /* 「カタカナ＋する」が日本語として自然に成立する、ごく一般的な外来語。
-     サ変動詞化チェック(④)の誤検出を防ぐために持つ */
-  "ノック", "キャッチ", "チェック", "カット", "コピー", "メモ", "ジャンプ", "ダッシュ",
-  "ノート", "スタート", "ゴール", "キック", "ヒット", "タッチ", "プレー", "ミス",
-  "カバー", "リード", "ケア", "サポート", "アップ", "ダウン", "オープン", "クリア",
-]);
-
-const GORO_PARTICLE_CLASS = "[はがをのなにへでともや]";
-
-/* カタカナ語をそのままサ変動詞にした形（「マッシュしたら」「ジクトして」）。
-   実在の外来語以外でこれをやると日本語として意味をなさない */
-const GORO_SURU_FORMS = "(する|すれ|します|した|して|しろ|しよう|しない|され|させ|せず)";
-
-/* 語呂合わせの長さの上限。プロンプトでは22文字までを目安として指示している
-   ので、そこから少しだけ余裕を持たせた値をコード側の不合格ラインとする
-   （毎回きっちり22文字で弾くと再生成ばかりになり実用に耐えないため）。
-   接辞の注釈「(pre)」は読み手への補助表示であって本文ではないため、
-   長さを数えるときは取り除いてから数える */
-const GORO_MAX_LENGTH = 26;
-
-/* 「プリッ(pre)とせんと(sent)」のように、音を担っている箇所の直後に
-   対応する接辞の綴りを添える書式。注釈は必ず半角英字のみとする */
-const GORO_ANNOTATION_RE = /[（(]\s*([A-Za-z][A-Za-z'-]*)\s*[）)]/g;
-
-function stripGoroAnnotations(text) {
-  return String(text || "").replace(GORO_ANNOTATION_RE, "");
-}
-
-/* 語呂合わせ一文を機械的に検査し、不良箇所を返す。
-   戻り値は {code, reason} の配列（空配列なら合格）。
-   reason はそのまま再生成時のフィードバックとしてAIに渡す */
-function goroViolations(text, morphemes) {
-  const violations = [];
-  if (!text) return violations;
-  const readings = (morphemes || []).map((m) => (m.reading || "").trim()).filter(Boolean);
-  const parts = (morphemes || []).map((m) => (m.part || "").trim().toLowerCase()).filter(Boolean);
-  const partSet = new Set(parts);
-  /* 注釈は表示上の補助なので、日本語として自然かどうかを見る検査は
-     注釈を取り除いた本文に対して行う。生の文字列のまま調べると、
-     「ベッド(bed)して」の (bed) が語と活用語尾の間に割り込むせいで
-     サ変動詞化を見逃すなど、注釈の有無で判定が変わってしまう */
-  const bare = stripGoroAnnotations(text);
-
-  /* ①カッコの中身。接辞の綴りを添えるのは必須の書式なので許可し、
-       意味の日本語訳を注釈しているもの（例:「エーター（刑務所）へ」）や、
-       実際には存在しない接辞名を書いているものだけを弾く */
-  for (const m of text.matchAll(/[（(]([^）)]{0,20})[）)]/g)) {
-    const inner = m[1].trim();
-    if (/^[A-Za-z][A-Za-z'-]*$/.test(inner) && partSet.has(inner.toLowerCase())) continue;
-    violations.push({
-      code: "gloss-in-parens",
-      reason: `「（${inner}）」というカッコ書きは使えません。カッコの中に書いてよいのは、その直前の音が対応する接辞の綴り（${parts.join(" / ") || "対象の接辞"}）だけです。意味の日本語訳をカッコで注釈しないでください。`,
-    });
-  }
-
-  /* ②全ての接辞の音が、過不足なくちょうど1回ずつ使われているか。
-       不足だけを見ていた頃は、1形態素の語で「べ(bed)ッ(bed)ド(bed)」のように
-       1音ごとに同じ注釈を振る出力が素通りしていた。接辞と注釈は1対1に
-       対応させる（同じ接辞が語中に2回現れる語では、その回数だけ必要） */
-  const expected = new Map();
-  for (const p of parts) expected.set(p, (expected.get(p) || 0) + 1);
-  const actual = new Map();
-  for (const m of text.matchAll(GORO_ANNOTATION_RE)) {
-    const k = m[1].toLowerCase();
-    actual.set(k, (actual.get(k) || 0) + 1);
-  }
-  const missing = [...expected.keys()].filter((p) => (actual.get(p) || 0) < expected.get(p));
-  if (missing.length) {
-    violations.push({
-      code: "missing-morpheme",
-      reason: `接辞 ${missing.join(" / ")} の音が一文の中に見当たりません。全ての接辞について、その音を担う箇所を作り、直後に ${missing.map((p) => `(${p})`).join(" ")} のように綴りを添えてください。音は元の発音どおりでなくてよく、崩して構いません。`,
-    });
-  }
-  const excess = [...expected.keys()].filter((p) => (actual.get(p) || 0) > expected.get(p));
-  if (excess.length) {
-    violations.push({
-      code: "duplicate-morpheme",
-      reason: `接辞 ${excess.map((p) => `(${p})`).join(" ")} の注釈を複数回付けています。1つの接辞に対して注釈は1箇所だけです。その接辞の音はひとまとまりの箇所で担わせ、1音ずつ区切って同じ注釈を繰り返さないでください（例:「べ(bed)ッ(bed)ド(bed)」は不可、「ベッド(bed)」とする）。`,
-    });
-  }
-
-  /* ②隣り合う接辞の読みをそのまま連結（例: リーヴ+メント →「リーヴメント」）。
-       対象単語自体をカタカナでなぞるだけの手抜きになる */
-  for (let i = 0; i < readings.length - 1; i++) {
-    const joined = readings[i] + readings[i + 1];
-    if (joined.length >= 3 && bare.includes(joined)) {
-      violations.push({
-        code: "adjacent-readings",
-        reason: `「${readings[i]}」と「${readings[i + 1]}」を隣接させて「${joined}」という実在しないカタカナ語を作っています。各接辞の読みは文中の離れた位置に、それぞれ別の実在する日本語の一部として組み込んでください。`,
-      });
-    }
-  }
-
-  /* ③読みをそのまま独立した一単語として使用（例:「オノミが」「オクシールは」）。
-       カタカナの連続が読みとぴったり一致する場合、実在の外来語でない限り造語とみなす。
-       ただし、それ以上分解できない1形態素の語（bed など）は、音を分散させる
-       相手の接辞がそもそも無く、読みをそのまま使うのが唯一の自然な書き方に
-       なる。ここで弾くと「ベッド(bed)」も「べ(bed)ッ(bed)ド(bed)」も不合格に
-       なり、どう書いても合格できなくなるため、接辞が2つ以上ある語に限る */
-  for (const run of readings.length >= 2 ? (bare.match(/[ァ-ヶー]+/g) || []) : []) {
-    if (run.length < 3 || GORO_REAL_KATAKANA_WORDS.has(run)) continue;
-    if (!readings.includes(run)) continue;
-    const withParticle = new RegExp(run + GORO_PARTICLE_CLASS).test(bare);
-    violations.push({
-      code: withParticle ? "bare-reading-particle" : "bare-reading-word",
-      reason: `「${run}」という読みを、そのまま実在しない一単語として文中に置いています${withParticle ? "（助詞を付けて主語や修飾語のように使っています）" : ""}。読みの音は、実在する日本語の言葉の一部分の音として溶け込ませてください。`,
-    });
-  }
-
-  /* ④カタカナ語のサ変動詞化（例:「マッシュしたら」）。
-       ③は読みと完全一致する場合しか捕まえられないため、読みを少し崩した
-       カタカナ（読みが「マシュ」なのに「マッシュ」と書く等）をすり抜けて
-       いた。動詞化は読みと一致するかに関わらず日本語として不自然なので、
-       実在の外来語でないカタカナ語すべてを対象に判定する */
-  for (const run of bare.match(/[ァ-ヶー]+/g) || []) {
-    if (run.length < 3 || GORO_REAL_KATAKANA_WORDS.has(run)) continue;
-    if (!new RegExp(run + GORO_SURU_FORMS).test(bare)) continue;
-    violations.push({
-      code: "katakana-suru-verb",
-      reason: `「${run}」というカタカナ語に「する」を付けて動詞にしていますが、これは実在しない言い回しで意味が伝わりません。実在する日本語の動詞で動作を表してください。`,
-    });
-  }
-
-  /* ⑤長すぎる候補。プロンプトの目安だけでは守られないことが多く、
-       長い候補は説明的になって覚えにくいため、コード側でも足切りする。
-       接辞の注釈は表示上の補助なので、長さには数えない */
-  const visibleLength = bare.length;
-  if (visibleLength > GORO_MAX_LENGTH) {
-    violations.push({
-      code: "too-long",
-      reason: `接辞の注釈を除いて${visibleLength}文字と長すぎます。10〜18文字程度に収まるよう、描く出来事を一つに絞り、無くても意味が通る語（締めの呼びかけや飾りの修飾語）を削ってください。`,
-    });
-  }
-
-  return violations;
-}
-
-/* 校閲パスの合否基準。対象の単語によらず同じ文面なので、1語ずつ校閲する
-   goroValidationPrompt と、複数語をまとめて校閲する
-   batchGoroValidationPrompt で共有する */
-const GORO_VALIDATION_CRITERIA = (wordMeaning) => [
-  "①自然さ: 日本語として文法的に自然で、一つの筋が通った意味のある文になっていること。読みを詰め込むための不自然な言い回しや、音を似せるためだけの不自然なカタカナ語（外来語）がないこと。",
-  "②読みの扱い: 読みを丸ごとの単語・注釈として使っていないこと。具体的には (a)隣り合う接辞の読みをそのまま連結していない（例:「インターアクト」は不可）、(b)読みをそのまま実在しない一単語として助詞付きで使っていない（例:「オクシールは」「オノミが」は不可）、(c)カッコの中に接辞の綴り以外のもの、特に意味の日本語訳を書いていない（例:「エーター（刑務所）」は不可）。読みは1〜2音の断片に分解して実在する日本語表現の一部分の音として溶け込ませてあればよい。",
-  "②-2 書式と音の網羅: 音を担っている箇所の直後に、対応する接辞の綴りが半角カッコで添えられていること（例:「プリッ(pre)とせんと(sent)A賞(ation)もらえないぞ！」）。全ての接辞がひとつ残らず、かつ1接辞につきちょうど1箇所だけ登場していること。ただし元の発音に忠実である必要はなく、pre(プレ)を「プリッ」、ation(エーション)を「A賞」のように大胆に崩してあってよい。接辞が抜け落ちている場合はその音を足し、同じ接辞の注釈が複数回付いている場合はひとまとまりに直すこと（✗「べ(bed)ッ(bed)ド(bed)」→ ○「ベッド(bed)」）。書き直す際もこのカッコの書式は必ず保つこと。",
-  "③人名化していないこと: 「〜さん」「〜くん」といった明示的な呼び方だけでなく、読みそのままのカタカナ語を主語にして話す・教える・歩くなど人間的な動作をさせているパターンも不可。人物を出す場合は名前ではなく役割・属性（店員、少年、先生 など）で表現されていること。また、実在の外来語以外のカタカナ語に「する」を付けて動詞にしていないこと（例:「マッシュしたら」は不可）。",
-  "④簡潔であること（接辞の注釈を除いて10〜18文字程度、長くても22文字までが目安）。無くても意味が通る語、特に情景に何も足していない締めの呼びかけ（「みんな！」「さあ！」など）や飾りだけの修飾語が残っていないこと。残っていれば削って短くすること。",
-  "④-2 面白いこと: 読んだ人が思わずニヤリとする一文になっていること。淡々とした説明調（「〜して、〜した」）で終わっている場合は、誇張・ばかばかしい取り合わせ・ずっこけるオチ・ぼやき・呼びかけなどを使って、文体ごと書き直すこと。",
-  "⑤読み手に伝わること: この一文だけを読んだ人が『誰が・何をして・どうなったのか』を映像として思い浮かべられること。関係のない出来事を「〜したら、〜」で並べただけの、何を言っているのか分からない文は不可（例:「キャラがマッシュしたら、すぐに隠し箱へ潜り込む」）。描かれている出来事は一つに絞られていること。",
-  wordMeaning ? "⑥単語全体の意味（上記で示した日本語）を表す言葉そのものが、読みの断片とは別に一文の中にそのまま含まれていること（活用形・助詞の変化は可）。複数の意味がある場合は、そのうち自然に組み込める1つが含まれていれば十分で、全てを詰め込む必要はない。含まれていない場合は、無理のない範囲でその言葉を足して書き直すこと。" : "",
-].filter(Boolean).join("\n");
-
-function goroValidationPrompt(word, morphemes, candidates, wordMeaning) {
-  const partList = morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ");
-  const candList = candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n");
-  return [
-    "あなたは日本語の語呂合わせの校閲者です。",
-    `対象の英単語は "${word}"。接辞とカタカナ読みは次の通りです: ${partList}`,
-    wordMeaning ? `単語全体の意味は「${wordMeaning}」です。` : "",
-    "以下は語呂合わせ候補の一文です。各文について、次の基準をすべて満たしているか厳しく確認してください。",
-    GORO_VALIDATION_CRITERIA(wordMeaning),
-    "いずれかを満たしていない候補は書き直してください。その際、どの接辞の音も省略してはいけません（元の発音から大胆に崩すのは自由です）。すべて満たしている候補はそのまま使ってください。",
-    candList,
-    "書き直した場合も含め、必ず1件を出力してください。接辞の綴りを添えるカッコの書式は必ず保ってください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-    '{"candidates":[{"text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！"}]}',
-  ].filter(Boolean).join("\n");
-}
-
-async function validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning) {
-  try {
-    const sys = goroValidationPrompt(word, morphemes, candidates, wordMeaning);
-    const json = await callAI(provider, apiKey, sys, "候補を精査し、必要なら書き直して、1件をJSON形式で出力してください。", 0.4);
-    const revised = (json.candidates || []).map((c, i) => ({
-      text: (c && c.text) || candidates[i]?.text || "",
-      highlight: candidates[i]?.highlight || [],
-    }));
-    if (revised.length === candidates.length && revised.every((c) => c.text)) {
-      return revised;
-    }
-    return candidates;
-  } catch (err) {
-    console.warn("Goro validation pass failed, using original candidates:", err);
-    return candidates;
-  }
-}
-
-/* ------------------------------------------------------------------ *
- * 4.6 語呂合わせコーパス（①動的Few-shot / ②意味整合ゲート / ③マンネリ検出）
- *   DEMO_WORD_DATAの種データ＋ユーザーが保存した語呂を、意味のembedding
- *   とともにローカル(goro_corpusストア)に蓄積する。使うほど、その端末の
- *   ユーザーの作風に寄っていく。すべてローカルのみでクラウド同期はしない。
- * ------------------------------------------------------------------ */
-/* 種データの本文を書き換えるたびに再シードが必要なため、ここを上げる
-   （v2: styleOkの付与 / v3,v4: 種データ30件の書き直し /
-    v5: demo_words.csv化・126件に拡充 / v6: morphemesを追加し①の
-    お手本抽出で接辞の重なりを見られるようにした） */
-const GORO_SEED_VERSION = "v6";
-const GORO_EXAMPLE_TOPK = 4;
-/* マンネリ検出のしきい値。意味整合ゲートより厳しく（同じ言い回しの
-   使い回しだけを弾きたい）、これも直感値ではなく将来的に実データで
-   調整できるよう定数として独立させている */
-const GORO_REPEAT_SIM_THRESHOLD = 0.93;
-
 /* 埋め込みモデルを変えると、以前のモデルで作ったベクトルとはコサイン
-   類似度が比較不能になる（次元も分布も違う）。混ざったまま使うと意味整合
-   ゲートもマンネリ検出も無意味な判定を返すので、モデルが変わったら古い
-   ベクトルを捨てて作り直させる。しきい値も実測で校正した値なので一緒に捨てる */
+   類似度が比較不能になる（次元も分布も違う）。混ざったまま使うと接辞の
+   表記統合が無意味な判定を返すので、モデルが変わったら古いベクトルを捨てる */
 const EMBEDDING_MODEL_VERSION = GEMINI_EMBEDDING_MODEL;
 
 async function purgeStaleEmbeddingsOnce() {
   if ((await kvGet("embedding_model_version", null)) === EMBEDDING_MODEL_VERSION) return;
   try {
-    for (const row of await idbGetAll("goro_corpus")) await idbDelete("goro_corpus", row.id);
     /* 接辞ストアは辞書としての中身（読み・意味・語源）が本体なので、
        比較用のベクトルだけを落として本体は残す */
     for (const row of await idbGetAll("affixes")) {
@@ -2456,206 +2107,26 @@ async function purgeStaleEmbeddingsOnce() {
       delete row.vector;
       await idbPut("affixes", row);
     }
-    await kvSet("goro_seed_version", null);
-    await kvSet("goro_gate_threshold", null);
     await kvSet("embedding_model_version", EMBEDDING_MODEL_VERSION);
   } catch (err) {
     console.warn("古い埋め込みの破棄に失敗しました（スキップします）:", err);
   }
 }
 
-/* 種データは、単語の意味と語呂合わせの対応そのものは正しいが、書かれた
-   のが品質ルールを厳しくする前なので、現在の機械チェック（長さ・読みの
-   丸ごと使用など）には通らないものが多い。②の閾値校正には「意味と語呂が
-   対応している実例」として全件使ってよい一方、①のFew-shot例としてそのまま
-   見せるとAIに古い作風を学習させてしまうため、styleOkで区別して持つ */
-function buildGoroSeedCorpus() {
-  return Object.entries(DEMO_WORD_DATA)
-    .filter(([, d]) => d && d.meaning && d.goroText)
-    .map(([word, d]) => ({
-      id: `seed:${word}`, word, meaning: d.meaning, goroText: d.goroText, source: "seed",
-      morphemes: d.morphemes || [],
-      styleOk: goroViolations(d.goroText, d.morphemes || []).length === 0,
-    }));
-}
-
-/* 種データを一度だけembeddingしてgoro_corpusに保存し、あわせて
-   ②意味整合ゲートのしきい値を実測で校正する。「単語の意味」と
-   「実際に採用された語呂合わせ」の組は、良質な語呂の実例として
-   30件分揃っているので、当てずっぽうの閾値を決め打ちする代わりに、
-   その分布の最小値付近を境界として使う */
-async function ensureGoroCorpusReady(provider, apiKey) {
-  if (!EMBEDDING_ENDPOINTS[provider] || !apiKey) return;
-  await purgeStaleEmbeddingsOnce();
-  if ((await kvGet("goro_seed_version", null)) === GORO_SEED_VERSION) return;
+/* 語呂合わせをAIで作るのをやめたので、お手本選び・マンネリ検出のために
+   貯めていた語呂のembedding（goro_corpus）はもう読まない。1語につき
+   ベクトル2本を持つ大きなものなので、端末に残さず一度だけ捨てる。
+   ストア自体はDBの版を上げないと消せないので、空のまま残す */
+async function dropGoroCorpusOnce() {
+  if (await kvGet("goro_corpus_dropped", false)) return;
   try {
-    await demoWordDataReady;
-    const seeds = buildGoroSeedCorpus();
-    if (!seeds.length) return;
-    const [meaningPassageVecs, meaningQueryVecs, goroVecs] = await Promise.all([
-      embedTexts(seeds.map((s) => s.meaning), apiKey, "passage"),
-      embedTexts(seeds.map((s) => s.meaning), apiKey, "query"),
-      embedTexts(seeds.map((s) => s.goroText), apiKey, "passage"),
-    ]);
-    const sims = seeds.map((_, i) => cosineSim(meaningQueryVecs[i], goroVecs[i]));
-    const threshold = Math.max(0, Math.min(...sims) - 0.03);
-    await Promise.all(seeds.map((s, i) => idbPut("goro_corpus", {
-      id: s.id, word: s.word, meaning: s.meaning, goroText: s.goroText,
-      /* vector: 意味のembedding（②意味整合ゲート用）
-         goroVector: 語呂合わせ本文のembedding（③のマンネリ検出用）
-         morphemes: ①お手本抽出で接辞の重なりを見るために持つ */
-      vector: meaningPassageVecs[i], goroVector: goroVecs[i], morphemes: s.morphemes,
-      source: "seed", styleOk: s.styleOk, createdAt: Date.now(),
-    })));
-    await kvSet("goro_gate_threshold", threshold);
-    await kvSet("goro_seed_version", GORO_SEED_VERSION);
+    for (const row of await idbGetAll("goro_corpus")) await idbDelete("goro_corpus", row.id);
+    await kvSet("goro_seed_version", null);
+    await kvSet("goro_gate_threshold", null);
+    await kvSet("goro_corpus_dropped", true);
   } catch (err) {
-    console.warn("語呂合わせコーパスの初期化に失敗しました（スキップします）:", err);
+    console.warn("語呂合わせコーパスの破棄に失敗しました（次の起動でやり直します）:", err);
   }
-}
-
-/* ユーザーが実際に採用して保存した語呂合わせを、種データと同じ形で
-   goro_corpusに追加する。idはwordから決まるので、同じ単語を作り直して
-   再保存した場合は自動的に最新の語呂合わせに上書きされる */
-async function growGoroCorpusFromSave(word, wordMeaning, goroText, morphemes, provider, apiKey) {
-  if (!EMBEDDING_ENDPOINTS[provider] || !apiKey || !wordMeaning || !goroText) return;
-  if (!(await isRagEnabled())) return;
-  try {
-    const [meaningVec] = await embedTexts([wordMeaning], apiKey, "passage");
-    const [goroVec] = await embedTexts([goroText], apiKey, "passage");
-    await idbPut("goro_corpus", {
-      id: `user:${word.toLowerCase()}`, word, meaning: wordMeaning, goroText,
-      vector: meaningVec, goroVector: goroVec, morphemes: morphemes || [], source: "user", createdAt: Date.now(),
-    });
-  } catch (err) {
-    console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err);
-  }
-}
-
-/* ②意味整合ゲート・③マンネリ検出の不合格理由。1語ずつの経路と
-   まとめ経路で同じ文面をAIに返せるよう、生成側に切り出しておく */
-function semanticDriftViolation(wordMeaning) {
-  return {
-    code: "semantic-drift",
-    reason: `この語呂合わせの情景は、単語の意味「${wordMeaning}」との結びつきが弱いようです。読みの断片を活かしたまま、単語の意味を連想できる情景に描き直してください。`,
-  };
-}
-
-function phrasingReuseViolation(similarWord) {
-  return {
-    code: "phrasing-reuse",
-    reason: `この語呂合わせは、以前「${similarWord}」で使った言い回し・情景と似すぎています。読みの活かし方や情景の型を変えてください。`,
-  };
-}
-
-/* 機械チェックに通らなかった場合に作り直す最大回数。
-   1回目で合格すれば追加のAPI呼び出しは発生しない */
-const GORO_MAX_ATTEMPTS = 3;
-
-async function generateGoro(word, morphemes, provider, apiKey, wordMeaning, avoidTexts, onStatus) {
-  /* 呼び出し元に今実際に何をしているかを知らせる。呼び出し元を
-     指定しない場合（バッチ処理など）は何もしない */
-  const report = onStatus || (() => {});
-
-  /* 機械チェックで弾いた候補と、その不合格理由。次の試行でAIに具体的に
-     伝えることで、同じ失敗の繰り返しを防ぐ */
-  const rejectedNotes = [];
-  /* 全試行が不合格でも語呂合わせ自体は出せるよう、違反の最も少ない候補を
-     保険として持っておく（チェックの厳しさでユーザーの操作を失敗させない） */
-  let fallback = null;
-
-  /* embeddingsが使える場合のみ、①examples検索・②③の材料を用意する。
-     どこかで失敗しても本筋の生成は止めず、以降の機能を静かに諦める */
-  const useEmbeddings = !!EMBEDDING_ENDPOINTS[provider] && !!apiKey && (await isRagEnabled());
-  let examples = [];
-  let corpus = [];
-  let meaningQueryVec = null;
-  let gateThreshold = null;
-  if (useEmbeddings) {
-    try {
-      report("お手本を準備中");
-      await ensureGoroCorpusReady(provider, apiKey);
-      corpus = await idbGetAll("goro_corpus");
-      gateThreshold = await kvGet("goro_gate_threshold", null);
-      /* ①のFew-shot例は「同じ接辞をどう音として捌いたか」の実例を優先する。
-         意味の近さ（embedding類似度）は語呂の技法とあまり相関がなく
-         参考にならなかったが、接辞そのものが同じなら、その読みをどう
-         断片化して自然な日本語に溶け込ませたかがそのまま参考になる。
-         共有接辞数の多い順に並べ、同数の中はランダムにして、
-         GORO_EXAMPLE_TOPK件を選ぶ（一致が無ければ実質ランダム抽出のまま） */
-      examples = corpus
-        /* styleOk===false は現在の品質ルールに通らない古い作風の種データ。
-           ③のマンネリ検出には引き続き使うが、手本としては見せない */
-        .filter((c) => c.word.toLowerCase() !== word.toLowerCase() && c.styleOk !== false)
-        .map((c) => ({
-          ...c,
-          affixOverlap: (c.morphemes || []).filter((cm) =>
-            morphemes.some((m) => (m.part || "").toLowerCase() === (cm.part || "").toLowerCase())
-          ).length,
-          sortKey: Math.random(),
-        }))
-        .sort((a, b) => b.affixOverlap - a.affixOverlap || a.sortKey - b.sortKey)
-        .slice(0, GORO_EXAMPLE_TOPK);
-      /* meaningQueryVecは②意味整合ゲートで使うため、examples抽出とは
-         切り離した上で引き続き取得する */
-      if (wordMeaning) {
-        report("単語の意味を解析中");
-        [meaningQueryVec] = await embedTexts([wordMeaning], apiKey, "query");
-      }
-    } catch (err) {
-      console.warn("語呂合わせのRAG準備に失敗しました（スキップします）:", err);
-    }
-  }
-
-  for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
-    report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
-    const sys = goroSystemPrompt(word, morphemes, wordMeaning, avoidTexts, rejectedNotes, examples);
-    const json = await callAI(provider, apiKey, sys, "語呂合わせ候補を1件、JSON形式で出力してください。");
-    const candidates = (json.candidates || []).map((c) => ({ text: c.text, highlight: c.highlight || [] }));
-    if (!candidates.length) throw new Error("語呂合わせが生成できませんでした");
-
-    report("機械チェック中");
-    const violations = goroViolations(candidates[0].text, morphemes);
-
-    /* ②単語の意味との結びつきが弱い（読みの音を成立させるためだけの
-       こじつけの情景になっている）候補と、③既存の語呂と言い回しが
-       似すぎている候補を、機械チェックの違反として同じ土俵で扱う。
-       既に機械チェック(goroViolations)で不合格が確定している場合は
-       無駄なembedding呼び出しをしない */
-    if (useEmbeddings && !violations.length) {
-      try {
-        report("意味の整合性を確認中");
-        const [candVec] = await embedTexts([candidates[0].text], apiKey, "passage");
-        if (meaningQueryVec && gateThreshold != null) {
-          const alignScore = cosineSim(candVec, meaningQueryVec);
-          if (alignScore < gateThreshold) violations.push(semanticDriftViolation(wordMeaning));
-        }
-        const repeatHit = corpus
-          .filter((c) => Array.isArray(c.goroVector) && c.word.toLowerCase() !== word.toLowerCase())
-          .find((c) => cosineSim(candVec, c.goroVector) >= GORO_REPEAT_SIM_THRESHOLD);
-        if (repeatHit) violations.push(phrasingReuseViolation(repeatHit.word));
-      } catch (err) {
-        console.warn("意味整合ゲート/マンネリ検出の計算に失敗しました（スキップします）:", err);
-      }
-    }
-
-    if (violations.length) {
-      if (!fallback || violations.length < fallback.violations.length) {
-        fallback = { candidates, violations };
-      }
-      rejectedNotes.push({ text: candidates[0].text, reasons: violations.map((v) => v.reason) });
-      continue;
-    }
-
-    /* 機械チェックを通った候補だけ、AIによる自然さ・面白さの校閲にかける。
-       校閲で新たな違反が入り込む場合は、校閲前の合格版をそのまま使う */
-    report("校閲中");
-    const revised = await validateGoroCandidates(word, morphemes, candidates, provider, apiKey, wordMeaning);
-    return goroViolations(revised[0]?.text, morphemes).length ? candidates : revised;
-  }
-
-  console.warn("Goro deterministic check failed on all attempts, using best candidate:", fallback.violations);
-  return fallback.candidates;
 }
 
 /* ---- 使用量の記録 ----
@@ -2728,20 +2199,13 @@ function captureRateLimitHeaders(res) {
 
 /* ------------------------------------------------------------------ *
  * 4.7 まとめ生成（複数の単語を1リクエストに束ねる）
- *   AIの呼び出しはリクエスト単位で課金・レート制限されるため、1語につき4〜6回
- *   呼んでいた分解・語呂合わせを、数語ぶんまとめて1回にする。
+ *   AIの呼び出しはリクエスト単位で課金・レート制限されるため、1語ずつ
+ *   呼んでいた分解を、数語ぶんまとめて1回にする。
  *
- *   語呂合わせの精度を落とさないために、次の2つは必ず守る。
- *     ・プロンプトの規則本文は1語ずつの経路とまったく同じ定数を共有する
- *       （DECOMPOSE_* / GORO_RULE_* / GORO_VALIDATION_CRITERIA）。
- *       まとめ用に書き写すと、片方だけ直したときに、まとめ生成の精度だけが
- *       誰にも気づかれずに落ちていく。
- *     ・生成後の機械チェック(goroViolations)・意味整合ゲート・マンネリ検出・
- *       不合格時の作り直しループ・AIによる校閲パスを、1語ずつの経路と
- *       まったく同じものを同じ順で通す。
- *   つまり、まとめるのは「送り方」だけで、合否の基準は一切変えない。
- *   まとめたせいで応答が雑になれば機械チェックが捕まえて作り直しに回るので、
- *   手抜きがそのまま単語帳に入ることはない。
+ *   プロンプトの規則本文は1語ずつの経路とまったく同じ定数（DECOMPOSE_*）を
+ *   共有する。まとめ用に書き写すと、片方だけ直したときに、まとめ生成の
+ *   精度だけが誰にも気づかれずに落ちていく。まとめるのは「送り方」だけで、
+ *   合否の基準は変えない。
  * ------------------------------------------------------------------ */
 
 /* 1リクエストにまとめる単語数。増やすほど課金は減るが、1回の応答で
@@ -2929,201 +2393,6 @@ async function batchValidateDecompositions(entries, provider, apiKey) {
   } catch (err) {
     console.warn("まとめ校閲に失敗しました（元の分割をそのまま使います）:", err);
   }
-}
-
-/* --- まとめ語呂合わせ生成 --- */
-
-function batchGoroSystemPrompt(count) {
-  return [
-    "あなたは日本語の語呂合わせ作家です。",
-    `${count}語の英単語について、それぞれ語呂合わせを1件ずつ作ってください。単語ごとの接辞・カタカナ読み・意味は、ユーザーメッセージで単語ごとに示します。`,
-    GORO_RULE_MATERIAL,
-    GORO_RULE_MEANING_ALIGN,
-    GORO_RULE_BAD_PATTERNS,
-    GORO_RULE_FINAL,
-    /* まとめて作らせたときにだけ起きる崩れ方が2つある。1語目だけ丁寧で
-       残りが雑になることと、同じ型の一文を全語で使い回すこと。どちらも
-       1語ずつの経路では起きないので、この注意はまとめ経路にだけ足す */
-    "【重要】1語ずつ、上の規則をすべて満たしているか確認してから次の語に進んでください。まとめて作るからといって、1語ずつ作る場合より雑にしてはいけません。",
-    "【重要】単語ごとに情景・オチ・文体を必ず変えてください。同じ型・同じ言い回しの一文を複数の単語で使い回してはいけません。",
-    GORO_RULE_SELF_CHECK,
-    "渡された単語すべてについて、渡された順序のまま1件ずつ返してください。単語を飛ばしてはいけません。wordには渡された単語をそのまま入れてください。",
-    "次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-    '{"results":[{"word":"dictionary","text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！","highlight":[{"part":"dict","in_text":"軸"}]}]}',
-  ].join("\n");
-}
-
-function batchGoroWordBlock(item, index) {
-  return [
-    `【${index + 1}】単語: ${item.word}`,
-    `  接辞とカタカナ読み: ${item.morphemes.map((m) => `${m.part}(${m.reading})`).join(" / ")}`,
-    item.wordMeaning ? `  単語全体の意味: ${item.wordMeaning}` : "",
-  ].filter(Boolean).join("\n");
-}
-
-function batchGoroUserPrompt(states, rag) {
-  return states.map((s, i) => [
-    batchGoroWordBlock(s.item, i),
-    (rag && (rag.examples.get(s.item.word) || []).length) ? GORO_EXAMPLE_BLOCK(rag.examples.get(s.item.word)) : "",
-    s.notes.length ? GORO_REJECTED_BLOCK(s.notes) : "",
-  ].filter(Boolean).join("\n")).join("\n\n");
-}
-
-/* 1チャンク分のRAG材料をまとめて用意する。embeddingsは1リクエストで
-   複数テキストを送れるので、単語数によらず呼び出しは数回で済む。
-   どこかで失敗しても本筋の生成は止めず、静かにRAGだけ諦める */
-async function prepareBatchGoroRag(items, provider, apiKey) {
-  if (!EMBEDDING_ENDPOINTS[provider] || !apiKey || !(await isRagEnabled())) return null;
-  try {
-    await ensureGoroCorpusReady(provider, apiKey);
-    const corpus = await idbGetAll("goro_corpus");
-    const gateThreshold = await kvGet("goro_gate_threshold", null);
-    const meaningVecs = new Map();
-    const examples = new Map();
-    const withMeaning = items.filter((it) => it.wordMeaning);
-    if (withMeaning.length) {
-      const vecs = await embedTexts(withMeaning.map((it) => it.wordMeaning), apiKey, "query");
-      withMeaning.forEach((it, i) => {
-        meaningVecs.set(it.word, vecs[i]);
-        examples.set(it.word, corpus
-          .filter((c) => c.word.toLowerCase() !== it.word.toLowerCase() && Array.isArray(c.vector) && c.styleOk !== false)
-          .map((c) => ({ ...c, score: cosineSim(vecs[i], c.vector) }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, GORO_EXAMPLE_TOPK));
-      });
-    }
-    return { corpus, gateThreshold, meaningVecs, examples };
-  } catch (err) {
-    console.warn("まとめ生成のRAG準備に失敗しました（スキップします）:", err);
-    return null;
-  }
-}
-
-/* 機械チェック・意味整合ゲート・マンネリ検出を、チャンク内の全候補に
-   同じ基準で適用する。generateGoro と同じく、機械チェックで既に不合格が
-   確定している候補にはembeddingを使わない */
-async function batchGoroViolations(fresh, rag, apiKey) {
-  const out = new Map();
-  for (const f of fresh) out.set(f, goroViolations(f.cand.text, f.state.item.morphemes));
-  const clean = fresh.filter((f) => !out.get(f).length);
-  if (!rag || !clean.length) return out;
-
-  try {
-    const vecs = await embedTexts(clean.map((f) => f.cand.text), apiKey, "passage");
-    clean.forEach((f, i) => {
-      const violations = out.get(f);
-      const item = f.state.item;
-      const meaningVec = rag.meaningVecs.get(item.word);
-      if (meaningVec && rag.gateThreshold != null && cosineSim(vecs[i], meaningVec) < rag.gateThreshold) {
-        violations.push(semanticDriftViolation(item.wordMeaning));
-      }
-      const repeatHit = rag.corpus
-        .filter((c) => Array.isArray(c.goroVector) && c.word.toLowerCase() !== item.word.toLowerCase())
-        .find((c) => cosineSim(vecs[i], c.goroVector) >= GORO_REPEAT_SIM_THRESHOLD);
-      if (repeatHit) violations.push(phrasingReuseViolation(repeatHit.word));
-    });
-  } catch (err) {
-    console.warn("意味整合ゲート/マンネリ検出の計算に失敗しました（スキップします）:", err);
-  }
-  return out;
-}
-
-function batchGoroValidationSystemPrompt(count) {
-  return [
-    "あなたは日本語の語呂合わせの校閲者です。",
-    `${count}語ぶんの語呂合わせ候補をまとめて渡します。単語ごとに独立して、次の基準をすべて満たしているか厳しく確認してください。`,
-    GORO_VALIDATION_CRITERIA(true),
-    "いずれかを満たしていない候補は書き直してください。その際、どの接辞の音も省略してはいけません（元の発音から大胆に崩すのは自由です）。すべて満たしている候補はそのまま使ってください。",
-    "渡された単語すべてについて、渡された順序のまま1件ずつ返してください。単語を飛ばしてはいけません。wordには渡された単語をそのまま入れてください。",
-    "書き直した場合も含め、接辞の綴りを添えるカッコの書式は必ず保ってください。次のJSON形式のみを返し、それ以外の文章は一切書かないでください。",
-    '{"results":[{"word":"dictionary","text":"軸(dict)にイオン(ion)がぶつかり電気あり(ary)、大慌てだ！"}]}',
-  ].join("\n");
-}
-
-function batchGoroValidationUserPrompt(states) {
-  return states.map((s, i) => [
-    batchGoroWordBlock(s.item, i),
-    `  候補: ${s.cand.text}`,
-  ].join("\n")).join("\n\n");
-}
-
-/* 機械チェックを通った候補だけを、まとめて校閲にかける。校閲で新たな
-   違反が入り込んだ語は校閲前の合格版に戻す（1語ずつの経路と同じ扱い） */
-async function batchValidateGoro(states, provider, apiKey) {
-  if (!states.length) return;
-  try {
-    const json = await callAI(provider, apiKey, batchGoroValidationSystemPrompt(states.length), batchGoroValidationUserPrompt(states), 0.4);
-    const byWord = indexAiResultsByWord(json.results, states.map((s) => s.item.word));
-    for (const s of states) {
-      const row = byWord.get(s.item.word.toLowerCase());
-      const text = (row && typeof row.text === "string") ? row.text.trim() : "";
-      if (!text || goroViolations(text, s.item.morphemes).length) continue;
-      s.cand = { text, highlight: s.cand.highlight };
-    }
-  } catch (err) {
-    console.warn("まとめ語呂の校閲に失敗しました（校閲前の候補を使います）:", err);
-  }
-}
-
-/* items: [{ word, wordMeaning, morphemes }]（1チャンク分）
-   戻り値: Map<word, {text, highlight}>。作れなかった語は入らない */
-async function batchGenerateGoro(items, provider, apiKey, rag, onStatus) {
-  /* 1語ずつの経路(generateGoro)と同じく、今実際に何をしているかを
-     呼び出し元へ報告する。指定が無ければ何もしない */
-  const report = onStatus || (() => {});
-  const states = items.map((item) => ({ item, notes: [], best: null, cand: null, passed: false }));
-
-  for (let attempt = 0; attempt < GORO_MAX_ATTEMPTS; attempt++) {
-    const pending = states.filter((s) => !s.cand);
-    if (!pending.length) break;
-
-    report(attempt === 0 ? "語呂合わせを生成中" : "語呂合わせを作り直し中");
-    let json;
-    try {
-      json = await callAI(provider, apiKey, batchGoroSystemPrompt(pending.length), batchGoroUserPrompt(pending, rag));
-    } catch (err) {
-      /* 1回目で失敗したら候補が1つも無いので呼び出し元に投げる。
-         2回目以降は手元に候補があるので、作り直しを諦めてそれを使う */
-      if (attempt === 0) throw err;
-      console.warn("まとめ語呂の作り直しに失敗しました:", err);
-      break;
-    }
-
-    const byWord = indexAiResultsByWord(json.results, pending.map((s) => s.item.word));
-    const fresh = [];
-    for (const state of pending) {
-      const row = byWord.get(state.item.word.toLowerCase());
-      const text = (row && typeof row.text === "string") ? row.text.trim() : "";
-      if (!text) continue; // 応答から漏れた語は次の試行に持ち越す
-      fresh.push({ state, cand: { text, highlight: Array.isArray(row.highlight) ? row.highlight : [] } });
-    }
-
-    report(rag ? "意味の整合性を確認中" : "機械チェック中");
-    const violationsOf = await batchGoroViolations(fresh, rag, apiKey);
-    for (const f of fresh) {
-      const violations = violationsOf.get(f) || [];
-      if (!violations.length) { f.state.cand = f.cand; f.state.passed = true; continue; }
-      if (!f.state.best || violations.length < f.state.best.violations.length) {
-        f.state.best = { cand: f.cand, violations };
-      }
-      f.state.notes.push({ text: f.cand.text, reasons: violations.map((v) => v.reason) });
-    }
-  }
-
-  /* 全試行が不合格だった語は、1語ずつの経路と同じく違反の最も少ない
-     候補を使う（チェックの厳しさで操作そのものを失敗させない） */
-  for (const state of states) {
-    if (state.cand || !state.best) continue;
-    console.warn(`"${state.item.word}" は機械チェックを通らなかったため、違反の最も少ない候補を使います:`, state.best.violations);
-    state.cand = state.best.cand;
-  }
-
-  report("校閲中");
-  await batchValidateGoro(states.filter((s) => s.passed), provider, apiKey);
-
-  const out = new Map();
-  for (const state of states) if (state.cand) out.set(state.item.word, state.cand);
-  return out;
 }
 
 /* ------------------------------------------------------------------ *
@@ -4124,7 +3393,7 @@ if (!SpeechRecognitionCtor && !canRecord) {
 
 /* APIキー未登録でも分割アニメーション・語呂合わせをそのまま体験できるよう、
    デモ用の分解結果・語呂合わせを実行時に demo_words.csv から読み込んで
-   組み立てる（AI応答(decomposeWord/generateGoroの戻り値)と同じ形に揃える）。
+   組み立てる（AI応答(decomposeWordの戻り値)と同じ形に揃える）。
    単語を増やしたい・語呂を直したい場合はこのJSファイルを触らずに、
    GitHub上で demo_words.csv （word, meaning, goroText の3列）を編集
    するだけでよいようにするための仕組み。
@@ -4485,31 +3754,16 @@ async function runDecompose(rawWord) {
   spinnerRow.style.visibility = "hidden";
   currentMorphemes = morphemes;
 
-  /* Stage2(語呂合わせ生成)は接辞が確定した時点で先行開始し、分解アニメーションの
-     再生時間と並行して進める。結果画面へは、両方が揃うまで遷移しない。
-     デモ単語(APIキー未登録時)は、あらかじめ用意した語呂合わせをそのまま使う */
-  document.getElementById("regen-btn").disabled = true;
-  /* 新しい単語の初回生成では、別の単語の候補を「避けるべき前回の候補」として
-     引き継いでしまわないようにリセットする。表示も一緒に消す：自動生成が
-     オフだと以降なにも描き直さないため、前の単語の語呂合わせが残ってしまう */
+  /* 語呂合わせはAIでは作らない。出すのは、デモ単語(APIキー未登録時)に
+     用意してある語呂と、保存してある札の語呂だけ。どちらでもなければ空にして、
+     欲しい人は結果画面の「ゴロ自作」から書く。先に空にしておかないと、
+     前に見た単語の語呂が残ってしまう */
   currentCandidates = [];
-  renderGoroList();
-  if (demo) {
-    currentCandidates = [{ text: demo.goroText, highlight: [] }];
-    renderGoroList();
-    document.getElementById("regen-btn").disabled = false;
-  } else if (savedCard && savedCard.goro_text) {
-    /* 保存してある語呂合わせをそのまま出す。別のものが欲しいときは
-       作り直すボタンから（APIキーが無いときは押せないままにする） */
+  if (demo) currentCandidates = [{ text: demo.goroText, highlight: [] }];
+  else if (savedCard && savedCard.goro_text) {
     currentCandidates = [{ text: savedCard.goro_text, highlight: savedCard.goro_highlight || [] }];
-    renderGoroList();
-    document.getElementById("regen-btn").disabled = !apiKey;
-  } else if (apiKey && await isGoroAutoEnabled()) {
-    /* 札に語呂合わせが無いときは、今まで通り作る（APIキーがあるときだけ） */
-    /* 待たずに裏側で先行実行する。完了はloadGoroCandidates内のrenderGoroList
-       が、進捗はgenerateGoroからのreportGoroStatusがgoro-listへ直接反映する */
-    loadGoroCandidates(provider, apiKey);
   }
+  renderGoroList();
 
   const animStyle = resolveAnimStyle(await kvGet("decompose_anim", "random"));
   /* 分割する接辞が1つ（＝単語全体がそのまま1要素）しかない場合は、
@@ -4564,18 +3818,9 @@ async function runDecompose(rawWord) {
     }, lastMeaningDelay);
   }
 
-  /* アニメーションが一通り終わったら、語呂合わせの生成完了を待たずに
-     一定時間だけ置いて次の画面へ進む。以前は未完了なら「語呂合わせを
-     準備中…」と出して待っていたが、分解結果を読む時間としては長すぎ、
-     待たされている感じが強かった。語呂合わせは到着し次第
-     loadGoroCandidates が描画するので、遷移を止める必要はない */
+  /* アニメーションが一通り終わったら、分解結果を読む時間だけ置いて次の画面へ */
   const DECOMPOSE_READ_MS = 3000;
   await sleep(lastMeaningDelay + DECOMPOSE_READ_MS);
-  /* 遷移した時点でまだ生成中でも、goro-listにはgenerateGoro自身が
-     reportGoroStatusで書き込んだ現在の実況がすでに反映されている
-     （loadGoroCandidatesの初回reportが分解アニメーションの再生中に
-     とっくに発火しているため）ので、ここで別途プレースホルダーを
-     出す必要はない */
 
   renderResultScreen();
   showScreen("screen-result");
@@ -8727,7 +7972,6 @@ async function renderResultScreen() {
   document.getElementById("add-goro-form").style.display = "none";
   document.getElementById("add-goro-btn").style.display = "block";
   document.getElementById("add-goro-input").value = "";
-  syncGoroControls();
 
   document.getElementById("result-word-label").textContent = `${currentWord} の接辞`;
   const list = document.getElementById("affix-list");
@@ -8744,53 +7988,9 @@ async function renderResultScreen() {
   await refreshSaveWordBtn();
 }
 
-/* ---- 語呂合わせ候補（タップ=読み上げ / 保存） ---- */
-/* 生成中は「作る」ボタンを引っ込める。生成が始まった合図はgoro-listの
-   実況表示なので、ボタンを出したままにすると二重に押せてしまう */
-let goroInFlight = false;
-
-/* 語呂合わせがまだ無いときは「作り直す」ではなく「作る」を出す。
-   自動生成をオフにしている場合、ここが唯一の生成の入口になる */
-function syncGoroControls() {
-  const has = currentCandidates.length > 0;
-  const regen = document.getElementById("regen-btn");
-  const gen = document.getElementById("goro-generate-btn");
-  if (regen) regen.hidden = !has;
-  if (gen) gen.hidden = has || goroInFlight;
-}
-
-async function loadGoroCandidates(provider, apiKey) {
-  /* 再生成の場合、直前の候補は気に入らなかったということなので、
-     同じような内容を繰り返さないようAIに明示的に伝える */
-  const previousTexts = currentCandidates.map((c) => c.text).filter(Boolean);
-  goroInFlight = true;
-  syncGoroControls();
-  try {
-    currentCandidates = await generateGoro(currentWord, currentMorphemes, provider, apiKey, currentWordMeaning, previousTexts, (phrase) => reportGoroStatus("goro-list", phrase));
-  } catch (err) {
-    const list = document.getElementById("goro-list");
-    list.innerHTML = "";
-    const note = document.createElement("div");
-    note.className = "empty-note";
-    note.textContent = isQuotaError(err)
-      ? QUOTA_ERROR_MESSAGE
-      : `語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。`;
-    list.appendChild(note);
-    goroInFlight = false;
-    syncGoroControls();
-    document.getElementById("regen-btn").disabled = false;
-    console.error(err);
-    return;
-  }
-  goroInFlight = false;
-  renderGoroList();
-  await refreshSaveWordBtn();
-  document.getElementById("regen-btn").disabled = false;
-}
-
-/* 語呂合わせカードを編集状態に切り替える。生成結果はだいたい良くても
-   一語だけ直したいことがあるため、作り直しや自作をやり直させるのではなく
-   その場で手を入れられるようにする */
+/* ---- 語呂合わせ候補（自作・編集 / 保存） ---- */
+/* 語呂合わせカードを編集状態に切り替える。一語だけ直したいときに、
+   自作をやり直させるのではなくその場で手を入れられるようにする */
 function startGoroEdit(card, idx) {
   const original = currentCandidates[idx].text;
   card.classList.add("editing");
@@ -8839,7 +8039,6 @@ function renderGoroList() {
 
     card.querySelector(".goro-edit-btn").addEventListener("click", () => startGoroEdit(card, idx));
   });
-  syncGoroControls();
 }
 
 /* 単語帳のレコードIDは単語そのものだけで決める(語呂合わせの内容を含めない)。
@@ -8902,7 +8101,7 @@ async function toggleSaveWord() {
   const newGoroText = c ? c.text : "";
 
   /* 既に保存済みでも、現在表示中の語呂合わせが保存内容と同じ時だけ「取り消し」扱いにする。
-     語呂合わせを作り直して再保存した場合は、既存レコードを上書き更新する */
+     語呂合わせを書き直して再保存した場合は、既存レコードを上書き更新する */
   if (existing && existing.goro_text === newGoroText) {
     await deleteWordRecord(id);
   } else {
@@ -8922,42 +8121,18 @@ async function toggleSaveWord() {
       /* 保存先は、結果画面で選んでいる冊 */
       deck: document.getElementById("result-deck-select")?.value || deckForNewWord(),
       memorized: existing ? existing.memorized : false,
-      /* 語呂を作り直して保存し直しても、付けてあった例文と復習の記録は残す */
+      /* 語呂を書き直して保存し直しても、付けてあった例文と復習の記録は残す */
       examples: existing && Array.isArray(existing.examples) ? existing.examples : [],
       srs: existing && existing.srs ? existing.srs : null,
       starred: !!(existing && existing.starred),
       created_at: existing ? existing.created_at : Date.now(),
     });
     if (!(existing && Array.isArray(existing.examples) && existing.examples.length)) queueAutoExamples([id]);
-    /* ユーザーが良いと判断して保存した語呂合わせを、今後の①Few-shot例・
-       ③マンネリ検出の材料として蓄積する。保存操作の成否には影響させない */
-    loadApiKey(provider)
-      .then((apiKey) => growGoroCorpusFromSave(currentWord, currentWordMeaning, newGoroText, currentMorphemes, provider, apiKey))
-      .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
   }
   await refreshSaveWordBtn();
 }
 
 document.getElementById("save-word-btn").addEventListener("click", toggleSaveWord);
-
-/* 「作り直す」と「作る」は、直前の候補を避けるかどうかが違うだけで
-   やることは同じ。loadGoroCandidatesが現在の候補を見て使い分ける */
-async function requestGoro() {
-  const provider = await getActiveProvider();
-  const apiKey = await loadApiKey(provider);
-  if (!apiKey) {
-    homeError.textContent = "設定画面でAPIキーを登録してください";
-    showScreen("screen-settings");
-    refreshUsageDisplay();
-    return;
-  }
-  document.getElementById("regen-btn").disabled = true;
-  reportGoroStatus("goro-list", currentCandidates.length ? "語呂合わせを作り直し中" : "語呂合わせを生成中");
-  await loadGoroCandidates(provider, apiKey);
-}
-
-document.getElementById("regen-btn").addEventListener("click", requestGoro);
-document.getElementById("goro-generate-btn").addEventListener("click", requestGoro);
 
 const addGoroBtn = document.getElementById("add-goro-btn");
 const addGoroForm = document.getElementById("add-goro-form");
@@ -9923,13 +9098,8 @@ function renderWordDetailGoro(record) {
     card.innerHTML = `<div class="goro-body"><span class="txt">${escapeHtml(record.goro_text)}</span></div>`;
     goroList.appendChild(card);
   }
-  /* 語呂合わせ無しで保存した単語（自動生成をオフにしている場合）は、
-     ここから作れるようにする。作り直すアイコンは、直すものがある時だけ */
-  const showGenerate = !has && goroButtonVisible;
-  document.getElementById("word-detail-regen-btn").hidden = !has || !goroButtonVisible;
-  document.getElementById("word-detail-goro-generate-btn").hidden = !showGenerate;
-  /* 語呂も作るボタンも出ないなら、見出しだけ残しても場所を取るだけ */
-  document.getElementById("word-detail-goro-section").hidden = !goroButtonVisible || (!has && !showGenerate);
+  /* 語呂が無いなら、見出しだけ残しても場所を取るだけ */
+  document.getElementById("word-detail-goro-section").hidden = !goroButtonVisible || !has;
 }
 
 let currentWordDetailRecord = null;
@@ -10054,45 +9224,6 @@ document.getElementById("word-detail-back-btn").addEventListener("click", async 
   document.getElementById("home-error").textContent = "";
   renderRecentChips();
 });
-
-async function requestWordDetailGoro() {
-  const record = currentWordDetailRecord;
-  if (!record) return;
-
-  const provider = await getActiveProvider();
-  const apiKey = await loadApiKey(provider);
-  if (!apiKey) {
-    homeError.textContent = "設定画面でAPIキーを登録してください";
-    showScreen("screen-settings");
-    refreshUsageDisplay();
-    return;
-  }
-
-  const btn = document.getElementById("word-detail-regen-btn");
-  const genBtn = document.getElementById("word-detail-goro-generate-btn");
-  btn.disabled = true;
-  genBtn.hidden = true;
-  reportGoroStatus("word-detail-goro", record.goro_text ? "語呂合わせを作り直し中" : "語呂合わせを生成中");
-
-  try {
-    const candidates = await generateGoro(record.word, record.morphemes || [], provider, apiKey, record.word_meaning, [record.goro_text].filter(Boolean), (phrase) => reportGoroStatus("word-detail-goro", phrase));
-    const c = candidates[0];
-    record.goro_text = c.text;
-    record.goro_highlight = c.highlight || [];
-    await saveWordRecord(record);
-    renderWordDetailGoro(record);
-  } catch (err) {
-    document.getElementById("word-detail-goro").innerHTML =
-      `<div class="empty-note">${escapeHtml(isQuotaError(err) ? QUOTA_ERROR_MESSAGE : `語呂合わせの生成に失敗しました（${err.message}）。もう一度お試しください。`)}</div>`;
-    /* 失敗しても、まだ語呂合わせが無いならもう一度押せるように戻す */
-    genBtn.hidden = !!record.goro_text;
-    console.error(err);
-  }
-  btn.disabled = false;
-}
-
-document.getElementById("word-detail-regen-btn").addEventListener("click", requestWordDetailGoro);
-document.getElementById("word-detail-goro-generate-btn").addEventListener("click", requestWordDetailGoro);
 
 /* ---- 例文 ----
    単語1つにつき英文と訳を2組。単語ページで1語ずつ作れるほか、単語帳で
@@ -11868,11 +10999,6 @@ async function initSettingsScreen() {
     p.classList.toggle("on", p.dataset.animToggle === (animationsEnabled ? "on" : "off"));
   });
 
-  const goroAuto = await isGoroAutoEnabled();
-  document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((p) => {
-    p.classList.toggle("on", p.dataset.goroToggle === (goroAuto ? "on" : "off"));
-  });
-
   await refreshGoroButtonSetting();
   document.querySelectorAll("#goro-button-row .mode-pill").forEach((p) => {
     p.classList.toggle("on", p.dataset.goroButton === (goroButtonVisible ? "on" : "off"));
@@ -12009,13 +11135,6 @@ document.getElementById("chat-model-select").addEventListener("change", async (e
   AI_ADAPTERS.gemini.thinkingSupported = true;
   const note = document.getElementById("chat-model-note");
   if (note) note.textContent = "";
-});
-
-document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((pill) => {
-  pill.addEventListener("click", async () => {
-    await kvSet("goro_auto", pill.dataset.goroToggle === "on");
-    document.querySelectorAll("#goro-toggle-row .mode-pill").forEach((p) => p.classList.toggle("on", p === pill));
-  });
 });
 
 document.querySelectorAll("#goro-button-row .mode-pill").forEach((pill) => {
@@ -13475,8 +12594,11 @@ function batchRowToWordRecord(row, existing) {
     morphemes: row.result.morphemes,
     synonyms: row.result.synonyms,
     antonyms: row.result.antonyms,
-    goro_text: row.result.goro_text,
-    goro_highlight: row.result.goro_highlight,
+    /* まとめ登録では語呂合わせを作らない。すでに単語帳にある語を積み直した
+       ときに、自分で書いてあった語呂を空で上書きしてしまわないよう残す */
+    goro_text: row.result.goro_text || (existing && existing.goro_text) || "",
+    goro_highlight: row.result.goro_text ? (row.result.goro_highlight || [])
+      : (existing && existing.goro_text ? existing.goro_highlight || [] : []),
     provider: row.result.provider,
     deck: existing ? deckOf(existing) : (row.deck || DEFAULT_DECK),
     memorized: existing ? existing.memorized : false,
@@ -13660,11 +12782,6 @@ async function runBatchGeneration() {
   const queue = (await loadBatchQueue()).filter((r) => r.status === "pending");
   if (!queue.length) { toast("生成待ちの単語がありません"); return; }
 
-  /* 設定で語呂合わせをオフにしているなら、まとめて登録でも作らない。
-     ここで設定を無視すると、オフにしたのにトークンも待ち時間も
-     いちばん掛かる工程が動いてしまう。語呂は保存したあとで、
-     単語ページの「語呂合わせを作る」から1語ずつ作れる */
-  const goroAuto = await isGoroAutoEnabled();
   const skipUnsplit = await isBatchSkipUnsplitEnabled();
 
   batchRunning = true;
@@ -13690,26 +12807,14 @@ async function runBatchGeneration() {
           if (!d) { await markBatchFailed(row, "分解できませんでした"); continue; }
           if (d.wordExists === false) { await markBatchFailed(row, "英単語として認識できませんでした"); continue; }
           /* 接辞に分かれなかった語（1つも取れない／単語まるごとで1つ）は、
-             省くことを選んでいればここで落とす。語呂合わせを作る前なので、
-             省いた語のぶんのトークンは使わない */
+             省くことを選んでいればここで落とす */
           if (skipUnsplit && d.morphemes.length < 2) { await idbDelete(BATCH_STORE, row.id); skipped++; continue; }
           if (!d.morphemes.length) { await markBatchFailed(row, "接辞に分解できませんでした"); continue; }
           items.push({ row, decomposed: d, word: d.correctedWord, wordMeaning: d.meaning, morphemes: d.morphemes });
         }
         if (items.length) {
-          let goro = new Map();
-          if (goroAuto) {
-            const rag = await prepareBatchGoroRag(items, provider, apiKey);
-            /* 語呂合わせ側は今なにをしているかを報告してくるが、ここでは
-               受け取らない。表示は2つだけに保つ */
-            goro = await batchGenerateGoro(items, provider, apiKey, rag, null);
-          }
           setBatchProgress(BATCH_PHASE_SAVE);
           for (const it of items) {
-            const cand = goro.get(it.word);
-            /* 語呂合わせを作る設定のときだけ、作れなかった語を失敗にする。
-               オフのときは語呂が無いのが正しい状態なので、そのまま保存する */
-            if (goroAuto && !cand) { await markBatchFailed(it.row, "語呂合わせを生成できませんでした"); continue; }
             it.row.status = "ready";
             it.row.error = "";
             it.row.result = {
@@ -13720,8 +12825,8 @@ async function runBatchGeneration() {
               morphemes: it.decomposed.morphemes,
               synonyms: it.decomposed.synonyms,
               antonyms: it.decomposed.antonyms,
-              goro_text: cand ? cand.text : "",
-              goro_highlight: cand ? cand.highlight : [],
+              goro_text: "",
+              goro_highlight: [],
               provider,
             };
             /* 意味が取れていない札は入れない。読めないものを単語帳に
@@ -13764,11 +12869,6 @@ async function saveGeneratedBatchRow(row, provider, apiKey) {
   await saveWordRecord(record);
   await idbDelete(BATCH_STORE, row.id);
   if (!record.examples.length) queueAutoExamples([record.id]);
-  /* ユーザーが使うと判断した語呂を、今後のFew-shot例・マンネリ検出の
-     材料として蓄積する。1語ずつ保存したときと同じ扱いにする */
-  growGoroCorpusFromSave(row.result.word, row.result.word_meaning, row.result.goro_text,
-    row.result.morphemes, provider, apiKey)
-    .catch((err) => console.warn("語呂合わせコーパスへの追加に失敗しました（スキップします）:", err));
 }
 
 /* 撮影ボタンのクリックハンドラは、iOS Safariの制約により
@@ -14085,7 +13185,7 @@ if ("serviceWorker" in navigator) {
    でも最新の番号が出てしまい、更新できているかの確認に使えなかった。
    ここに直接書くことで、表示された番号＝いま読み込まれているapp.js になる。
    PRをマージするたびにこの値を更新すること */
-const APP_BUILD = "300";
+const APP_BUILD = "301";
 
 function refreshBuildTag() {
   const el = document.getElementById("build-tag");
@@ -14116,6 +13216,7 @@ refreshBuildTag();
 refreshGeminiKeyAvailability();
 refreshTtsAvailability();
 refreshGoroButtonSetting();
+dropGoroCorpusOnce();
 /* 冊の選択は、一覧やプルダウンを描くより先に読んでおく */
 loadDeckState().then(refreshDeckSelects);
 /* 起動直後、ホーム画面のテキストボックスを常にフォーカス状態にしておく
